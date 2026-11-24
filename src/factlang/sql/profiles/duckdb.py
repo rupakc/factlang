@@ -60,7 +60,6 @@ DUCKDB = DialectProfile(
         "json": "JSON",
     },
     now_sql="CURRENT_TIMESTAMP",
-    string_type="VARCHAR",
     type_families=TYPE_FAMILIES,
     param_types={
         "integer": "BIGINT",
@@ -74,8 +73,12 @@ DUCKDB = DialectProfile(
     information_schema_sql=(
         "SELECT column_name, data_type FROM information_schema.columns WHERE {where}"
     ),
+    quoted_catalog_match="casefold",
+    unquoted_catalog_match="casefold",
     sample_styles={
-        "system": "TABLESAMPLE {percent}% (system, {seed})",
+        # SYSTEM samples whole vectors and is not repeatable across threads even with a seed,
+        # so the same seed would not give the same rows (spec 19 B4 (c)): FL506
+        "system": None,
         "bernoulli": "TABLESAMPLE {percent}% (bernoulli, {seed})",
     },
     # spec 19 keyhash ruling: hash() is UBIGINT, so no sign fold is needed

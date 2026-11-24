@@ -20,7 +20,7 @@ from factlang.ir import (
 )
 from factlang.semantics.filters import FBool, FCompare, FIsNull, FNot, FOr, Param
 from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
-from factlang.sql import get_profile, render, render_filter, render_join
+from factlang.sql import RenderError, get_profile, render, render_filter, render_join
 
 duckdb = pytest.importorskip("duckdb")
 
@@ -191,6 +191,17 @@ def test_pattern_coverage(con: Any) -> None:
     }
 
 
+def test_quoted_name_matches_the_catalog_as_sql_resolves_it(con: Any) -> None:
+    # DuckDB resolves even a quoted identifier case-insensitively: "ID" is column id, so the
+    # catalog lookup must find it too, consistent with ColumnAggregate
+    quoted = Ident("ID", quoted=True)
+    assert one(con, ColumnAggregate(ORDERS, quoted, (Metric.NON_NULL,))) == {"non_null": 5}
+    assert run(con, MetadataQuery(ORDERS, quoted)) == [
+        {"column_name": "id", "data_type": "INTEGER"}
+    ]
+    assert len(run(con, MetadataQuery(TableRef(None, None, Ident("Orders", quoted=True))))) == 6
+
+
 def test_metadata_query(con: Any) -> None:
     rows = run(con, MetadataQuery(ORDERS))
     assert {r["column_name"]: r["data_type"] for r in rows}["Order Total"] == "DECIMAL(10,2)"
@@ -272,12 +283,38 @@ def test_b_keyhash_keeps_every_row_of_a_kept_key(con: Any) -> None:
     assert agg["max_rows_per_key"] == 3
 
 
-def test_c_same_seed_same_sample_other_seed_other_sample(con: Any) -> None:
-    def sample(seed: int) -> dict[str, object]:
-        return one(con, ColumnAggregate(BIG, ID, (Metric.SUM,), sample=keyhash("0.01", seed)))
+def _spec(method: str, seed: int) -> SampleSpec:
+    if method == "keyhash":
+        return keyhash("0.01", seed)
+    return SampleSpec(method, Decimal("0.01"), seed=seed)  # type: ignore[arg-type]
 
-    assert sample(3) == sample(3)
-    assert sample(3) != sample(4)
+
+DECLARED = [m for m in ("keyhash", "system", "bernoulli") if DUCK.supports_sample(m)]
+
+
+def test_duckdb_declares_only_repeatable_methods() -> None:
+    assert DECLARED == ["keyhash", "bernoulli"]  # SYSTEM is not repeatable across threads
+
+
+@pytest.mark.parametrize("method", DECLARED)
+def test_c_same_seed_same_sample_other_seed_other_sample(con: Any, method: str) -> None:
+    # every method the profile declares must repeat exactly; rerun several times because a
+    # non-repeatable (thread-dependent) sample differs only some of the time
+    def sample(seed: int) -> dict[str, object]:
+        plan = ColumnAggregate(BIG, ID, (Metric.SUM, Metric.ROW_COUNT), sample=_spec(method, seed))
+        return one(con, plan)
+
+    first = sample(3)
+    assert all(sample(3) == first for _ in range(8))
+    assert sample(4) != first
+
+
+def test_system_sample_is_fl506_on_duckdb() -> None:
+    plan = ColumnAggregate(
+        BIG, None, (Metric.ROW_COUNT,), sample=SampleSpec("system", Decimal("0.3"))
+    )
+    with pytest.raises(RenderError, match="FL506"):
+        render(plan, DUCK)
 
 
 def test_d_fraction_one_is_identical_to_exact(con: Any) -> None:
@@ -292,11 +329,9 @@ def test_d_fraction_one_is_identical_to_exact(con: Any) -> None:
         assert got == {**exact, "sampled_rows": N_BIG}
 
 
-@pytest.mark.parametrize(("method", "block"), [("bernoulli", 1), ("system", 2048)])
-def test_e_block_and_row_samples_within_binomial_tolerance(
-    con: Any, method: str, block: int
-) -> None:
-    # DuckDB samples whole vectors (2048 rows) for SYSTEM: the binomial is over blocks
+@pytest.mark.parametrize("method", [m for m in DECLARED if m != "keyhash"])
+def test_e_block_and_row_samples_within_binomial_tolerance(con: Any, method: str) -> None:
+    block = 1  # bernoulli: one trial per row (DuckDB declares no SYSTEM style)
     fraction = Decimal("0.3")
     spec = SampleSpec(method, fraction, seed=17)  # type: ignore[arg-type]
     row = one(con, ColumnAggregate(BIG, None, (Metric.ROW_COUNT,), sample=spec))

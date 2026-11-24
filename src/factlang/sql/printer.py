@@ -7,7 +7,9 @@ Safety (spec 8.4):
   characters doubled, case preserved;
 - an identifier containing NUL, a newline, ``;``, ``{{`` or ``}}``, longer than
   ``max_identifier_length`` (in UTF-8 bytes), or an "unquoted" one that is not a plain
-  ``[A-Za-z_][A-Za-z0-9_$]*`` name, is refused with ``FL502``, never sanitised;
+  ``[A-Za-z_][A-Za-z0-9_$]*`` name, is refused with ``FL502``, never sanitised (``;`` is
+  refused because a rendered statement may hold no ``;`` at all, so a quoted ``"a;b"`` is
+  FL502 rather than a guard failure);
 - every user value is a ``{{name}}`` bind parameter; the only numbers written into the text
   are FactLang-validated (``TableSample`` fraction/seed, ``Select.limit``) and the constants
   of :data:`~factlang.sql.ast.LITERAL_CONSTANTS`;
@@ -287,11 +289,12 @@ class Printer:
 
         def match(column: str, name: Ident) -> None:
             self.check_ident(name.text, name.quoted)
-            if name.quoted or p.unquoted_case != "preserve":
-                value = name.text if name.quoted else p.fold(name.text)
-                conds.append(f"{column} = {self._catalog_param(value)}")
-            else:  # case-insensitive dialect: unquoted names match regardless of case
+            mode = p.quoted_catalog_match if name.quoted else p.unquoted_catalog_match
+            if mode == "casefold":
                 conds.append(f"LOWER({column}) = LOWER({self._catalog_param(name.text)})")
+                return
+            value = {"lower": name.text.lower(), "upper": name.text.upper()}.get(mode, name.text)
+            conds.append(f"{column} = {self._catalog_param(value)}")
 
         match("table_name", ref.table)
         if ref.schema is not None:

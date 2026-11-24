@@ -96,8 +96,11 @@ def test_renderer_for_native_and_unknown() -> None:
         renderer_for("no_such_dialect")
     msg = str(err.value)
     assert "duckdb" in msg and "postgres" in msg and "pip install factlang[sqlglot]" in msg
-    with pytest.raises(RenderError, match="FL504"):
-        renderer_for("no_such_dialect", prefer="sqlglot")
+    # forcing the bridge when it is absent says so, not "unknown dialect"
+    with pytest.raises(RenderError, match="sqlglot bridge not installed") as forced:
+        renderer_for("duckdb", prefer="sqlglot")
+    assert "unknown dialect" not in str(forced.value)
+    assert "pip install factlang[sqlglot]" in str(forced.value)
     with pytest.raises(ValueError, match="prefer"):
         renderer_for("duckdb", prefer="other")  # type: ignore[arg-type]
 
@@ -115,6 +118,38 @@ def test_renderer_for_uses_the_bridge_when_present(monkeypatch: pytest.MonkeyPat
     assert renderer_for("teradata")(ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,))) == "bridged"
     renderer_for("duckdb", prefer="sqlglot")(ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,)))
     assert calls == ["teradata", "duckdb"]
+
+
+def test_bridge_import_errors_other_than_a_missing_module_propagate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = registry.importlib.import_module
+
+    def fake(name: str) -> object:
+        if name == "factlang.sql.sqlglot_bridge":
+            raise ModuleNotFoundError("No module named 'factlang.sql.sqlglot_bridge'", name=name)
+        return real(name)
+
+    monkeypatch.setattr(registry.importlib, "import_module", fake)
+    assert registry._bridge() is None
+
+    def broken(name: str) -> object:
+        if name == "factlang.sql.sqlglot_bridge":
+            raise ModuleNotFoundError("No module named 'yaml'", name="yaml")
+        return real(name)
+
+    monkeypatch.setattr(registry.importlib, "import_module", broken)
+    with pytest.raises(ModuleNotFoundError, match="yaml"):
+        registry._bridge()
+
+    def bad(name: str) -> object:
+        if name == "factlang.sql.sqlglot_bridge":
+            raise ImportError("cannot import name 'x'")
+        return real(name)
+
+    monkeypatch.setattr(registry.importlib, "import_module", bad)
+    with pytest.raises(ImportError, match="cannot import name"):
+        registry._bridge()
 
 
 def test_sqlglot_names() -> None:
@@ -144,6 +179,9 @@ def test_sqlglot_names() -> None:
         ({"information_schema_sql": "SELECT 1"}, "information_schema_sql"),
         ({"now_sql": "NOW();"}, ";"),
         ({"sample_seed_range": (5, 1)}, "sample_seed_range"),
+        ({"quoted_catalog_match": "fuzzy"}, "quoted_catalog_match"),
+        ({"unquoted_catalog_match": "preserve"}, "unquoted_catalog_match"),
+        ({"cast_params": True, "param_types": {"string": "TEXT"}}, "every parameter family"),
     ],
 )
 def test_profile_validation(change: dict[str, object], match: str) -> None:
@@ -156,7 +194,8 @@ def test_profile_folds_reserved_words_and_freezes_mappings() -> None:
     assert "ORDER" in p.reserved_words
     with pytest.raises(TypeError):
         p.cast_types["integer"] = "X"  # type: ignore[index]
-    assert p.supports_sample("system") and p.supports_sample("keyhash")
+    assert p.supports_sample("bernoulli") and p.supports_sample("keyhash")
+    assert not p.supports_sample("system")  # DuckDB SYSTEM is not repeatable: FL506
     assert not with_(p, keyhash_expr=None).supports_sample("keyhash")
 
 
@@ -284,7 +323,12 @@ def test_table_sample_spellings() -> None:
     plan = ColumnAggregate(
         ORDERS, None, (Metric.ROW_COUNT,), sample=SampleSpec("system", Decimal("0.05"), seed=7)
     )
-    assert "FROM orders TABLESAMPLE 5% (system, 7)" in render(plan, DUCK).sql_template
+    bern = ColumnAggregate(
+        ORDERS, None, (Metric.ROW_COUNT,), sample=SampleSpec("bernoulli", Decimal("0.05"), seed=7)
+    )
+    assert "FROM orders TABLESAMPLE 5% (bernoulli, 7)" in render(bern, DUCK).sql_template
+    with pytest.raises(RenderError, match="FL506"):
+        render(plan, DUCK)
     assert "FROM orders TABLESAMPLE SYSTEM (5) REPEATABLE (7)" in render(plan, PG).sql_template
     tiny = ColumnAggregate(
         ORDERS,
@@ -305,7 +349,7 @@ def test_unsupported_sample_method_and_seed_range_are_fl506() -> None:
         ORDERS, None, (Metric.ROW_COUNT,), sample=SampleSpec("system", Decimal("0.5"), seed=-1)
     )
     with pytest.raises(RenderError, match="FL506"):
-        render(negative, DUCK)
+        render(negative, with_(DUCK, sample_styles={"system": "TABLESAMPLE {percent}%"}))
     assert "REPEATABLE (-1)" in render(negative, PG).sql_template
     keyed = ColumnAggregate(
         ORDERS,
@@ -340,6 +384,28 @@ def test_catalog_columns_bind_names_as_string_params() -> None:
     assert "LOWER(table_name) = LOWER({{" in duck.sql_template
     assert "table_schema = current_schema()" in duck.sql_template
     assert "table_catalog = current_database()" in duck.sql_template
+    # Postgres resolves an unqualified table through the search_path
+    assert (
+        "table_schema = ANY (current_schemas(false))"
+        in render(MetadataQuery(ORDERS), PG).sql_template
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "want_sql", "want_value"),
+    [
+        ("exact", "column_name = {{cat2}}", "MiXed"),
+        ("lower", "column_name = {{cat2}}", "mixed"),
+        ("upper", "column_name = {{cat2}}", "MIXED"),
+        ("casefold", "LOWER(column_name) = LOWER({{cat2}})", "MiXed"),
+    ],
+)
+def test_catalog_match_modes(mode: str, want_sql: str, want_value: str) -> None:
+    for quoted, field in ((True, "quoted_catalog_match"), (False, "unquoted_catalog_match")):
+        p = with_(DUCK, **{field: mode})
+        probe = render(MetadataQuery(ORDERS, Ident("MiXed", quoted=quoted)), p)
+        assert want_sql in probe.sql_template
+        assert probe.params[1].value == want_value
 
 
 def test_catalog_params_never_clash_with_plan_params() -> None:

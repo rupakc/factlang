@@ -60,7 +60,6 @@ POSTGRES = DialectProfile(
         "json": "JSONB",
     },
     now_sql="CURRENT_TIMESTAMP",
-    string_type="TEXT",
     type_families=TYPE_FAMILIES,
     param_types={
         "integer": "BIGINT",
@@ -74,6 +73,8 @@ POSTGRES = DialectProfile(
     information_schema_sql=(
         "SELECT column_name, data_type FROM information_schema.columns WHERE {where}"
     ),
+    quoted_catalog_match="exact",
+    unquoted_catalog_match="lower",
     sample_styles={
         "system": "TABLESAMPLE SYSTEM ({percent}) REPEATABLE ({seed})",
         "bernoulli": "TABLESAMPLE BERNOULLI ({percent}) REPEATABLE ({seed})",
@@ -81,7 +82,7 @@ POSTGRES = DialectProfile(
     # spec 19 keyhash ruling: signed BIGINT, folded with MOD(MOD(h, B) + B, B) (PG >= 11)
     keyhash_expr="MOD(MOD(hashtextextended({s}, 0), 1000000) + 1000000, 1000000)",
     cast_params=True,  # every bind parameter is typed in the SQL text
-    default_schema_sql="current_schema()",
+    default_schema_sql="ANY (current_schemas(false))",  # every schema on the search_path
 )
 
 __all__ = ["POSTGRES"]

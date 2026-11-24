@@ -158,6 +158,25 @@ def test_forbidden_tokens_in_exact_plans(name: str, plan: object) -> None:
         assert limits == []
 
 
+TABLESAMPLE_PLANS: list[object] = [
+    ColumnAggregate(ORDERS, AMOUNT, (Metric.ROW_COUNT, Metric.SUM), sample=SAMPLES[m])
+    for m in ("system", "bernoulli")
+] + [PatternCoverage(ORDERS, STATUS, "%a%", sample=SAMPLES["bernoulli"])]
+
+
+@pytest.mark.parametrize("name", PROFILES)
+@pytest.mark.parametrize("plan", KEYHASH_PLANS + TABLESAMPLE_PLANS, ids=plan_id)
+def test_no_limit_in_sampled_plans_outside_value_membership(name: str, plan: object) -> None:
+    p = profile(name)
+    try:
+        toks = words(render(plan, p).sql_template)  # type: ignore[arg-type]
+    except RenderError as err:
+        assert "FL506" in str(err)  # a method the profile does not declare
+        return
+    limits = [t for t in toks if t in ("LIMIT", "TOP", "FETCH")]
+    assert len(limits) == (1 if isinstance(plan, ValueMembership) else 0)
+
+
 @pytest.mark.parametrize("name", PROFILES)
 @pytest.mark.parametrize("method", sorted(SAMPLES))
 def test_each_sample_method_renders_or_is_fl506(name: str, method: str) -> None:

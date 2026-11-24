@@ -63,8 +63,16 @@ def _bridge() -> ModuleType | None:
     try:
         importlib.import_module("sqlglot")
         return importlib.import_module("factlang.sql.sqlglot_bridge")
-    except ImportError:
-        return None
+    except ModuleNotFoundError as exc:
+        # only a missing sqlglot or bridge means "not installed"; any other import error
+        # inside the bridge is a real bug and propagates
+        if exc.name is not None and (
+            exc.name == "sqlglot"
+            or exc.name.startswith("sqlglot.")
+            or exc.name == "factlang.sql.sqlglot_bridge"
+        ):
+            return None
+        raise
 
 
 def _unknown(dialect: str) -> RenderError:
@@ -94,6 +102,11 @@ def renderer_for(
         return render_native
     bridge = _bridge()
     if bridge is None:
+        if prefer == "sqlglot":
+            raise RenderError(
+                "FL504 sqlglot bridge not installed (pip install factlang[sqlglot]); "
+                f"cannot render {dialect!r} through it"
+            )
         raise _unknown(dialect)
     bridge_render: Any = bridge.render
 

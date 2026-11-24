@@ -14,6 +14,14 @@ Template fields are FactLang-owned SQL text with ``{name}`` slots, validated her
 - ``keyhash_expr``: the keyhash *bucket* in ``[0, 1_000_000)`` of the hash input ``{s}``
   (spec 19 keyhash ruling); ``None`` means keyhash is not supported (FL506).
 - ``information_schema_sql``: a ``SELECT column_name, data_type …`` with one ``{where}`` slot.
+- ``default_schema_sql`` / ``default_catalog_sql``: the right-hand side of ``table_schema =``
+  / ``table_catalog =`` used when a ref has no schema / catalog (e.g. ``current_schema()``,
+  or ``ANY (current_schemas(false))``).
+
+``quoted_catalog_match`` / ``unquoted_catalog_match`` say how CatalogColumns compares a name
+with the catalog, so that it finds what the same identifier finds in SQL: ``exact``;
+``lower``/``upper`` (fold the name, then compare exactly); ``casefold`` (``LOWER(col) =
+LOWER(name)``, for dialects that resolve identifiers case-insensitively).
 """
 
 from __future__ import annotations
@@ -31,12 +39,14 @@ from factlang.semantics.types import TYPE_FAMILIES
 CountIfStyle = Literal["countif", "count_if", "sum_case", "filter"]
 LimitStyle = Literal["limit", "top", "fetch"]
 UnquotedCase = Literal["upper", "lower", "preserve"]
+CatalogMatch = Literal["exact", "casefold", "lower", "upper"]
 
 TIERS: tuple[str, ...] = ("verified", "native", "best_effort")
 COUNT_IF_STYLES: tuple[str, ...] = ("countif", "count_if", "sum_case", "filter")
 LIMIT_STYLES: tuple[str, ...] = ("limit", "top", "fetch")
 UNQUOTED_CASES: tuple[str, ...] = ("upper", "lower", "preserve")
 QUOTE_CHARS: tuple[str, ...] = ('"', "`", "[")
+CATALOG_MATCHES: tuple[str, ...] = ("exact", "casefold", "lower", "upper")
 TABLE_SAMPLE_METHODS: tuple[str, ...] = ("system", "bernoulli")
 INT64 = (-(2**63), 2**63 - 1)
 
@@ -80,10 +90,12 @@ class DialectProfile:
     limit_style: LimitStyle
     cast_types: Mapping[str, str]
     now_sql: str
-    string_type: str
     type_families: tuple[tuple[str, str], ...]
     param_types: Mapping[str, str]
     information_schema_sql: str
+    # how CatalogColumns compares a quoted / unquoted name with the catalog (spec 8.4 rule)
+    quoted_catalog_match: CatalogMatch
+    unquoted_catalog_match: CatalogMatch
     overrides: Mapping[type, Callable[..., str]] = field(default_factory=dict)
     # Amendment B (spec 19 B2)
     sample_styles: Mapping[str, str | None] = field(default_factory=dict)
@@ -156,7 +168,6 @@ class DialectProfile:
         for name in (
             "information_schema_sql",
             "now_sql",
-            "string_type",
             "string_concat",
             "default_schema_sql",
             "default_catalog_sql",
@@ -164,6 +175,16 @@ class DialectProfile:
             value = getattr(self, name)
             if value is not None:
                 _no_semicolon(value, f"DialectProfile.{name}")
+        for name in ("quoted_catalog_match", "unquoted_catalog_match"):
+            if getattr(self, name) not in CATALOG_MATCHES:
+                raise ValueError(f"DialectProfile.{name} must be one of {CATALOG_MATCHES}")
+        if self.cast_params:
+            missing = sorted(set(PARAM_FAMILIES) - set(params))
+            if missing:
+                raise ValueError(
+                    f"DialectProfile.param_types must cover every parameter family when "
+                    f"cast_params is set; missing {missing}"
+                )
         lo, hi = self.sample_seed_range
         if lo > hi:
             raise ValueError(
@@ -223,11 +244,13 @@ def family_of(native_type: str, profile: DialectProfile) -> str:
 
 
 __all__ = [
+    "CATALOG_MATCHES",
     "COUNT_IF_STYLES",
     "LIMIT_STYLES",
     "QUOTE_CHARS",
     "TIERS",
     "UNQUOTED_CASES",
+    "CatalogMatch",
     "CountIfStyle",
     "DialectProfile",
     "LimitStyle",

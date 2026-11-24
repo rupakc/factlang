@@ -35,10 +35,14 @@ LAYERS: dict[str, float] = {
     "factlang.connectors": 14,  # includes connectors/catalog.py (WarehouseCatalog)
     "factlang.engine": 15,
     "factlang.api": 16,
-    "factlang": 16,  # factlang/__init__.py, the public facade
+    # factlang/__init__.py, the public facade: above api, which it re-exports. The key
+    # matches the package itself only, never as a prefix (an unmapped module is an error).
+    "factlang": 16.5,
     "factlang.agent": 17,
     "factlang.cli": 17,
+    "factlang.__main__": 18,  # `python -m factlang` runs the CLI
 }
+FACADE = "factlang"
 
 # Modules allowed to import third-party packages (all imports lazy in practice).
 NON_CORE_FILES = {
@@ -76,6 +80,8 @@ def layer_key(module: str) -> str | None:
     """Return the LAYERS key (longest prefix) governing ``module``, or None."""
     best: str | None = None
     for key in LAYERS:
+        if key == FACADE and module != FACADE:
+            continue  # the facade's key is not a catch-all for unmapped modules
         if (module == key or module.startswith(key + ".")) and (
             best is None or len(key) > len(best)
         ):
@@ -161,9 +167,15 @@ def check_layering(
 ) -> list[str]:
     """Violations: module-level imports not from a strictly lower (sub-)layer."""
     own_key = layer_key(importer)
-    if own_key is None:
+    inner = package_layer(importer) if is_pkg and importer not in LAYERS else None
+    if inner is not None:
+        # a package __init__ without its own key (factlang.syntax, factlang.semantics)
+        # re-exports its members, so it sits just above the highest of them
+        own_key, own = importer, inner + 0.5
+    elif own_key is None:
         return [f"{filename}: module '{importer}' has no layer in LAYERS"]
-    own = LAYERS[own_key]
+    else:
+        own = LAYERS[own_key]
     problems: list[str] = []
     for node in _module_level_imports(ast.parse(source, filename)):
         for target in _imported_modules(node, importer, is_pkg):
@@ -176,6 +188,54 @@ def check_layering(
                     f"'{target}' (layer {resolved[1]})"
                 )
     return problems
+
+
+def facade_problems(source: str, filename: str = "<module>") -> list[str]:
+    """Violations: a module-level import in the facade from anything but ``factlang.api``."""
+    problems: list[str] = []
+    for node in _module_level_imports(ast.parse(source, filename)):
+        for target in _imported_modules(node, FACADE, is_pkg=True):
+            if target != "factlang.api":
+                problems.append(f"{filename}:{node.lineno}: facade imports '{target}'")
+        if isinstance(node, ast.Import) and not any(
+            a.name.split(".")[0] == "factlang" for a in node.names
+        ):
+            problems.append(f"{filename}:{node.lineno}: facade imports a non-factlang module")
+    return problems
+
+
+def test_facade_imports_only_the_api() -> None:
+    init = SRC / "__init__.py"
+    assert facade_problems(init.read_text(encoding="utf-8"), str(init)) == []
+
+
+def test_negative_control_facade() -> None:
+    assert facade_problems("from factlang.api import parse\n") == []
+    assert facade_problems("from factlang.engine import Checker\n")
+    assert facade_problems("from factlang import ir\n")
+    assert facade_problems("import json\n")
+    # layering: the facade sits above the api, and the api may not import the facade
+    assert check_layering("from factlang.api import parse\n", "factlang", is_pkg=True) == []
+    assert check_layering("from factlang import Checker\n", "factlang.api")
+    assert check_layering("from factlang import ir\n", "factlang.api") == []
+    assert check_layering("from factlang.cli import main\n", "factlang", is_pkg=True)
+    assert check_layering("from factlang.cli import main\n", "factlang.__main__") == []
+    assert check_layering("from factlang.__main__ import x\n", "factlang.cli")
+
+
+def test_unkeyed_package_init_sits_above_its_members() -> None:
+    reexport = "from factlang.syntax.parser import parse\n"
+    assert check_layering(reexport, "factlang.syntax", is_pkg=True) == []
+    # ... but still below the next layer up
+    assert check_layering(
+        "from factlang.semantics.types import T\n", "factlang.syntax", is_pkg=True
+    )
+
+
+def test_unmapped_module_is_not_swallowed_by_the_facade_key() -> None:
+    assert layer_key("factlang.brand_new") is None
+    assert check_layering("x = 1\n", "factlang.brand_new")
+    assert layer_key("factlang") == "factlang"
 
 
 def test_core_is_stdlib_only() -> None:

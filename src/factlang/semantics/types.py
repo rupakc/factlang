@@ -62,6 +62,9 @@ def register_type(vt: ValueType, *, replace: bool = False) -> None:
     _REGISTRY[vt.name] = vt
 
 
+register = register_type  # ``fl.types.register(ValueType(...))`` (spec 10)
+
+
 def get_type(name: str) -> ValueType:
     try:
         return _REGISTRY[name]

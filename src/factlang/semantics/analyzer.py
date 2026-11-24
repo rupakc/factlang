@@ -71,6 +71,36 @@ def analyze(
     return out
 
 
+_FILTER_SPEC = VerbSpec(
+    "FILTER", "a bare filter condition", (OperandSpec("table", OperandKind.TABLE),)
+)
+
+
+def analyze_filter(
+    cond: ast.Cond,
+    *,
+    catalog: Catalog | None = None,
+    table: TableRef | None = None,
+    bag: DiagnosticBag,
+) -> FilterExpr | None:
+    """Resolve a parsed bare condition into a typed ``FilterExpr`` (spec 10, R6).
+
+    Parameters are named ``p1, p2, ...`` in source order, as in a claim. With both a
+    ``catalog`` and a ``table`` the filter's columns are checked exactly as a claim's
+    (FL311, FL305 for a non-boolean bare atom, FL313 when unknown). Never raises.
+    """
+    span: Span = cond.span
+    operands: tuple[ast.Ref | ast.Edge | ast.Literal, ...] = (
+        (_ast_ref(table.parts(), span),) if table is not None else ()
+    )
+    claim = ast.Claim(_FILTER_SPEC.name, span, operands, (), ast.Filter(cond, span), None, "", span)
+    check = _ClaimCheck(claim, VerbRegistry(), catalog, (None, None), bag)
+    flt = check.cond(cond)
+    if flt is not None and table is not None and catalog is not None:
+        check.catalog_checks(_FILTER_SPEC, (table,), {})
+    return flt if check.ok else None
+
+
 def _ident(name: ast.Name) -> Ident:
     return Ident(name.text, name.quoted)
 
@@ -680,4 +710,4 @@ def _ast_ref(parts: tuple[Ident, ...], span: Span) -> ast.Ref:
     return ast.Ref(tuple(ast.Name(p.text, p.quoted, span) for p in parts), span)
 
 
-__all__ = ["analyze", "type_family"]
+__all__ = ["analyze", "analyze_filter", "type_family"]

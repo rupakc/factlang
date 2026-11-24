@@ -498,4 +498,47 @@ def parse(source: str) -> ParseResult:
     return ParseResult(doc, bag)
 
 
-__all__ = ["ParseResult", "is_uppercase_ident", "parse", "parse_tokens"]
+def parse_condition(source: str) -> tuple[ast.Cond | None, DiagnosticBag]:
+    """Parse a bare filter condition (spec 4.5), with or without a leading ``WHERE``.
+
+    The condition is one logical line (comments allowed). Never raises: on any error the
+    condition is ``None`` and the reasons are in the bag (``FL206`` for a malformed filter).
+    """
+    bag = DiagnosticBag()
+    tokens = tokenize(source, bag)
+    if any(t.kind is K.ERROR for t in tokens):
+        return None, bag  # the lexer already reported it
+    toks = [t for t in tokens if t.kind not in (K.COMMENT, K.EOF)]
+    while toks and toks[0].kind is K.NEWLINE:
+        toks.pop(0)
+    while toks and toks[-1].kind is K.NEWLINE:
+        toks.pop()
+    if toks and toks[0].kind is K.IDENT and toks[0].text == "WHERE":
+        where = toks.pop(0)
+        if not toks:
+            bag.error("FL206", "expected a condition after WHERE", where.span)
+            return None, bag
+    if not toks:
+        bag.error("FL206", "expected a condition", None)
+        return None, bag
+    newline = next((t for t in toks if t.kind is K.NEWLINE), None)
+    if newline is not None:
+        bag.error(
+            "FL206",
+            "a filter condition is one line",
+            newline.span,
+            hint="join the lines, or end a line with `\\` to continue it",
+        )
+        return None, bag
+    state = _Line(toks, bag)
+    try:
+        cond = state.condition()
+        if not state.at_end():
+            tok = toks[state.pos]
+            raise state.fail("FL206", f"unexpected {tok.text!r} in filter", tok.span)
+    except _LineError:
+        return None, bag
+    return cond, bag
+
+
+__all__ = ["ParseResult", "is_uppercase_ident", "parse", "parse_condition", "parse_tokens"]

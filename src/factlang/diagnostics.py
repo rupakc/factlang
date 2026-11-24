@@ -63,10 +63,15 @@ class Diagnostic:
 
 
 class DiagnosticBag:
-    """Collects diagnostics in emission order."""
+    """Collects diagnostics in emission order.
 
-    def __init__(self) -> None:
+    ``source`` (optional) is the text the diagnostics point into; :meth:`render` uses it when
+    called without one (``fl.lint(text).render()``).
+    """
+
+    def __init__(self, source: str | None = None) -> None:
         self._items: list[Diagnostic] = []
+        self.source = source
 
     def _add(
         self,
@@ -128,8 +133,9 @@ class DiagnosticBag:
     def codes(self) -> list[str]:
         return [d.code for d in self._items]
 
-    def render(self, source: str) -> str:
-        return "\n\n".join(d.render(source) for d in self._items)
+    def render(self, source: str | None = None) -> str:
+        text = source if source is not None else (self.source or "")
+        return "\n\n".join(d.render(text) for d in self._items)
 
     def to_list(self) -> list[dict[str, Any]]:
         return [d.to_dict() for d in self._items]

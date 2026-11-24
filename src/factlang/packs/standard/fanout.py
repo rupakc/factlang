@@ -6,8 +6,9 @@ from collections.abc import Mapping
 
 from factlang import ir
 from factlang.contract import Contract, Example
+from factlang.ir import Metric
 from factlang.judge import CompareUsingClaimOp
-from factlang.packs.standard._common import KEY_METRICS, key_plan, number
+from factlang.packs.standard._common import key_plan, number
 from factlang.semantics.checked import CheckedClaim
 from factlang.semantics.signature import AttrSpec, Operand, VerbSpec
 
@@ -24,7 +25,7 @@ SPEC = VerbSpec(
 
 
 def plan(claim: CheckedClaim) -> ir.ProbePlan:
-    return key_plan(claim, KEY_METRICS)
+    return key_plan(claim, (Metric.MAX_PER_KEY,))
 
 
 def derive(payload: Mapping[str, object], claim: CheckedClaim) -> dict[str, object]:

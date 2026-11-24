@@ -12,7 +12,7 @@ from factlang.ir import ColumnAggregate, CompositeKeyAggregate, Metric
 from factlang.packs.standard.fanout import CONTRACT
 from factlang.semantics.refs import Ident
 
-METRICS = (Metric.NON_NULL, Metric.DISTINCT_KEYS, Metric.MAX_PER_KEY, Metric.DUPLICATE_KEYS)
+METRICS = (Metric.MAX_PER_KEY,)
 
 
 def test_contract_is_complete() -> None:

@@ -11,6 +11,7 @@ PACK_VERSION = "1.0"
 
 # Verb modules, each exporting ``CONTRACT``. Later tasks append their modules here.
 _MODULES: tuple[str, ...] = (
+    "exists",
     "type",
     "rows",
     "nulls",

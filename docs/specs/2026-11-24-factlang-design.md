@@ -997,7 +997,38 @@ Oracle `SAMPLE BLOCK (p) SEED (seed)` / `SAMPLE (p)` etc.) or as a `WHERE` predi
 CAST(k AS STRING)))), 1000000)`, Postgres/Redshift via `hashtext`/`FNV_HASH`-class
 functions, ClickHouse `cityHash64`, Snowflake `HASH`, DuckDB `hash`, Trino
 `xxhash64(to_utf8(...))`). Exact per-profile spellings are the builder's, pinned by
-conformance tests. A method the dialect cannot express → **`FL506` sample method not
+conformance tests — **except `keyhash`, whose expression is fixed below (ruling
+2026-11-24).**
+
+*Keyhash ruling.* Consistency is required **within one dialect only** (both sides of a
+join live in the same warehouse); cross-dialect equality of samples is a non-goal. Let
+`s` = the hash input string: `<seed as decimal text> || '|' || CAST(k1 AS <string type>)
+[|| '|' || CAST(k2 …)]…` (rows with a NULL key part are excluded before hashing, as for
+every composite key), with the seed bound as a string parameter. Let `B = 1000000`. For a
+*signed* hash `h`, the bucket is `MOD(MOD(h, B) + B, B)` (never `ABS(h)`, which overflows on
+the minimum 64-bit value). The row is kept iff `bucket < fraction × B` (fraction × B bound
+as an integer parameter, `ROUND` half-up).
+
+| Profile | `h` (or bucket) | Notes |
+|---|---|---|
+| bigquery | `FARM_FINGERPRINT(s)` (signed INT64) | |
+| snowflake | `HASH(s)` (signed 64-bit) | |
+| databricks | `xxhash64(s)` (signed BIGINT) | |
+| duckdb | bucket = `hash(s) % 1000000` | `hash` is UBIGINT; no sign fold needed |
+| clickhouse | bucket = `cityHash64(s) % 1000000` | UInt64 |
+| postgres | `hashtextextended(s, 0)` (signed BIGINT) | PG ≥ 11 |
+| redshift | `STRTOL(SUBSTRING(MD5(s), 1, 15), 16)` | 60-bit, non-negative |
+| mysql | `CAST(CONV(SUBSTRING(MD5(s), 1, 15), 16, 10) AS UNSIGNED)` | 60-bit, non-negative |
+| tsql | `CONVERT(BIGINT, SUBSTRING(HASHBYTES('MD5', CAST(s AS NVARCHAR(4000))), 1, 8))` | signed; `s` cast to NVARCHAR so VARCHAR and NVARCHAR keys hash alike |
+| oracle | `ORA_HASH(s, 4294967295, 0)` | 32-bit, non-negative; seed lives in `s` |
+| trino | `from_big_endian_64(xxhash64(to_utf8(s)))` | signed BIGINT |
+| sqlglot bridge | FL506 for `keyhash` unless the target is one of the above | |
+
+Tests (Task 14/15/20): per profile the rendered predicate structurally matches this table;
+on every `verified` engine (incl. trino) a join sampled with keyhash on both sides keeps
+identical key sets, and re-running with the same seed keeps the same rows.
+
+A method the dialect cannot express → **`FL506` sample method not
 supported by dialect** (RenderError) — never a silent exact or silent `LIMIT`. Fraction 1
 renders no sample. The sqlglot bridge supports `system`/`bernoulli` where sqlglot has
 `TABLESAMPLE`, and `keyhash` only when the bridge has a hash mapping; otherwise FL506.

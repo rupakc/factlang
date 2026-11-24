@@ -46,7 +46,7 @@ T14 + T6 → T17 ;  T13 → T18
 {T9..T12, T14, T17, T18} → T19 → T20
 T19 → T21 → T22
 T21 → {T23, T24} (parallel) → T25
-Amendment A: T26 now (parallel with T5; needs T3,T4 done) ;  T22 → T27 → T25
+Amendment A: T4 fix round → T26 → T5 ;  T22 → T27 → T25
 ```
 Tasks in braces may be dispatched to parallel goldfish; all others sequentially.
 
@@ -365,7 +365,7 @@ Common to all three:
 
 ### Task 26: Bare boolean filter atom in parser, formatter and grammar (Amendment A R9) — DO NEXT
 
-> Retroactive to completed Tasks 3–4; independent of Task 5, so it may run in parallel with it.
+> Retroactive to completed Tasks 3–4. Sequencing (builder ruling, 2026-11-24): runs immediately after the in-flight Task 4 formatter fix round's re-review (same files), before Task 5 — not in parallel. Bare `TRUE`/`FALSE` atom → FL206 (add a `factlang-invalid FL206` block `ROWS orders WHERE TRUE`); see spec §4.5 rulings.
 
 **Files:** Modify `src/factlang/syntax/parser.py`, `src/factlang/syntax/formatter.py`, `docs/reference/grammar.md` (filter EBNF + `factlang-valid` blocks `ROWS orders WHERE deleted`, `ROWS orders WHERE deleted IS NULL OR NOT deleted`, `ROWS orders WHERE NOT (paid) AND amount > 0`, and a `factlang-invalid FL206` block `ROWS orders WHERE deleted deleted`); Test `tests/unit/syntax/test_parser.py`, `tests/unit/syntax/test_formatter.py`.
 **Interfaces:** filter AST gains a bare-name atom node (name it consistently with the existing filter AST, e.g. `FilterName(name)`), produced when an atom is a `name` not followed by an operator/`IN`/`IS`/`BETWEEN`/`NOT IN`. Formatter prints it back bare. Parser keeps never-raise and per-line recovery; property tests (`test_crlf_equivalent_to_lf`, idempotent format) stay green.

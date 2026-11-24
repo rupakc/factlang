@@ -280,6 +280,12 @@ idiomatic live-row filter for a flag that is TRUE or NULL is therefore
 `deleted IS NULL OR NOT deleted`. The analyser reports `FL305` when the catalog knows the
 column is not boolean. The formatter prints the bare form back as written (`deleted`),
 and the semantic hash treats `deleted` and `deleted = TRUE` as identical.
+Rulings (Amendment A, 2026-11-24): (a) a bare `TRUE` or `FALSE` atom (`WHERE TRUE`,
+`WHERE NOT FALSE`) is **`FL206`** — they are filter keywords, not names; a column literally
+named `true`/`TRUE` must be quoted (`"TRUE"`). (b) The non-boolean check **reuses `FL305`
+("wrong value type")** for the filter column; when the catalog cannot answer (unknown /
+`NullCatalog`), the atom is accepted and only the usual `FL313` info is emitted — never an
+error on unknown.
 A filter is part of the claim's semantic identity. Each verb declares
 `filterable: bool`; a filter on a non-filterable verb is `FL308`. Filterable in the
 standard pack: `ROWS NULLS UNIQUE FANOUT VALUES RANGE PATTERN FRESH JOIN COUNT

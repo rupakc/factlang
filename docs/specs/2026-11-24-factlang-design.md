@@ -782,7 +782,7 @@ ratio > 1) · FL311 no such table/column · FL312 cross-type join without CAST
 FL501 metric not renderable · FL502 identifier not representable · FL503 cast not
 expressible · FL504 unknown dialect · FL505 too many table-name parts for dialect · FL600 decide reads a fact derive never
 produces · FL601 decide reads an undeclared attribute · FL602 contract has fewer than 3 valid + 3 invalid
-examples · FL603 an example does not behave as declared (or its plan/catalog function raises) · FL604 incomplete contract (decorator builder missing a part) · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
+examples · FL603 an example does not behave as declared (or its plan/catalog function raises) · FL604 incomplete contract (decorator builder missing a part) · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL405 sample method needs a single read; use keyhash (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
 `FL5xx` raise `RenderError`; `FL6xx` are asserted by tests over every registered
 pack; `FL7xx` become `ERROR` outcomes.
 
@@ -985,6 +985,8 @@ Primitives `ColumnAggregate`, `CompositeKeyAggregate`, `ValueMembership`, `KeyOv
 `sample` (left) and `right_sample` (right); with `keyhash` on both sides using the same
 `fraction` and `seed`, both sides keep exactly the same key values (the keyhash predicate
 depends only on the key value, the seed and the fraction). `MetadataQuery` is never sampled.
+
+**FL405 ruling (2026-11-24, builder; SchemaGuru Elephant agreed).** `system` and `bernoulli` samples are allowed only on single-read primitives (`ColumnAggregate`, `CompositeKeyAggregate`, `PatternCoverage`). `ValueMembership` and `KeyOverlap` read the sampled table more than once and a block/row sample is not guaranteed to repeat across reads (e.g. BigQuery re-evaluates CTEs), so lowering raises **FL405** "sample method needs a single read; use keyhash" (planning range). `keyhash` is deterministic and allowed everywhere.
 
 **B2 — rendering (layer 12).** `DialectProfile` gains `sample_styles: Mapping[str, str |
 None]` per method and a `keyhash_expr` (deterministic 64-bit hash of the cast-to-string

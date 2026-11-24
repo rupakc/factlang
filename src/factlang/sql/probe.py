@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
-from factlang.ir import Arity
+from factlang.ir import Arity, ProbePlan
 from factlang.semantics.filters import Param
 
 PARAMSTYLES: tuple[str, ...] = ("qmark", "numeric", "named", "format", "pyformat", "bigquery")
@@ -38,6 +38,20 @@ def check_params(params: tuple[Param, ...]) -> None:
             raise ValueError(f"parameter name {p.name!r} is not a plain identifier")
     if len(set(names)) != len(names):
         raise ValueError(f"duplicate parameter name in {names}")
+
+
+def check_template(template: str, params: tuple[Param, ...]) -> None:
+    """Every ``{{name}}`` token has a parameter and every parameter is used."""
+    if not isinstance(template, str):
+        raise TypeError(f"sql_template must be a string, got {template!r}")
+    tokens = {m.group(1) for m in _TOKEN.finditer(template)}
+    names = {p.name for p in params}
+    missing = sorted(tokens - names)
+    if missing:
+        raise RenderError(f"FL500 template references unknown parameter(s) {missing}")
+    unused = sorted(names - tokens)
+    if unused:
+        raise RenderError(f"FL500 parameter(s) {unused} not used by the template")
 
 
 def bind_template(
@@ -140,7 +154,7 @@ class RenderedProbe:
     sql_template: str
     params: tuple[Param, ...]
     arity: Arity
-    plan: object
+    plan: ProbePlan
     dialect: str
     tier: str
 
@@ -148,6 +162,7 @@ class RenderedProbe:
         if isinstance(self.params, list):
             object.__setattr__(self, "params", tuple(self.params))
         check_params(self.params)
+        check_template(self.sql_template, self.params)
         if not isinstance(self.arity, Arity):
             raise TypeError(f"arity must be an Arity, got {self.arity!r}")
 
@@ -165,6 +180,7 @@ __all__ = [
     "ansi_quote",
     "bind_template",
     "check_params",
+    "check_template",
     "inline_template",
     "placeholder",
 ]

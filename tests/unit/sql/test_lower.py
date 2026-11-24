@@ -22,7 +22,7 @@ from factlang.ir import (
     ValueMembership,
     register_primitive,
 )
-from factlang.semantics.filters import FAnd, FBool, FCompare, FIn, FNot, Param
+from factlang.semantics.filters import FAnd, FBool, FCompare, FIn, FIsNull, FNot, FOr, Param
 from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 from factlang.sql import ast as A
 from factlang.sql.fragment import JoinEdge, RenderedFragment, lower_filter, lower_join
@@ -114,12 +114,35 @@ def sampled(plan: object, spec: SampleSpec) -> object:
     return dataclasses.replace(plan, sample=spec)  # type: ignore[type-var]
 
 
-SAMPLED_PLANS: list[object] = [
-    sampled(p, s)
-    for p in EXACT_PLANS
-    if not isinstance(p, MetadataQuery)
-    for s in (KEYHASH, SYSTEM)
+def multi_read(plan: object) -> bool:
+    """Plans that read the table more than once: block/row samples are FL405 there."""
+    if isinstance(plan, (ValueMembership, KeyOverlap)):
+        return True
+    keyed = {Metric.MAX_PER_KEY, Metric.DUPLICATE_KEYS}
+    if isinstance(plan, CompositeKeyAggregate):
+        keyed.add(Metric.DISTINCT_KEYS)
+    return bool(keyed & set(getattr(plan, "metrics", ())))
+
+
+SAMPLEABLE = [p for p in EXACT_PLANS if not isinstance(p, MetadataQuery)]
+SAMPLED_PLANS: list[object] = [sampled(p, KEYHASH) for p in SAMPLEABLE] + [
+    sampled(p, SYSTEM) for p in SAMPLEABLE if not multi_read(p)
 ]
+MULTI_READ_BLOCK_SAMPLED: list[object] = [
+    sampled(p, spec)
+    for p in SAMPLEABLE
+    if multi_read(p)
+    for spec in (SYSTEM, SampleSpec("bernoulli", Decimal("0.5"), seed=1))
+]
+
+
+def union(tree: object) -> A.UnionAll:
+    """ValueMembership lowers to an ordered outer Select over UNION ALL(summary, ranked)."""
+    assert isinstance(tree, A.Select) and isinstance(tree.from_, A.SubqueryFrom)
+    assert tree.limit is None
+    inner = tree.from_.select
+    assert isinstance(inner, A.UnionAll)
+    return inner
 
 
 # --- wire format (R1: the payload is what derive receives) -------------------------------
@@ -220,8 +243,7 @@ def test_pattern_coverage_is_case_folded_like_over_a_lowercased_param() -> None:
 
 def test_value_membership_is_summary_union_ranked_list() -> None:
     tree = lower(ValueMembership(ORDERS, STATUS, ("paid", "open"), report_limit=7))
-    assert isinstance(tree, A.UnionAll)
-    summary, ranked = tree.selects
+    summary, ranked = union(tree).selects
     assert summary.columns[0].expr == A.Literal("summary")
     assert ranked.columns[0].expr == A.Literal("undeclared")
     assert summary.limit is None and ranked.limit == 7
@@ -244,7 +266,6 @@ def test_value_membership_is_summary_union_ranked_list() -> None:
 
 def test_ranked_group_by_never_holds_a_param() -> None:
     tree = lower(ValueMembership(ORDERS, STATUS, ("other",), split=":", filter=status_is()))
-    assert isinstance(tree, A.UnionAll)
     for s in selects(tree):
         for g in s.group_by:
             assert not of(g, A.ParamRef)
@@ -253,8 +274,7 @@ def test_ranked_group_by_never_holds_a_param() -> None:
 def test_value_membership_empty_declared_has_no_in_list() -> None:
     tree = lower(ValueMembership(ORDERS, STATUS, ()))
     assert not of(tree, A.InList)
-    assert isinstance(tree, A.UnionAll)
-    summary, ranked = tree.selects
+    summary, ranked = union(tree).selects
     exprs = dict(zip(summary.aliases, (c.expr for c in summary.columns), strict=True))
     assert exprs["declared_rows"] == A.Literal(0)
     assert isinstance(ranked.from_, A.SubqueryFrom)
@@ -283,9 +303,9 @@ def test_limit_only_on_value_membership_ranked_list(plan: object) -> None:
     tree = lower(plan)  # type: ignore[arg-type]
     limited = [s for s in selects(tree) if s.limit is not None]
     if isinstance(plan, ValueMembership):
-        assert isinstance(tree, A.UnionAll)
-        assert limited == [tree.selects[1]]
-        assert tree.selects[1].limit == plan.report_limit
+        ranked = union(tree).selects[1]
+        assert limited == [ranked]
+        assert ranked.limit == plan.report_limit
     else:
         assert limited == []
 
@@ -345,16 +365,16 @@ def test_fraction_one_renders_no_sample_but_reports_sampled_rows() -> None:
 
 
 def test_value_membership_sampled_rows_only_on_summary() -> None:
-    tree = lower(ValueMembership(ORDERS, STATUS, ("paid",), sample=SYSTEM))
-    assert isinstance(tree, A.UnionAll)
-    summary, ranked = tree.selects
+    spec = SampleSpec("keyhash", Decimal("0.05"), seed=7, key=(STATUS,))
+    tree = lower(ValueMembership(ORDERS, STATUS, ("paid",), sample=spec))
+    summary, ranked = union(tree).selects
     i = summary.aliases.index("sampled_rows")
     assert summary.columns[i].expr == A.Agg("COUNT", None)
     assert ranked.columns[i].expr == A.Cast(A.Literal(None), "integer")
-    sampled_from = A.TableName(ORDERS, sample=A.TableSample("system", Decimal("0.05"), 7))
-    assert summary.from_ == sampled_from
+    # both reads carry the same deterministic keyhash predicate
     assert isinstance(ranked.from_, A.SubqueryFrom)
-    assert ranked.from_.select.from_ == sampled_from
+    assert of(summary.where, A.KeyHash) == of(ranked.from_.select.where, A.KeyHash)
+    assert of(summary.where, A.KeyHash)
 
 
 # --- KeyOverlap -----------------------------------------------------------------------------
@@ -596,3 +616,221 @@ def test_rendered_fragment_binds_and_inlines() -> None:
     sql, values = frag.bind("qmark")
     assert sql == "o.status = ?" and values == (HOSTILE,)
     assert frag.inline() == "o.status = 'x''); DROP TABLE orders; --'"
+
+
+# --- fix round 1 ---------------------------------------------------------------------------
+
+
+def test_keyhash_on_key_overlap_hashes_the_join_key_after_cast() -> None:
+    left_spec = SampleSpec("keyhash", Decimal("0.1"), seed=5, key=(Ident("order_id"),))
+    right_spec = SampleSpec("keyhash", Decimal("0.1"), seed=5, key=(ID,))
+    plan = KeyOverlap(
+        (cref(ITEMS, "order_id"),),
+        (cref(ORDERS, "id"),),
+        cast_to="integer",
+        sample=left_spec,
+        right_sample=right_spec,
+    )
+    parts = {h.parts for h in of(lower(plan), A.KeyHash)}  # type: ignore[attr-defined]
+    assert parts == {
+        (A.Cast(A.Cast(A.Column(Ident("order_id")), "integer"), "string"),),
+        (A.Cast(A.Cast(A.Column(ID), "integer"), "string"),),
+    }
+
+
+def test_keyhash_on_key_overlap_with_string_cast_is_not_cast_twice() -> None:
+    spec = SampleSpec("keyhash", Decimal("0.1"), seed=5, key=(Ident("order_id"),))
+    plan = KeyOverlap(
+        (cref(ITEMS, "order_id"),), (cref(ORDERS, "id"),), cast_to="string", sample=spec
+    )
+    (kh,) = set(of(lower(plan), A.KeyHash))  # the same node, read by two subqueries
+    assert kh.parts == (A.Cast(A.Column(Ident("order_id")), "string"),)  # type: ignore[attr-defined]
+
+
+def test_keyhash_on_other_columns_hashes_them_raw() -> None:
+    spec = SampleSpec("keyhash", Decimal("0.1"), seed=5, key=(Ident("shop_id"),))
+    plan = KeyOverlap(
+        (cref(ITEMS, "order_id"),), (cref(ORDERS, "id"),), cast_to="integer", sample=spec
+    )
+    (kh,) = set(of(lower(plan), A.KeyHash))  # the same node, read by two subqueries
+    assert kh.parts == (A.Cast(A.Column(Ident("shop_id")), "string"),)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("plan", MULTI_READ_BLOCK_SAMPLED, ids=repr)
+def test_block_or_row_sample_on_a_multi_read_plan_is_fl405(plan: object) -> None:
+    with pytest.raises(RenderError, match=r"^FL405 .*use keyhash"):
+        lower(plan)  # type: ignore[arg-type]
+
+
+def test_fl405_cases_cover_every_multi_read_primitive() -> None:
+    kinds = {type(p) for p in MULTI_READ_BLOCK_SAMPLED}
+    assert kinds == {ColumnAggregate, CompositeKeyAggregate, ValueMembership, KeyOverlap}
+
+
+def test_fl405_on_one_side_of_key_overlap() -> None:
+    plan = KeyOverlap(
+        (cref(ITEMS, "order_id"),),
+        (cref(ORDERS, "id"),),
+        sample=SampleSpec("keyhash", Decimal("0.1"), key=(Ident("order_id"),)),
+        right_sample=SampleSpec("bernoulli", Decimal("0.1")),
+    )
+    with pytest.raises(RenderError, match="FL405"):
+        lower(plan)
+
+
+def test_single_read_and_keyhash_and_fraction_one_samples_are_allowed() -> None:
+    allowed = [
+        ColumnAggregate(ORDERS, ID, (Metric.ROW_COUNT, Metric.DISTINCT_KEYS), sample=SYSTEM),
+        CompositeKeyAggregate(ITEMS, (ID,), (Metric.ROW_COUNT, Metric.NON_NULL), sample=SYSTEM),
+        PatternCoverage(ORDERS, STATUS, "%a%", sample=SYSTEM),
+        ValueMembership(ORDERS, STATUS, ("a",), sample=SampleSpec("system", Decimal(1))),
+        ValueMembership(ORDERS, STATUS, ("a",), sample=KEYHASH),
+        ColumnAggregate(ORDERS, ID, (Metric.MAX_PER_KEY,), sample=KEYHASH),
+    ]
+    for plan in allowed:
+        lower(plan)
+
+
+def test_params_of_refuses_one_name_bound_to_two_values() -> None:
+    a = A.ParamRef(Param("p1", "a", "string"))
+    b = A.ParamRef(Param("p1", "b", "string"))
+    with pytest.raises(RenderError, match="FL500"):
+        A.params_of(
+            A.Or((A.Compare("=", A.Column(STATUS), a), A.Compare("=", A.Column(STATUS), b)))
+        )
+    same = A.Compare("=", A.Column(STATUS), a)
+    assert A.params_of(A.Or((same, same))) == (a.param,)
+
+
+def test_custom_lowering_with_clashing_param_names_is_fl500() -> None:
+    def build(plan: _MaxLen) -> A.Select:
+        a = A.ParamRef(Param("p1", "a", "string"))
+        b = A.ParamRef(Param("p1", "b", "string"))
+        cond = A.And((A.Compare("=", A.Column(STATUS), a), A.Compare("=", A.Column(ID), b)))
+        return A.Select(
+            (A.Aliased(A.Agg("COUNT", None), "row_count"),), A.TableName(plan.table), cond
+        )
+
+    register_primitive(_MaxLen, lower=build, replace=True)
+    try:
+        with pytest.raises(RenderError, match="FL500 parameter name 'p1'"):
+            lower(_MaxLen(ORDERS))  # type: ignore[arg-type]
+    finally:
+        PRIMITIVE_LOWERINGS.pop(_MaxLen, None)
+
+
+def test_custom_lowering_with_mismatched_aliases_is_fl500() -> None:
+    def build(plan: _MaxLen) -> A.Select:
+        return A.Select((A.Aliased(A.Agg("COUNT", None), "rows_seen"),), A.TableName(plan.table))
+
+    register_primitive(_MaxLen, lower=build, replace=True)
+    try:
+        with pytest.raises(RenderError, match=r"FL500 .*result_columns"):
+            lower(_MaxLen(ORDERS))  # type: ignore[arg-type]
+    finally:
+        PRIMITIVE_LOWERINGS.pop(_MaxLen, None)
+
+
+def test_value_membership_outer_order_summary_first_then_freq_desc_value_asc() -> None:
+    tree = lower(ValueMembership(ORDERS, STATUS, ("paid",)))
+    assert isinstance(tree, A.Select) and isinstance(tree.from_, A.SubqueryFrom)
+    u = tree.from_.alias
+    assert tree.limit is None and tree.where is None and tree.group_by == ()
+    assert tree.columns == tuple(A.Aliased(A.Column(Ident(a), u), a) for a in tree.aliases)
+    kind = A.Column(Ident("kind"), u)
+    assert tree.order_by == (
+        A.OrderItem(
+            A.Case(((A.Compare("=", kind, A.Literal("summary")), A.Literal(0)),), A.Literal(1))
+        ),
+        A.OrderItem(A.Column(Ident("freq"), u), descending=True),
+        A.OrderItem(A.Column(Ident("value"), u)),
+    )
+
+
+def test_cross_join_maps_each_alias_to_its_own_subquery() -> None:
+    plan = ColumnAggregate(
+        ORDERS, ID, (Metric.ROW_COUNT, Metric.MAX_PER_KEY, Metric.NON_NULL, Metric.DUPLICATE_KEYS)
+    )
+    tree = lower(plan)
+    assert isinstance(tree, A.Select) and isinstance(tree.from_, A.Join)
+    join = tree.from_
+    assert join.kind == "CROSS"
+    assert isinstance(join.left, A.SubqueryFrom) and isinstance(join.right, A.SubqueryFrom)
+    flat, keyed = join.left, join.right
+    assert [(c.alias, c.expr) for c in tree.columns] == [
+        ("row_count", A.Column(Ident("row_count"), flat.alias)),
+        ("max_rows_per_key", A.Column(Ident("max_rows_per_key"), keyed.alias)),
+        ("non_null", A.Column(Ident("non_null"), flat.alias)),
+        ("duplicate_keys", A.Column(Ident("duplicate_keys"), keyed.alias)),
+    ]
+    assert isinstance(flat.select, A.Select) and isinstance(keyed.select, A.Select)
+    assert flat.select.aliases == ("row_count", "non_null")
+    assert isinstance(keyed.select.from_, A.SubqueryFrom)
+    g = keyed.select.from_.alias
+    rows = A.Column(Ident("key_rows"), g)
+    assert [c.expr for c in keyed.select.columns] == [
+        A.Agg("MAX", rows),
+        A.CountIf(A.Compare(">", rows, A.Literal(1))),
+    ]
+
+
+def test_key_overlap_r4_expression_shapes() -> None:
+    plan = KeyOverlap((cref(ITEMS, "order_id"),), (cref(ORDERS, "id"),), measure_multiplicity=True)
+    tree = lower(plan)
+    (join,) = [j for j in of(tree, A.Join) if j.kind == "LEFT"]  # type: ignore[attr-defined]
+    (overlap,) = [s for s in selects(tree) if s.from_ == join]
+    lq, rq = join.left.alias, join.right.alias  # type: ignore[attr-defined]
+    rows, first = A.Column(Ident("key_rows"), lq), A.Column(Ident("k1"), rq)
+    assert [(c.alias, c.expr) for c in overlap.columns] == [
+        ("distinct_left", A.Agg("COUNT", None)),
+        ("matched", A.Agg("COUNT", first)),
+        ("left_non_null", A.Coalesce(A.Agg("SUM", rows), A.Literal(0))),
+        (
+            "matched_left_rows",
+            A.Coalesce(
+                A.Agg(
+                    "SUM",
+                    A.Case(((A.IsNull(first, negated=True), rows),), A.Literal(0)),
+                ),
+                A.Literal(0),
+            ),
+        ),
+        ("max_left_per_key", A.Agg("MAX", rows)),
+    ]
+    assert join.on == A.Compare("=", A.Column(Ident("k1"), lq), first)  # type: ignore[attr-defined]
+    (right_stats,) = [
+        s for s in selects(tree) if s.aliases == ("distinct_right", "max_right_per_key")
+    ]
+    assert isinstance(right_stats.from_, A.SubqueryFrom)
+    rr = right_stats.from_.alias
+    assert [c.expr for c in right_stats.columns] == [
+        A.Agg("COUNT", None),
+        A.Agg("MAX", A.Column(Ident("key_rows"), rr)),
+    ]
+
+
+def test_empty_in_and_single_item_connectives() -> None:
+    assert lower_filter(FIn(ID, ())) == A.Compare("=", A.Literal(1), A.Literal(0))
+    assert lower_filter(FIn(ID, (), negated=True)) == A.Compare("=", A.Literal(1), A.Literal(1))
+    one = FIsNull(ID)
+    assert lower_filter(FAnd((one,))) == A.IsNull(A.Column(ID))
+    assert lower_filter(FOr((one,))) == A.IsNull(A.Column(ID))
+
+
+def test_param_prefix_keeps_combined_fragments_apart() -> None:
+    a = lower_filter(status_is("a"), "o", param_prefix="fa")
+    b = lower_filter(status_is("b"), "o", param_prefix="fb")
+    names = [p.name for p in A.params_of(A.And((a, b)))]
+    assert names == ["fa1", "fb1"]
+    e1 = EdgeRef(cref(ITEMS, "order_id"), cref(ORDERS, "id"))
+    _, where = lower_join([e1], filters={ITEMS: status_is()}, param_prefix="j")
+    assert [p.name for p in A.params_of(where)] == ["j1"]
+    for bad in ("", "1x", "p-", "{{"):
+        with pytest.raises(ValueError, match="param_prefix"):
+            lower_filter(status_is(), param_prefix=bad)
+
+
+def test_self_join_has_a_clear_error() -> None:
+    edge = EdgeRef(cref(ORDERS, "parent_id"), cref(ORDERS, "id"))
+    with pytest.raises(ValueError, match=r"self-joins are not supported in v0\.1"):
+        lower_join([edge])

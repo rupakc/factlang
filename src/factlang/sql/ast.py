@@ -20,6 +20,10 @@ Notes for printers:
 - :class:`KeyHash` is the keyhash *bucket* in ``[0, 1_000_000)`` of spec 19 (keyhash
   ruling): the hash input is ``seed || '|' || part1 [|| '|' || part2 …]``; the parts are
   already ``Cast(…, "string")`` and NULL parts are already excluded by the lowering.
+- A :class:`UnionAll` branch that has ``order_by`` or ``limit`` must be printed
+  parenthesised (``(SELECT … ORDER BY … LIMIT n) UNION ALL …``), or as a derived table
+  where the dialect cannot parenthesise a branch (e.g. ``TOP`` in T-SQL); otherwise the
+  ORDER BY/LIMIT would bind to the whole union.
 - :class:`CatalogColumns` is the relation ``(column_name, data_type)`` of one table's
   columns; the printer spells it from its profile's ``information_schema`` template and
   binds the table/column names as string parameters (after its identifier-case rule).
@@ -35,6 +39,7 @@ from decimal import Decimal
 from factlang.semantics.filters import Param
 from factlang.semantics.refs import Ident, TableRef
 from factlang.semantics.types import TYPE_FAMILIES
+from factlang.sql.probe import RenderError
 
 AGG_FUNCTIONS: tuple[str, ...] = ("COUNT", "SUM", "AVG", "MIN", "MAX")
 COMPARE_OPS: tuple[str, ...] = ("=", "!=", "<", "<=", ">", ">=")
@@ -422,11 +427,22 @@ def _walk_value(value: object) -> Iterator[object]:
 
 
 def params_of(node: object) -> tuple[Param, ...]:
-    """Every distinct parameter referenced under ``node``, in first-use order."""
+    """Every distinct parameter referenced under ``node``, in first-use order.
+
+    One name bound to two different parameters is a ``RenderError`` (FL500): binding would
+    silently send one value where the other was meant.
+    """
     seen: dict[str, Param] = {}
     for n in walk(node):
-        if isinstance(n, ParamRef) and n.param.name not in seen:
-            seen[n.param.name] = n.param
+        if not isinstance(n, ParamRef):
+            continue
+        p = n.param
+        prior = seen.setdefault(p.name, p)
+        if prior != p:
+            raise RenderError(
+                f"FL500 parameter name {p.name!r} is bound to two different values "
+                f"({prior.family}:{prior.value!r} and {p.family}:{p.value!r})"
+            )
     return tuple(seen.values())
 
 

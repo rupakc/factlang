@@ -17,7 +17,7 @@ import datetime as dt
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 from typing import ClassVar, Literal
 
@@ -41,6 +41,7 @@ from factlang.syntax.formatter import format_number
 
 SampleMethod = Literal["keyhash", "system", "bernoulli"]
 SAMPLE_METHODS: tuple[str, ...] = ("keyhash", "system", "bernoulli")
+KEYHASH_BUCKETS = 1_000_000
 REPORT_LIMIT_MAX = 1000
 _FILTER_TYPES = (FCompare, FBool, FIn, FIsNull, FBetween, FAnd, FOr, FNot)
 
@@ -136,6 +137,13 @@ class SampleSpec:
             raise TypeError(f"sample fraction must be a Decimal, got {fraction!r}")
         if not fraction.is_finite() or not Decimal(0) < fraction <= Decimal(1):
             raise ValueError(f"sample fraction must be in (0, 1], got {fraction}")
+        # keyhash keeps a row iff bucket < round_half_up(fraction * 1e6) (spec 19); every
+        # method shares the floor so a sample can never be empty by construction
+        if (fraction * KEYHASH_BUCKETS).quantize(Decimal(1), rounding=ROUND_HALF_UP) == 0:
+            raise ValueError(
+                f"sample fraction {fraction} is below 5e-7: it rounds to 0 of "
+                f"{KEYHASH_BUCKETS} keyhash buckets and would keep no rows"
+            )
         _check_int("SampleSpec", "seed", self.seed)
         key = _as_tuple(self, "key")
         for k in key:

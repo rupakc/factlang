@@ -374,3 +374,12 @@ def test_key_overlap_rejects_a_duplicate_column_within_a_side() -> None:
         KeyOverlap((col(T, "a"), col(T, "b")), (col(U, "x"), col(U, "x")))
     # the same column name on the two sides is fine
     KeyOverlap((col(T, "id"),), (col(U, "id"),))
+
+
+def test_sample_fraction_whose_keyhash_threshold_rounds_to_zero_is_refused() -> None:
+    for method, key in (("keyhash", (C,)), ("system", ()), ("bernoulli", ())):
+        with pytest.raises(ValueError, match="below 5e-7"):
+            SampleSpec(method, Decimal("0.0000004999"), key=key)  # type: ignore[arg-type]
+    # 5e-7 rounds half-up to one bucket of 1_000_000: the smallest fraction accepted
+    SampleSpec("keyhash", Decimal("0.0000005"), key=(C,))
+    SampleSpec("system", Decimal("0.0000005"))

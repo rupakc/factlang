@@ -17,7 +17,7 @@ from factlang.semantics.refs import ColumnRef, EdgeRef, TableRef
 from factlang.semantics.types import TYPE_FAMILIES
 from factlang.sql.ast import Cast, Column, Compare, Expr, FromItem, Join, TableName
 from factlang.sql.lower import Lowerer, conj
-from factlang.sql.probe import bind_template, check_params, inline_template
+from factlang.sql.probe import bind_template, check_params, check_template, inline_template
 
 _ALIAS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -35,6 +35,7 @@ class RenderedFragment:
         if isinstance(self.params, list):
             object.__setattr__(self, "params", tuple(self.params))
         check_params(self.params)
+        check_template(self.sql_template, self.params)
 
     def bind(self, paramstyle: str) -> tuple[str, tuple[object, ...] | dict[str, object]]:
         return bind_template(self.sql_template, self.params, paramstyle)
@@ -79,17 +80,23 @@ class JoinEdge:
         return self.right[0].table
 
 
-def lower_filter(filter: FilterExpr, alias: str | None = None) -> Expr:
-    """A resolved filter as a boolean AST expression, columns qualified with ``alias``."""
+def lower_filter(filter: FilterExpr, alias: str | None = None, *, param_prefix: str = "p") -> Expr:
+    """A resolved filter as a boolean AST expression, columns qualified with ``alias``.
+
+    Parameters are named ``<param_prefix>1``, ``<param_prefix>2``, …; a host combining
+    several fragments in one statement gives each a different prefix.
+    """
     if alias is not None and not _ALIAS.fullmatch(alias):
         raise ValueError(f"alias {alias!r} is not a plain identifier")
-    return Lowerer().filter(filter, alias)
+    return Lowerer(param_prefix).filter(filter, alias)
 
 
 def lower_join(
     edges: Sequence[EdgeRef | JoinEdge],
     filters: Mapping[TableRef, FilterExpr] | None = None,
     aliases: Mapping[TableRef, str] | None = None,
+    *,
+    param_prefix: str = "p",
 ) -> tuple[FromItem, Expr | None]:
     """``FROM a JOIN b ON … [JOIN c ON …]`` for a path of edges, plus the WHERE part.
 
@@ -97,7 +104,8 @@ def lower_join(
     table already in the path to one new table (either direction). The left-most table's
     filter is returned as the WHERE part; every other table's filter is ANDed into the
     ``ON`` of the join that brings it in. Tables without an alias get ``t1``, ``t2``, … in
-    path order. Joins are INNER.
+    path order. Joins are INNER. Parameters are named ``<param_prefix>1``, …. Self-joins
+    (an edge from a table to itself) are not supported in v0.1.
     """
     hops = [JoinEdge((e.left,), (e.right,)) if isinstance(e, EdgeRef) else e for e in edges]
     if not hops:
@@ -107,7 +115,10 @@ def lower_join(
             raise TypeError(f"edges must be EdgeRef or JoinEdge, got {e!r}")
     given = dict(aliases or {})
     filters = dict(filters or {})
-    lowerer = Lowerer()
+    lowerer = Lowerer(param_prefix)
+    for i, e in enumerate(hops):
+        if e.left_table == e.right_table:
+            raise ValueError(f"join edge {i + 1}: self-joins are not supported in v0.1")
 
     order: list[TableRef] = [hops[0].left_table]
     for i, e in enumerate(hops):

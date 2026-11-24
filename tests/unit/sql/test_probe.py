@@ -74,9 +74,23 @@ def test_unknown_paramstyle_is_refused() -> None:
         probe().bind("dollar")
 
 
-def test_unknown_token_is_a_render_error() -> None:
+def test_unknown_token_is_refused_at_construction() -> None:
+    with pytest.raises(RenderError, match=r"FL500 .*unknown parameter.*p9"):
+        probe("SELECT {{p9}} AS x FROM t WHERE s = {{p1}}", (P1,))
+
+
+def test_unused_param_is_refused_at_construction() -> None:
+    with pytest.raises(RenderError, match=r"FL500 .*'p2'.*not used"):
+        probe("SELECT 1 AS x FROM t WHERE s = {{p1}}", (P1, P2))
+
+
+def test_fragment_validates_tokens_and_params_too() -> None:
+    from factlang.sql.fragment import RenderedFragment
+
     with pytest.raises(RenderError, match="FL500"):
-        probe("SELECT {{p9}} AS x", (P1,)).bind("qmark")
+        RenderedFragment("s = {{p1}}", (P1, P2), "duckdb", "verified")
+    with pytest.raises(RenderError, match="FL500"):
+        RenderedFragment("s = {{p3}}", (P1,), "duckdb", "verified")
 
 
 def test_duplicate_param_names_are_refused() -> None:

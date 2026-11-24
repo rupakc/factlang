@@ -12,6 +12,7 @@ Every user value becomes a fresh, uniquely named :class:`~factlang.sql.ast.Param
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -73,8 +74,11 @@ from factlang.sql.ast import (
     TableSample,
     Trim,
     UnionAll,
+    params_of,
 )
 from factlang.sql.probe import RenderError
+
+_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 KEYHASH_BUCKETS = 1_000_000
 _KEYED = frozenset({Metric.DISTINCT_KEYS, Metric.MAX_PER_KEY, Metric.DUPLICATE_KEYS})
@@ -102,14 +106,17 @@ def _not_null(cols: Sequence[Ident], qualifier: str | None = None) -> tuple[Expr
 
 
 class Lowerer:
-    """Allocates fresh parameter names for one statement or fragment."""
+    """Allocates fresh parameter names (``<prefix>1``, ``<prefix>2``, …) for one statement."""
 
-    def __init__(self) -> None:
+    def __init__(self, param_prefix: str = "p") -> None:
+        if not isinstance(param_prefix, str) or not _PREFIX.fullmatch(param_prefix):
+            raise ValueError(f"param_prefix {param_prefix!r} must be a plain identifier")
+        self._prefix = param_prefix
         self._count = 0
 
     def param(self, value: object, family: str) -> ParamRef:
         self._count += 1
-        return ParamRef(Param(f"p{self._count}", value, family))
+        return ParamRef(Param(f"{self._prefix}{self._count}", value, family))
 
     def rename(self, p: Param) -> ParamRef:
         return self.param(p.value, p.family)
@@ -149,19 +156,30 @@ class Lowerer:
 
     # -- sampling (Amendment B) --------------------------------------------------------
 
-    def source(self, table: TableRef, spec: SampleSpec | None) -> tuple[TableName, Expr | None]:
+    def source(
+        self,
+        table: TableRef,
+        spec: SampleSpec | None,
+        key_parts: tuple[Expr, ...] | None = None,
+    ) -> tuple[TableName, Expr | None]:
         """The FROM item and the WHERE predicate that sample ``table`` per ``spec``.
 
         Fraction 1 renders no sample (B2). ``keyhash`` excludes rows with a NULL key part,
         then keeps a row iff its bucket is below ``round_half_up(fraction * 1_000_000)``;
-        the seed is a string parameter, the threshold an integer parameter.
+        the seed is a string parameter, the threshold an integer parameter. ``key_parts``
+        overrides the hashed expressions (one per ``spec.key`` column, before the cast to
+        string): KeyOverlap passes its join key after ``cast_to`` so both sides hash alike.
         """
         if spec is None or spec.fraction == 1:
             return TableName(table), None
         if spec.method != "keyhash":
             return TableName(table, sample=TableSample(spec.method, spec.fraction, spec.seed)), None
+        parts = key_parts if key_parts is not None else tuple(Column(k) for k in spec.key)
         bucket = KeyHash(
-            tuple(Cast(Column(k), "string") for k in spec.key),
+            tuple(
+                p if isinstance(p, Cast) and p.family == "string" else Cast(p, "string")
+                for p in parts
+            ),
             self.param(str(spec.seed), "string"),
         )
         keep = Compare("<", bucket, self.param(keyhash_threshold(spec.fraction), "integer"))
@@ -170,6 +188,12 @@ class Lowerer:
     # -- primitives ----------------------------------------------------------------------
 
     def lower(self, plan: object) -> Select | UnionAll:
+        tree = self._dispatch(plan)
+        params_of(tree)  # FL500 when one parameter name maps to two different values
+        return tree
+
+    def _dispatch(self, plan: object) -> Select | UnionAll:
+        _check_single_read(plan)
         if isinstance(plan, ColumnAggregate):
             return self.column_aggregate(plan)
         if isinstance(plan, CompositeKeyAggregate):
@@ -274,7 +298,7 @@ class Lowerer:
             plan.table, plan.columns, flat, keyed, plan.filter, plan.sample, plan.result_columns()
         )
 
-    def value_membership(self, plan: ValueMembership) -> UnionAll:
+    def value_membership(self, plan: ValueMembership) -> Select:
         col = Column(plan.column)
         value: Expr = Cast(col, "string")
         if plan.split is not None:
@@ -316,7 +340,7 @@ class Lowerer:
         grouped = Column(Ident("value"), "v")
         summary += [Aliased(_NULL_TEXT, "value"), Aliased(_NULL_INT, "freq")]
         ranked += [Aliased(grouped, "value"), Aliased(_COUNT_ALL, "freq")]
-        return UnionAll(
+        union = UnionAll(
             (
                 Select(tuple(summary), from_, where),
                 Select(
@@ -327,6 +351,20 @@ class Lowerer:
                     limit=plan.report_limit,
                 ),
             )
+        )
+        # Row order is part of the result: summary first, then freq desc, value asc. The
+        # outer ORDER BY has no LIMIT; the only LIMIT stays on the ranked branch.
+        u = "u"
+        kind = Column(Ident("kind"), u)
+        summary_first = Case(((Compare("=", kind, Literal("summary")), Literal(0)),), Literal(1))
+        return Select(
+            tuple(Aliased(Column(Ident(a), u), a) for a in union.aliases),
+            SubqueryFrom(union, u),
+            order_by=(
+                OrderItem(summary_first),
+                OrderItem(Column(Ident("freq"), u), descending=True),
+                OrderItem(Column(Ident("value"), u)),
+            ),
         )
 
     def key_overlap(self, plan: KeyOverlap) -> Select:
@@ -343,9 +381,11 @@ class Lowerer:
             spec: SampleSpec | None,
             with_rows: bool,
         ) -> tuple[Select, Select | None]:
-            from_, sample_where = self.source(table, spec)
-            where = conj(self.opt_filter(filter_), sample_where)
             keys = tuple(key(c) for c in cols)
+            # keyhash over the join key hashes the key as compared (after cast_to)
+            parts = keys if spec is not None and spec.key == cols else None
+            from_, sample_where = self.source(table, spec, parts)
+            where = conj(self.opt_filter(filter_), sample_where)
             columns = [Aliased(k, nm.text) for k, nm in zip(keys, names, strict=True)]
             if with_rows:
                 columns.append(Aliased(_COUNT_ALL, "key_rows"))
@@ -423,6 +463,34 @@ class Lowerer:
                 Aliased(Column(Ident("data_type")), "data_type"),
             ),
             CatalogColumns(plan.table, plan.column),
+        )
+
+
+def _multi_read(plan: object) -> bool:
+    """True when the lowering reads the (sampled) table more than once."""
+    if isinstance(plan, (ValueMembership, KeyOverlap)):
+        return True
+    if isinstance(plan, ColumnAggregate):
+        return any(m in (Metric.MAX_PER_KEY, Metric.DUPLICATE_KEYS) for m in plan.metrics)
+    if isinstance(plan, CompositeKeyAggregate):
+        return any(m in _KEYED for m in plan.metrics)
+    return False
+
+
+def _check_single_read(plan: object) -> None:
+    """FL405: a block/row sample is not guaranteed to repeat across reads; keyhash is."""
+    specs = [getattr(plan, "sample", None), getattr(plan, "right_sample", None)]
+    methods = sorted(
+        {
+            s.method
+            for s in specs
+            if isinstance(s, SampleSpec) and s.method != "keyhash" and s.fraction != 1
+        }
+    )
+    if methods and _multi_read(plan):
+        raise RenderError(
+            f"FL405 sample method {methods[0]} needs a single read; use keyhash: "
+            f"{type(plan).__name__} reads the sampled table more than once"
         )
 
 

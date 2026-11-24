@@ -139,3 +139,12 @@ def test_fused_equals_unfused_on_duckdb(sampled: bool) -> None:
         for key, _ in fp.members:
             plan = plans[int(key[1:])]
             assert got[key] == _run(con, plan)
+
+
+def test_quoted_and_bare_table_never_fuse() -> None:
+    quoted = TableRef(None, None, Ident("Orders", quoted=True))
+    bare = TableRef(None, None, Ident("Orders"))
+    out = optimize([raw(agg("a", table=quoted)), raw(agg("b", table=bare))])
+    assert len(out) == 2
+    for p in out:
+        render(p.plan, get_profile("duckdb"))  # each renders, never FL500

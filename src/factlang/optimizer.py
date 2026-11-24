@@ -128,7 +128,7 @@ def _group_key(plan: ProbePlan) -> tuple[object, ...] | None:
         return None
     flt = canonical(plan.filter) if plan.filter is not None else None
     cols = plan.columns if isinstance(plan, CompositeKeyAggregate) else None
-    return (type(plan).__name__, plan.table.key(), flt, plan.sample, cols)
+    return (type(plan).__name__, plan.table, flt, plan.sample, cols)
 
 
 def _single(key: str, plan: ProbePlan) -> FusedProbe:

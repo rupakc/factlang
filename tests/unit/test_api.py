@@ -382,3 +382,13 @@ def test_spec_10_copy_matches_the_spec_when_available() -> None:
     block1 += end
     assert "```python\n" + block1 + "```" in text
     assert "```python\n" + block2 + "```" in text
+
+
+def test_quoted_and_bare_spelling_of_one_table_are_both_judged() -> None:
+    conn = _duckdb()
+    c = fl.DBAPIConnector(conn, "duckdb")
+    rep = fl.check('ROWS "Orders" VALUE >= 1\nCOUNT Orders VALUE == 3', connector=c)
+    assert isinstance(rep, fl.Report)
+    for o in rep.outcomes:
+        assert not any(d["code"] == "FL500" for d in o.diagnostics)
+    assert [o.verdict for o in rep.outcomes] == [fl.Verdict.PASS, fl.Verdict.PASS]

@@ -7,6 +7,7 @@ exactly the one spec 14.3 lists. Each check is a function over text with a negat
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -111,11 +112,58 @@ def test_architecture_has_ascii_and_mermaid_diagrams() -> None:
     assert "ProbePlan" in text and "|  lexer" in text
 
 
+# Names of the project FactLang originated in, stored only as sha256 digests of the lowercased
+# word so that the names themselves never appear in the repository (spec 14.3).
+FORBIDDEN_DIGESTS = frozenset(
+    {
+        (9, "da9206a05b870991e535379482bc43dc7a19ff3822b9af0a7a564dae25eb0b3b"),
+        (9, "aca236a34cc6f98aa97865cbacff8a30fe393022b29ef36355253cce125a864c"),
+    }
+)
+ROOT = WIKI.parents[1]
+SCANNED = ("src", "docs", "tests", ".claude", "README.md", "CHANGELOG.md", "CLAUDE.md")
+SCANNED += ("AGENTS.md", "MEMORY.md")
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def forbidden_hits(text: str, digests: frozenset[tuple[int, str]] = FORBIDDEN_DIGESTS) -> int:
+    """How many lowercased words contain a forbidden name (by digest of every window)."""
+    lengths = {n for n, _ in digests}
+    hits = 0
+    for word in _WORD.findall(text.lower()):
+        for n in lengths:
+            windows = (word[i : i + n] for i in range(len(word) - n + 1))
+            if any((n, hashlib.sha256(w.encode()).hexdigest()) in digests for w in windows):
+                hits += 1
+                break
+    return hits
+
+
+def _scanned_files() -> list[Path]:
+    out: list[Path] = []
+    for entry in SCANNED:
+        path = ROOT / entry
+        if path.is_file():
+            out.append(path)
+        elif path.is_dir():
+            out.extend(
+                p for p in sorted(path.rglob("*")) if p.is_file() and "__pycache__" not in p.parts
+            )
+    return out
+
+
 def test_no_originating_names() -> None:
-    forbidden = ("dataguard", "claimlang")
-    for name, path in _files().items():
-        low = path.read_text(encoding="utf-8").lower()
-        assert not [w for w in forbidden if w in low], name
+    files = _scanned_files()
+    assert len(files) > 100  # the scan really covers the tree
+    bad = []
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:  # binary
+            continue
+        if forbidden_hits(text):
+            bad.append(str(path.relative_to(ROOT)))
+    assert bad == []
 
 
 # -- negative controls -----------------------------------------------------------------------
@@ -144,3 +192,9 @@ def test_control_missing_see_also_is_found() -> None:
     assert see_also_problems("# T\n\nbody") != []
     assert see_also_problems("## See also\n\n- [[A]]\n\ntext after") != []
     assert see_also_problems("body\n\n## See also\n\n- [[A]]\n") == []
+
+
+def test_control_forbidden_name_is_found_by_digest() -> None:
+    digests = frozenset({(6, hashlib.sha256(b"foobar").hexdigest())})
+    assert forbidden_hits("A FooBar here, x_foobarbaz there; foo bar no.", digests) == 2
+    assert forbidden_hits("nothing to see", digests) == 0

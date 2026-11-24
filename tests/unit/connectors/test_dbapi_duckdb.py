@@ -166,6 +166,33 @@ def test_run_metadata_refuses_dml_and_leaves_data_alone(con: Any) -> None:
     assert con.execute("SELECT count(*) FROM orders").fetchone() == (4,)
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1 AS a$b$, 2 AS c ; DROP TABLE orders ; SELECT 3 AS d$b$",
+        "SELECT 1 AS \"x$q$\" ; DROP TABLE orders ; SELECT '$q$'",
+        "SELECT $q$ ; DROP TABLE orders ; $q$ AS s",
+    ],
+)
+def test_dollar_bypasses_end_to_end_leave_the_table(con: Any, sql: str) -> None:
+    with pytest.raises(ExecutionError) as info:
+        run_metadata(DBAPIConnector(con, "duckdb"), sql)
+    assert info.value.code == "FL703"
+    assert con.execute("SELECT count(*) FROM orders").fetchone() == (4,)
+
+
+def test_information_schema_with_bound_values_runs(con: Any) -> None:
+    c = DBAPIConnector(con, "duckdb")
+    rows = run_metadata(
+        c,
+        "WITH t AS (SELECT table_name, table_type FROM information_schema.tables"
+        " WHERE table_name = {{n}}) SELECT table_name FROM t WHERE table_type <> {{bad}}",
+        {"n": "orders", "bad": "x; delete from orders --"},
+    ).rows
+    assert rows == [{"table_name": "orders"}]
+    assert run_metadata(c, "EXPLAIN SELECT table_name FROM information_schema.tables").rows
+
+
 # -- PEP 249 fakes: format styles, missing description, timeout-shaped driver errors ----------
 
 

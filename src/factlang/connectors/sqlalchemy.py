@@ -61,6 +61,12 @@ class SQLAlchemyConnector:
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
         sa = _sqlalchemy()
+        if ":{{" in probe.sql_template:
+            raise ExecutionError(
+                "a {{name}} parameter directly after ':' cannot be bound through SQLAlchemy "
+                "text(); separate them",
+                code="FL700",
+            )
         sql, params = bind_template(
             escape_colons(probe.sql_template), probe.params, self.paramstyle
         )

@@ -16,6 +16,7 @@ from factlang.connectors import (
     check_metadata_sql,
     run_metadata,
 )
+from factlang.connectors.base import FORBIDDEN_WORDS
 from factlang.ir import Arity
 from factlang.semantics.filters import Param
 from factlang.sql import RenderedProbe
@@ -77,18 +78,18 @@ def test_recorder_satisfies_protocol() -> None:
     [
         "SELECT table_name FROM information_schema.tables",
         "  select 1",
-        "-- leading comment\nSELECT 1",
-        "/* block */ SELECT 1",
         "WITH t AS (SELECT 1 AS x) SELECT x FROM t",
         "SHOW TABLES",
         "show tables",
         "DESCRIBE orders",
         "DESC orders",
         "EXPLAIN SELECT 1",
-        "SELECT 'a;b' AS s",
-        "SELECT 'it''s' AS s, 'DELETE' AS k",
-        "SELECT is_insertable_into, update_rule FROM information_schema.tables",
-        "SHOW CREATE TABLE orders",
+        "SELECT 'it''s' AS s",
+        "SELECT is_insertable_into, update_rule, character_set_name, table_comment"
+        " FROM information_schema.tables",
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = {{s}}"
+        " AND table_name = {{t}} ORDER BY ordinal_position DESC",
+        "SELECT table_name\nFROM information_schema.tables\nWHERE table_type = 'BASE TABLE'",
     ],
 )
 def test_guard_accepts(sql: str) -> None:
@@ -169,7 +170,6 @@ def test_guard_refuses_multiple_statements(sql: str) -> None:
         "(SELECT 1)",
         "VALUES (1)",
         "PRAGMA table_info('orders')",
-        "SELECT 'unterminated",
         "SELECT 1 /* unterminated",
     ],
 )
@@ -207,8 +207,103 @@ def test_guard_refuses_chains_and_executable_comments(sql: str) -> None:
     _refused(sql)
 
 
-def test_arrow_and_executable_comment_text_inside_literals_is_fine() -> None:
-    check_metadata_sql("SELECT '->>' AS a, '/*! x */' AS b")
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # quotes are ignored: forbidden characters and words inside literals are refused too
+        "SELECT '->>' AS a",
+        "SELECT '/*! x */' AS b",
+        "SELECT 'a;b' AS s",
+        "SELECT 'DELETE' AS k",
+        "SELECT * FROM information_schema.table_privileges WHERE privilege_type = 'INSERT'",
+        "SELECT 1 -- comment",
+        "-- leading comment\nSELECT 1",
+        "/* block */ SELECT 1",
+        "SELECT '#' AS h",
+        "SELECT x FROM t WHERE y = 'a$b'",
+        "SHOW CREATE TABLE orders",
+    ],
+)
+def test_guard_is_over_strict_by_design(sql: str) -> None:
+    _refused(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # PostgreSQL / DuckDB: '$' inside identifiers next to dollar quotes
+        "SELECT 1 AS a$b$, 2 AS c ; DROP TABLE orders ; SELECT 3 AS d$b$",
+        # MySQL: '--' starts a comment only when followed by whitespace
+        "SELECT 2--'\n; DROP TABLE x --'",
+        # Snowflake: '//' line comments
+        "SELECT 1 // it's\n; DROP TABLE x; //'",
+        # Oracle alternative quoting
+        "SELECT q'{'}' AS a, 'x' AS b FROM dual",
+        "SELECT Q'[it's]' FROM dual",
+        "SELECT nq'<a>' FROM dual",
+        "SELECT Nq'(a)' FROM dual",
+    ],
+)
+def test_guard_refuses_review_bypasses(sql: str) -> None:
+    _refused(sql)
+
+
+@pytest.mark.parametrize(
+    "word",
+    [
+        "INTO",
+        "OUTFILE",
+        "DUMPFILE",
+        "COPY",
+        "CALL",
+        "EXEC",
+        "EXECUTE",
+        "MERGE",
+        "GRANT",
+        "REVOKE",
+        "SET",
+        "USE",
+        "BEGIN",
+        "COMMIT",
+        "LOAD",
+        "UNLOAD",
+        "PUT",
+        "GET",
+        "REMOVE",
+        "ATTACH",
+        "DETACH",
+        "PRAGMA",
+        "VACUUM",
+        "ANALYZE",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "CREATE",
+        "DROP",
+        "ALTER",
+        "TRUNCATE",
+    ],
+)
+def test_guard_refuses_every_listed_keyword_anywhere(word: str) -> None:
+    assert word in FORBIDDEN_WORDS
+    _refused(f"SELECT a FROM information_schema.tables WHERE x {word.lower()} y")
+
+
+def test_oracle_q_inside_a_word_is_not_a_quote_prefix() -> None:
+    check_metadata_sql("SELECT seq FROM information_schema.sequences")
+    # 'q' ends a word here, not a q-quote prefix; the literal itself is harmless
+    check_metadata_sql("SELECT faq'' FROM t")
+
+
+def test_values_with_forbidden_text_pass_as_parameters() -> None:
+    rec = Recorder()
+    run_metadata(
+        rec,
+        "SELECT table_name FROM information_schema.tables WHERE table_name = {{t}}",
+        {"t": "x'; delete from orders; -- $$ #"},
+    )
+    ((probe, _),) = rec.calls
+    assert probe.params[0].value == "x'; delete from orders; -- $$ #"
 
 
 @pytest.mark.parametrize(

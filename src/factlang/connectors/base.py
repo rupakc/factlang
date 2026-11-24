@@ -208,148 +208,69 @@ def deadline(timeout_s: float | None, handles: Sequence[object]) -> Iterator[thr
 # -- the metadata-SQL guard (R8, FL703) ------------------------------------------------------
 
 METADATA_KEYWORDS: tuple[str, ...] = ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")
-# keywords that write or run code; refused anywhere in the statement (``SHOW CREATE …`` aside)
-_WRITE_WORDS = frozenset(
+# Character sequences that, in some dialect, start a comment, a quote form, a second
+# statement or a chain: refused anywhere in the raw text, inside quotes too.
+FORBIDDEN_SEQUENCES: tuple[str, ...] = (";", "->>", "--", "/*", "*/", "//", "#", "$", "\\")
+# Write, DDL and control keywords: refused as whole words anywhere, inside quotes too.
+FORBIDDEN_WORDS: frozenset[str] = frozenset(
     (
-        *("INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "INTO", "COPY", "UNLOAD"),
-        *("DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE", "LOCK", "VACUUM"),
-        *("CALL", "EXEC", "EXECUTE", "ATTACH", "DETACH", "PRAGMA"),
+        *("INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "TRUNCATE", "INTO", "OUTFILE"),
+        *("DUMPFILE", "COPY", "LOAD", "UNLOAD", "PUT", "GET", "REMOVE"),
+        *("CREATE", "DROP", "ALTER", "RENAME", "GRANT", "REVOKE", "LOCK"),
+        *("CALL", "EXEC", "EXECUTE", "PREPARE", "DECLARE", "SET", "USE"),
+        *("BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "KILL", "NOTIFY"),
+        *("ATTACH", "DETACH", "PRAGMA", "VACUUM", "ANALYZE", "ANALYSE"),
     )
 )
-_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
-
-
-@dataclass(frozen=True)
-class _Lexing:
-    """One reading of the SQL text. A ``;`` (or a word) counts only if *every* reading finds
-    it outside literals, so a quirk of one dialect cannot hide a second statement."""
-
-    backslash: bool  # MySQL/BigQuery: backslash escapes inside quotes
-    hash_comment: bool  # MySQL: '#' starts a line comment
-    nested: bool  # PostgreSQL: block comments nest
-    dollar: bool  # PostgreSQL: $tag$ … $tag$ strings
-    brackets: bool  # T-SQL: [identifier]
-
-
-_LEXINGS = tuple(
-    _Lexing(b, h, n, d, k)
-    for b in (False, True)
-    for h in (False, True)
-    for n in (False, True)
-    for d in (False, True)
-    for k in (False, True)
-)
-_DOLLAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
+_TOKEN = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}")
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ORACLE_QUOTE = re.compile(r"(?<![A-Za-z0-9_])n?q'", re.IGNORECASE)
 
 
 def _refuse(reason: str) -> ExecutionError:
     return ExecutionError(f"metadata SQL refused by guard: {reason}", code="FL703")
 
 
-def _code_text(sql: str, mode: _Lexing) -> str:
-    """``sql`` with literals, quoted identifiers and comments blanked out (``' '``)."""
-    out: list[str] = []
-    i, n = 0, len(sql)
-    while i < n:
-        ch = sql[i]
-        if ch in "'\"`" or (ch == "[" and mode.brackets):
-            close = "]" if ch == "[" else ch
-            j = i + 1
-            while True:
-                if j >= n:
-                    raise _refuse("unterminated quoted text")
-                if mode.backslash and close != "]" and sql[j] == "\\":
-                    j += 2
-                    continue
-                if sql[j] == close:
-                    if j + 1 < n and sql[j + 1] == close:
-                        j += 2
-                        continue
-                    break
-                j += 1
-            out.append(" ")
-            i = j + 1
-        elif sql.startswith("--", i) or (ch == "#" and mode.hash_comment):
-            j = sql.find("\n", i)
-            if ";" in sql[i : (n if j < 0 else j)]:
-                raise _refuse("';' inside a comment")
-            out.append(" ")
-            i = n if j < 0 else j
-        elif sql.startswith("/*", i):
-            if sql.startswith(("/*!", "/*M!"), i):
-                raise _refuse("MySQL/MariaDB executable comment (/*! … */)")
-            depth, j = 1, i + 2
-            while depth:
-                if j >= n:
-                    raise _refuse("unterminated comment")
-                if sql.startswith("*/", j):
-                    depth -= 1
-                    j += 2
-                elif mode.nested and sql.startswith("/*", j):
-                    depth += 1
-                    j += 2
-                else:
-                    j += 1
-            if ";" in sql[i:j]:
-                raise _refuse("';' inside a comment")
-            out.append(" ")
-            i = j
-        elif ch == "$" and mode.dollar and (m := _DOLLAR.match(sql, i)) is not None:
-            tag = m.group(0)
-            end = sql.find(tag, m.end())
-            if end < 0:
-                raise _refuse("unterminated dollar-quoted text")
-            out.append(" ")
-            i = end + len(tag)
-        else:
-            out.append(ch)
-            i += 1
-    return "".join(out)
-
-
-def _check_reading(code: str) -> None:
-    if ";" in code:
-        raise _refuse("more than one statement (';' outside a string literal)")
-    if "->>" in code:
-        raise _refuse("'->>' outside a string literal (Snowflake statement chaining)")
-    words = [w.upper() for w in _WORD.findall(code)]
-    if not words or not code.lstrip() or not _WORD.match(code.lstrip()):
-        raise _refuse(f"the statement must start with one of {', '.join(METADATA_KEYWORDS)}")
-    first = words[0]
-    if first not in METADATA_KEYWORDS:
-        raise _refuse(f"{first} is not a metadata statement")
-    body = words[2:] if words[:2] == ["SHOW", "CREATE"] else words[1:]
-    bad = sorted(set(body) & _WRITE_WORDS)
-    if bad:
-        raise _refuse(f"{first} statement contains {', '.join(bad)}")
-    if first == "EXPLAIN" and ({"ANALYZE", "ANALYSE"} & set(words)):
-        raise _refuse("EXPLAIN ANALYZE executes the statement")
-
-
 def check_metadata_sql(sql: str) -> None:
-    """Raise ``ExecutionError`` ``FL703`` unless ``sql`` is one read-only metadata statement.
+    """Raise ``ExecutionError`` ``FL703`` unless ``sql`` passes the metadata guard (R8).
 
-    Accepted: one statement whose first keyword (after comments/whitespace) is one of
-    :data:`METADATA_KEYWORDS`. Refused: any ``;`` outside string literals (also inside
-    comments); Snowflake's ``->>`` chain operator outside literals; MySQL/MariaDB executable
-    comments (``/*! … */``, ``/*M! … */``), which are code; unterminated quotes or comments;
-    ``EXPLAIN ANALYZE``; and any write keyword anywhere in the statement body (data-modifying
-    CTEs, ``SELECT … INTO``, ``FOR UPDATE``, ``EXPLAIN DELETE …``), except the ``CREATE`` of
-    ``SHOW CREATE …``.
+    The guard is **lexer-free and deliberately over-strict**. It reads the raw text, quotes
+    ignored (a string literal is scanned like any other text), after removing the
+    ``{{name}}`` parameter tokens, and refuses:
 
-    The text is read under every combination of dialect lexing quirks (backslash escapes,
-    ``#`` comments, nested comments, dollar quotes, bracket identifiers) and must pass under
-    all of them. So a MySQL backslash-escaped quote (``'it\\'s'``), which leaves the ANSI
-    reading unterminated, is refused: the safe direction.
+    - any of :data:`FORBIDDEN_SEQUENCES` (``;`` ``->>`` ``--`` ``/*`` ``*/`` ``//`` ``#``
+      ``$`` ``\\``) anywhere;
+    - an Oracle alternative-quote prefix (``q'``, ``nq'``, any case) starting a token;
+    - any of :data:`FORBIDDEN_WORDS` (write, DDL and control keywords) as a whole word
+      anywhere, case-insensitive;
+    - a first word that is not one of :data:`METADATA_KEYWORDS`.
 
-    This is a keyword guard, not a sandbox. Side-effecting functions called from a
-    ``SELECT`` (``dblink_exec``, ``pg_terminate_backend``, …) are not detected; the
-    connection's credentials are the real security boundary.
+    Modelling each dialect's lexer was rejected: review found bypasses through PostgreSQL /
+    DuckDB dollar quotes, MySQL's ``--``, Snowflake's ``//`` and Oracle's ``q'``. Refusing a
+    legitimate query is the accepted price: pass any value containing these characters or
+    words as a bound parameter (``{{name}}``), which the scan never sees.
+
+    This is a keyword guard, not a sandbox: side-effecting functions called from a
+    ``SELECT`` (``dblink_exec``, ``pg_terminate_backend``, …) are not detected, and the
+    connection's credentials remain the real security boundary.
     """
     if not isinstance(sql, str):
         raise TypeError(f"metadata SQL must be a string, got {type(sql).__name__}")
-    for mode in _LEXINGS:
-        _check_reading(_code_text(sql, mode))
+    text = _TOKEN.sub(" ", sql)
+    for seq in FORBIDDEN_SEQUENCES:
+        if seq in text:
+            raise _refuse(f"{seq!r} is not allowed in metadata SQL (bind values as {{{{name}}}})")
+    if _ORACLE_QUOTE.search(text):
+        raise _refuse("Oracle alternative quoting (q'…') is not allowed")
+    words = [w.upper() for w in _WORD.findall(text)]
+    stripped = text.lstrip()
+    if not words or not stripped or _WORD.match(stripped) is None:
+        raise _refuse(f"the statement must start with one of {', '.join(METADATA_KEYWORDS)}")
+    if words[0] not in METADATA_KEYWORDS:
+        raise _refuse(f"{words[0]} is not a metadata statement")
+    bad = sorted(set(words) & FORBIDDEN_WORDS)
+    if bad:
+        raise _refuse(f"keyword(s) {', '.join(bad)} not allowed (bind values as {{{{name}}}})")
 
 
 def _infer_param(name: str, value: object) -> Param:
@@ -395,7 +316,9 @@ def run_metadata(
     Through :class:`~factlang.connectors.SQLAlchemyConnector`, whose ``text()`` would read
     ``:word`` as a bind parameter even inside a string literal, every ``:`` in ``sql`` is
     escaped before binding, so literals such as ``'a:b'`` and casts such as ``x::text``
-    reach the driver unchanged.
+    reach the driver unchanged. A ``{{name}}`` token *immediately* after a ``:`` (``x::{{t}}``)
+    cannot be bound by ``text()`` and is refused there with ``FL700``; put a space or other
+    text between them.
     """
     check_metadata_sql(sql)
     if isinstance(params, Mapping):
@@ -421,6 +344,8 @@ def rows_from_cursor(description: Any, records: Sequence[Sequence[Any]]) -> list
 
 __all__ = [
     "EXECUTION_CODES",
+    "FORBIDDEN_SEQUENCES",
+    "FORBIDDEN_WORDS",
     "METADATA_KEYWORDS",
     "AsyncConnector",
     "Connector",

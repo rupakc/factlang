@@ -135,6 +135,22 @@ def test_colons_are_escaped_for_text(fake_sqlalchemy: types.ModuleType) -> None:
     assert params == {"p": "v"}
 
 
+def test_token_right_after_colon_is_refused(fake_sqlalchemy: types.ModuleType) -> None:
+    engine = FakeEngine("postgresql")
+    p = RenderedProbe(
+        "SELECT x::{{t}} AS row_count FROM t",
+        (Param("t", "v", "string"),),
+        probe().arity,
+        probe().plan,
+        "postgres",
+        "verified",
+    )
+    with pytest.raises(ExecutionError) as info:
+        SQLAlchemyConnector(engine).execute(p, timeout_s=None)
+    assert info.value.code == "FL700"
+    assert engine.log == []  # refused before executing
+
+
 def test_real_sqlalchemy_keeps_colons_in_literals() -> None:
     sa = pytest.importorskip("sqlalchemy")
     engine = sa.create_engine("sqlite://")

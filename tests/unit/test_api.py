@@ -74,6 +74,8 @@ EXPORTS = {
     "EdgeRef",
     "check_pack",
     "Catalog",
+    # release: installed packs are discoverable from the public facade
+    "discover_packs",
 }
 
 
@@ -119,6 +121,7 @@ def test_usability_names_are_reachable_from_public_paths() -> None:
         assert getattr(fl.ir, name) is getattr(refs, name)
         assert name in fl.ir.__all__
     assert fl.check_pack is contract.check_pack
+    assert fl.discover_packs is contract.discover_packs
     assert fl.Catalog is catalog.Catalog
     assert fl.types.LiteralKind is ast.LiteralKind and "LiteralKind" in fl.types.__all__
     assert fl.sql.Param is filters.Param and "Param" in fl.sql.__all__
@@ -422,3 +425,15 @@ def test_quoted_and_bare_spelling_of_one_table_are_both_judged() -> None:
     for o in rep.outcomes:
         assert not any(d["code"] == "FL500" for d in o.diagnostics)
     assert [o.verdict for o in rep.outcomes] == [fl.Verdict.PASS, fl.Verdict.PASS]
+
+
+def test_types_is_importable_as_a_module_path() -> None:
+    """``from factlang.types import ...`` works and is the very module ``fl.types`` is."""
+    import factlang.types as types_path
+    from factlang.semantics import types as types_mod
+    from factlang.syntax import ast
+    from factlang.types import LiteralKind, ValueType, register_type
+
+    assert types_path is types_mod and fl.types is types_mod
+    assert LiteralKind is ast.LiteralKind
+    assert ValueType is types_mod.ValueType and register_type is types_mod.register_type

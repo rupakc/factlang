@@ -38,6 +38,9 @@ LAYERS: dict[str, float] = {
     # factlang/__init__.py, the public facade: above api, which it re-exports. The key
     # matches the package itself only, never as a prefix (an unmapped module is an error).
     "factlang": 16.5,
+    # factlang/types.py: the import path ``factlang.types`` for ``fl.types`` (a public alias
+    # of factlang.semantics.types), at the facade's level.
+    "factlang.types": 16.5,
     "factlang.agent": 17,
     "factlang.cli": 17,
     "factlang.__main__": 18,  # `python -m factlang` runs the CLI

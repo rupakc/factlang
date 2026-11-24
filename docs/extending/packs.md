@@ -51,8 +51,13 @@ package's `pyproject.toml`:
 mine = "my_project.factlang_pack:build_pack"
 ```
 
-`factlang.contract.discover_packs()` returns `{name: factory}` for every installed pack;
-calling a factory loads it.
+`fl.discover_packs()` returns `{name: factory}` for every installed pack; calling a
+factory loads it:
+
+```python
+for name, factory in fl.discover_packs().items():
+    assert isinstance(factory(), fl.ContractPack), name
+```
 
 ## Testing a pack
 

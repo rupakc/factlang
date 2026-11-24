@@ -24,7 +24,8 @@ series**. Libraries built on FactLang, schema profilers in particular, may depen
 | `fl.connectors.run_metadata` (also `fl.run_metadata`) | [Metadata SQL](../guide/measure.md#metadata-sql) |
 | `fl.Ident`, `fl.TableRef`, `fl.ColumnRef`, `fl.EdgeRef` (also in `fl.ir`) | [IR primitives](../extending/primitives.md) |
 | `fl.check_pack`, `fl.Catalog` (the catalog protocol) | [Packs](../extending/packs.md), [Catalogs](../extending/catalogs.md) |
-| `fl.types.LiteralKind`, `fl.types.ValueType`, `fl.types.register_type` | [Value types](../extending/types.md) |
+| `fl.discover_packs()`: `{name: factory}` for every pack installed under the `factlang.packs` entry-point group | [Packs](../extending/packs.md#distributing-a-pack) |
+| `fl.types.LiteralKind`, `fl.types.ValueType`, `fl.types.register_type` (also importable as `from factlang.types import …`) | [Value types](../extending/types.md) |
 | `fl.sql.Param` (a typed bind parameter) | [Fragments](../extending/fragments.md) |
 | `fl.connectors.Connector`, `AsyncConnector`, `QueryResult`, `ExecutionError` | [Connectors](../extending/connectors.md) |
 | `factlang.syntax.FILTER_KEYWORDS`: the words reserved inside a `WHERE` filter (the filter-keyword set only, not every keyword of the language) | [Filters](../guide/filters.md) |
@@ -89,6 +90,8 @@ outcomes, or with nothing measured at all, is ok but not verified.
 ::: factlang.contract.Example
 
 ::: factlang.contract.check_pack
+
+::: factlang.contract.discover_packs
 
 ::: factlang.semantics.signature.Operand
 

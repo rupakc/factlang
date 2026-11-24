@@ -21,7 +21,7 @@ from factlang.connectors import (
     run_metadata,
 )
 from factlang.connectors.base import AsyncConnector, Connector
-from factlang.contract import Contract, ContractPack, Example, check_pack
+from factlang.contract import Contract, ContractPack, Example, check_pack, discover_packs
 from factlang.diagnostics import DiagnosticBag
 from factlang.engine import Checker, CostEstimate, Measurement, Report
 from factlang.ir import Metric, ProbePlan
@@ -193,6 +193,7 @@ __all__ = [
     "compile",
     "connect",
     "connectors",
+    "discover_packs",
     "format",
     "ir",
     "lint",

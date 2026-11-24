@@ -39,6 +39,7 @@ mysql = ["pymysql>=1.1"]
 clickhouse = ["clickhouse-connect>=0.7"]
 mssql = ["pyodbc>=5"]
 oracle = ["oracledb>=2"]
+trino = ["trino>=0.330"]
 mcp = ["mcp>=1.0"]
 all = [
   "sqlglot>=25",
@@ -53,6 +54,7 @@ all = [
   "clickhouse-connect>=0.7",
   "pyodbc>=5",
   "oracledb>=2",
+  "trino>=0.330",
   "mcp>=1.0",
 ]
 dev = [
@@ -111,7 +113,8 @@ markers = [
 [tool.coverage.run]
 source = ["src/factlang"]
 omit = [
-  "src/factlang/connectors/adapters/*",
+  "src/factlang/connectors/sqlalchemy.py",
+  "src/factlang/connectors/bigquery.py",
   "src/factlang/agent/mcp.py",
   "src/factlang/sql/sqlglot_bridge.py",
 ]

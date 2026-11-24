@@ -672,6 +672,8 @@ def render_sqlglot(
     A.params_of(tree)  # FL500 when one parameter name maps to two different values
     conv = _Converter(target)
     sql = _generate(conv.statement(tree), target.sqlglot)
+    if target.profile is not None:  # e.g. ClickHouse SETTINGS, as on the native path
+        sql += target.profile.statement_suffix
     guard(sql)
     params = _ordered_params(sql, conv.params)
     return RenderedProbe(sql, params, plan.arity, plan, target.name, TIER)

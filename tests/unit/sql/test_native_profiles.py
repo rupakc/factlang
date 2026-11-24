@@ -274,7 +274,8 @@ def test_tsql_counts_are_count_big_sum_is_native_and_avg_widens() -> None:
 
 def test_no_profile_widens_sum() -> None:
     for name in NEW:
-        assert "SUM(amount) AS sum_value" in sql(
+        fn = "sumOrNull" if name == "clickhouse" else "SUM"  # NULL for no rows, not widened
+        assert f"{fn}(amount) AS sum_value" in sql(
             ColumnAggregate(ORDERS, AMOUNT, (Metric.SUM,)), name
         ), name
 
@@ -557,3 +558,34 @@ def test_schema_scoped_view_needs_the_schema_and_catalog_scope_the_catalog() -> 
     assert "FROM INFORMATION_SCHEMA.COLUMNS WHERE" in text and "shop." not in text
     text, _ = meta("bigquery", SHOP_ORDERS)
     assert "FROM shop.INFORMATION_SCHEMA.COLUMNS WHERE" in text
+
+
+def test_clickhouse_columns_win_over_same_named_aliases() -> None:
+    """ClickHouse resolves a bare name to a SELECT alias before a column: the membership
+    summary's ``NULL AS value`` turned ``COUNT(value)`` over a user column named ``value``
+    into ``COUNT(NULL)`` (Task 20 engine matrix). Every statement prefers the column."""
+    text = sql(ValueMembership(ORDERS, Ident("value"), ("1",)), "clickhouse")
+    assert text.endswith(" SETTINGS prefer_column_name_to_alias = 1")
+    assert text.count("SETTINGS prefer_column_name_to_alias") == 1
+    for name in NEW:
+        if name != "clickhouse":
+            assert "SETTINGS" not in sql(ValueMembership(ORDERS, STATUS, ("a",)), name)
+
+
+def test_clickhouse_aggregates_of_no_rows_are_null() -> None:
+    """ClickHouse ``max``/``min``/``sum``/``avg`` of no rows over a non-Nullable input give
+    0 (or nan), not NULL: an empty table would read as measured. ``-OrNull`` keeps NULL."""
+    metrics = (
+        Metric.ROW_COUNT,
+        Metric.NON_NULL,
+        Metric.MIN_VALUE,
+        Metric.MAX_VALUE,
+        Metric.SUM,
+        Metric.AVG,
+    )
+    text = sql(ColumnAggregate(ORDERS, AMOUNT, metrics), "clickhouse")
+    for fn in ("minOrNull", "maxOrNull", "sumOrNull", "avgOrNull"):
+        assert f"{fn}(amount)" in text, text
+    assert "COUNT(*) AS row_count" in text and "COUNT(amount) AS non_null" in text
+    fan = sql(ColumnAggregate(ORDERS, ID, (Metric.MAX_PER_KEY,)), "clickhouse")
+    assert "maxOrNull(" in fan and "MAX(" not in fan

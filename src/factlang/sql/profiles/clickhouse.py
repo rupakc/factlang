@@ -11,7 +11,13 @@ ANSI printer:
 - a LEFT JOIN fills unmatched right columns with type defaults unless
   ``join_use_nulls = 1``, so a subquery holding one carries that setting;
 - inside quotes a backslash is an escape, so quoted names have it doubled
-  (``quote_escapes``).
+  (``quote_escapes``);
+- a bare name resolves to a SELECT alias before a column (the membership summary's
+  ``NULL AS value`` would capture a user column named ``value``), so every statement ends
+  ``SETTINGS prefer_column_name_to_alias = 1``;
+- ``max``/``min``/``sum``/``avg`` of no rows give the type's default (0, or nan) unless the
+  input is Nullable, so they are spelled ``maxOrNull`` etc.: no rows stays NULL (``NO_DATA``),
+  never a measured 0.
 
 ``SAMPLE`` needs a table-level ``SAMPLE BY`` key, so neither table-sample method is
 declared (FL506); keyhash is supported.
@@ -52,6 +58,14 @@ TYPE_FAMILIES: tuple[tuple[str, str], ...] = (
 
 def _count_if(printer: Printer, x: A.CountIf) -> str:
     return f"countIf({printer.expr(x.cond)})"
+
+
+_OR_NULL = {"MIN": "minOrNull", "MAX": "maxOrNull", "SUM": "sumOrNull", "AVG": "avgOrNull"}
+
+
+def _agg(printer: Printer, x: A.Agg) -> str:
+    arg = "*" if x.arg is None else printer.expr(x.arg)
+    return f"{_OR_NULL.get(x.fn, x.fn)}({'DISTINCT ' if x.distinct else ''}{arg})"
 
 
 def _split_prefix(printer: Printer, x: A.SplitPrefix) -> str:
@@ -115,6 +129,7 @@ CLICKHOUSE = DialectProfile(
     unquoted_catalog_match="exact",
     quote_escapes={'"': '""', "\\": "\\\\"},
     overrides={
+        A.Agg: _agg,
         A.CountIf: _count_if,
         A.SplitPrefix: _split_prefix,
         A.Cast: _cast,
@@ -124,6 +139,7 @@ CLICKHOUSE = DialectProfile(
     # spec 19 keyhash ruling: cityHash64 is a UInt64, so no sign fold is needed
     keyhash_expr="(cityHash64({s}) % 1000000)",
     default_schema_sql="currentDatabase()",
+    statement_suffix=" SETTINGS prefer_column_name_to_alias = 1",
 )
 
 __all__ = ["CLICKHOUSE"]

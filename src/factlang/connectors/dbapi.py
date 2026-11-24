@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import contextlib
 import sys
+import threading
+from collections.abc import Callable
 from typing import Any
 
 from factlang.connectors.base import (
@@ -23,8 +25,8 @@ from factlang.connectors.base import (
 from factlang.sql import PARAMSTYLES, RenderedProbe
 
 
-def driver_paramstyle(connection: object) -> str | None:
-    """The PEP 249 ``paramstyle`` of the driver module that defines ``connection``'s class.
+def _driver_attr(connection: object, attr: str, accept: Callable[[object], bool]) -> object:
+    """The first accepted ``attr`` of the driver module defining ``connection``'s class.
 
     Walks the class's module path upwards (``trino.dbapi`` before ``trino``); a private
     extension module such as ``_duckdb`` is also looked up without its leading underscore.
@@ -39,10 +41,37 @@ def driver_paramstyle(connection: object) -> str | None:
         if name.startswith("_"):
             candidates.append(name.lstrip("_"))
     for name in candidates:
-        style = getattr(sys.modules.get(name), "paramstyle", None)
-        if isinstance(style, str) and style in PARAMSTYLES:
-            return style
+        value = getattr(sys.modules.get(name), attr, None)
+        if accept(value):
+            return value
     return None
+
+
+def driver_paramstyle(connection: object) -> str | None:
+    """The PEP 249 ``paramstyle`` of the driver module that defines ``connection``'s class."""
+    style = _driver_attr(
+        connection, "paramstyle", lambda v: isinstance(v, str) and v in PARAMSTYLES
+    )
+    return style if isinstance(style, str) else None
+
+
+# Drivers whose declared ``threadsafety`` overstates what one connection allows: the
+# clickhouse-connect DB-API declares 2 but its HTTP session refuses a second query while one
+# runs ("Attempt to execute concurrent queries within the same session").
+_ONE_STATEMENT_AT_A_TIME = frozenset({"clickhouse_connect"})
+
+
+def driver_threadsafety(connection: object) -> int | None:
+    """The PEP 249 ``threadsafety`` level of ``connection``'s driver module, if it declares one.
+
+    A driver known to overstate it (clickhouse-connect) is reported as level 1.
+    """
+    if (type(connection).__module__ or "").split(".")[0] in _ONE_STATEMENT_AT_A_TIME:
+        return 1
+    level = _driver_attr(
+        connection, "threadsafety", lambda v: isinstance(v, int) and not isinstance(v, bool)
+    )
+    return level if isinstance(level, int) else None
 
 
 class DBAPIConnector:
@@ -52,6 +81,12 @@ class DBAPIConnector:
     runs on a fresh cursor, closed afterwards. With ``timeout_s`` the statement is cancelled
     through the cursor's ``interrupt()``/``cancel()`` (duckdb, pyodbc), else the connection's
     (sqlite3, psycopg), when the driver has one, and reported as ``FL702``.
+
+    ``Checker`` runs probes from several threads. Unless the driver declares PEP 249
+    ``threadsafety`` >= 2 (threads may share a connection: psycopg, trino),
+    statements on the connection are serialised by a lock: a level-1 driver (pymysql, pyodbc,
+    duckdb; clickhouse-connect, which overstates its level) would otherwise interleave two
+    statements on one connection.
     """
 
     def __init__(self, connection: Any, dialect: str, paramstyle: str | None = None) -> None:
@@ -59,8 +94,18 @@ class DBAPIConnector:
         self.dialect = canonical_dialect(dialect)
         style = paramstyle if paramstyle is not None else driver_paramstyle(connection)
         self.paramstyle = check_paramstyle(style if style is not None else "qmark")
+        level = driver_threadsafety(connection)
+        self._lock: threading.Lock | None = (
+            None if level is not None and level >= 2 else threading.Lock()
+        )
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
+        if self._lock is None:
+            return self._execute(probe, timeout_s)
+        with self._lock:
+            return self._execute(probe, timeout_s)
+
+    def _execute(self, probe: RenderedProbe, timeout_s: float | None) -> QueryResult:
         sql, params = probe.bind(self.paramstyle)
         bound: Any = params if isinstance(params, dict) else list(params)
         cursor = self.connection.cursor()
@@ -82,4 +127,4 @@ class DBAPIConnector:
         return QueryResult(normalise_rows(probe, rows))
 
 
-__all__ = ["DBAPIConnector", "driver_paramstyle"]
+__all__ = ["DBAPIConnector", "driver_paramstyle", "driver_threadsafety"]

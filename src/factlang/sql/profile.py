@@ -124,6 +124,8 @@ class DialectProfile:
     cast_params: bool = False
     default_schema_sql: str | None = None
     default_catalog_sql: str | None = None
+    # appended to every full statement (ClickHouse ``SETTINGS …``); never to a fragment
+    statement_suffix: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", self.name):
@@ -189,6 +191,7 @@ class DialectProfile:
             "string_concat",
             "default_schema_sql",
             "default_catalog_sql",
+            "statement_suffix",
         ):
             value = getattr(self, name)
             if value is not None:

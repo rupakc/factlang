@@ -65,11 +65,16 @@ class Printer:
     # -- public entry points --------------------------------------------------------------
 
     def statement(self, node: A.Select | A.UnionAll) -> str:
-        """A full statement; a top-level UNION ALL is wrapped so it starts with SELECT."""
+        """A full statement; a top-level UNION ALL is wrapped so it starts with SELECT.
+
+        The profile's ``statement_suffix`` is appended.
+        """
         self._reserve(node)
         if isinstance(node, A.UnionAll):
-            return f"SELECT * FROM ({self.union(node)}) {self.derived_alias()}"
-        return self.select(node)
+            text = f"SELECT * FROM ({self.union(node)}) {self.derived_alias()}"
+        else:
+            text = self.select(node)
+        return text + self.profile.statement_suffix
 
     def expression(self, node: A.Expr) -> str:
         self._reserve(node)

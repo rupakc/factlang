@@ -584,3 +584,65 @@ def test_long_tail_metadata_compares_quoted_names_exactly_and_unquoted_case_fold
     assert [p.value for p in probe.params] == ["Orders", "Sales", "ID"]
     unquoted = bridge.render_sqlglot(MetadataQuery(ORDERS), "presto").sql_template
     assert "LOWER(table_name) = LOWER({{cat1}})" in unquoted
+
+
+# -- native spellings the bridge must honour exactly (Task 15 fix: 8cdc8c6) ---------------------
+
+BRIDGEABLE = [n for n in native_dialects() if n in SQLGLOT_NAMES]
+
+
+def _refs(max_parts: int) -> list[TableRef]:
+    refs = [
+        TableRef(None, None, Ident("orders")),
+        TableRef(None, Ident("sales"), Ident("Orders", quoted=True)),
+        TableRef(Ident("wh"), Ident("Sales", quoted=True), Ident("orders")),
+    ]
+    return refs[:max_parts]
+
+
+@pytest.mark.parametrize("name", BRIDGEABLE)
+def test_bridged_metadata_matches_native_for_qualified_refs(name: str) -> None:
+    # 2- and 3-part refs read the qualified catalog view (qualified_information_schema_sql,
+    # information_schema_scope) with the per-kind match modes, exactly as native
+    profile = get_profile(name)
+    assert profile is not None
+    for ref in _refs(profile.max_table_parts):
+        for column in (None, Ident("ID"), Ident("Id", quoted=True)):
+            plan = MetadataQuery(ref, column)
+            native = render(plan, profile)
+            bridged = renderer_for(name, prefer="sqlglot")(plan)
+            from_item = native.sql_template.split(" FROM ", 1)[1]
+            assert from_item in bridged.sql_template, (name, ref, column)
+            assert bridged.params == native.params
+    qualified = [
+        n
+        for n in BRIDGEABLE
+        if get_profile(n).qualified_information_schema_sql is not None  # type: ignore[union-attr]
+    ]
+    assert qualified, "some native profile reads a qualified catalog view"
+
+
+@pytest.mark.parametrize("name", ["bigquery", "clickhouse"])
+def test_bridged_quoting_honours_quote_escapes(name: str) -> None:
+    profile = get_profile(name)
+    assert profile is not None and profile.quote_escapes is not None
+    weird = Ident("a\\b`c", quoted=True)
+    table = TableRef(None, Ident("d\\s", quoted=True), Ident("t\\x", quoted=True))
+    plans = [
+        ColumnAggregate(table, weird, (Metric.NON_NULL, Metric.DISTINCT_KEYS)),
+        PatternCoverage(table, weird, "%a%"),
+        MetadataQuery(table, weird),
+    ]
+    for plan in plans:
+        native = render(plan, profile)
+        bridged = renderer_for(name, prefer="sqlglot")(plan)
+        assert bridged.params == native.params
+        if isinstance(plan, MetadataQuery):  # names are bound; the view prefix is quoted
+            assert native.sql_template.split(" FROM ", 1)[1] in bridged.sql_template
+            continue
+        for text in (weird.text, table.table.text, table.schema.text):  # type: ignore[union-attr]
+            spelled = profile.quote_ident(text)
+            assert spelled in native.sql_template
+            assert native.sql_template.count(spelled) == bridged.sql_template.count(spelled)
+    frag = render_filter(FIsNull(weird), table=table, dialect=name, prefer="sqlglot")
+    assert profile.quote_ident(weird.text) in frag.sql_template

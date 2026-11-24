@@ -20,8 +20,10 @@ native safety rule (spec 8.4):
 
 When the target also has a native FactLang profile (``prefer="sqlglot"`` cross-checks), the
 bridge takes that profile's limits and FactLang-owned spellings (cast types, ``now``, the
-keyhash expression, the information_schema query, sample declarations) and lets sqlglot
-re-spell them, so both paths mean the same thing.
+keyhash expression, sample declarations) and lets sqlglot re-spell them; its quoted
+identifiers (incl. ``quote_escapes``) and its information_schema query (qualified catalog
+views, per-kind match modes) are the native printer's own text, spliced verbatim, so both
+paths mean the same thing.
 
 Sampling (spec 19 B2; 0.1.0 ruling): sampling is rendered only for a dialect with a native
 profile, from that profile's own declarations: ``keyhash`` from its ``keyhash_expr``
@@ -229,15 +231,24 @@ class _Converter:
             raise TypeError(f"expected an Ident, got {i!r}")
         self.check_ident(i.text, i.quoted)
         if i.quoted:
-            return self.exp.Identifier(this=i.text, quoted=True)
+            return self._quoted(i.text)
         if i.text.lower() in self._keywords:
-            return self.exp.Identifier(this=self._fold(i.text), quoted=True)
+            return self._quoted(self._fold(i.text))
         return self.exp.Identifier(this=i.text, quoted=False)
+
+    def _quoted(self, text: str) -> Any:
+        """A quoted identifier; a native target's own quoting (incl. ``quote_escapes``)."""
+        profile = self.target.profile if self.target is not None else None
+        if profile is not None:  # spelled exactly as the native printer does
+            return self.exp.Var(this=profile.quote_ident(text))
+        return self.exp.Identifier(this=text, quoted=True)
 
     def alias(self, name: str) -> Any:
         """A FactLang-chosen (or caller-given) alias: exact text, quoted only if reserved."""
         self.check_ident(name, False)
-        return self.exp.Identifier(this=name, quoted=name.lower() in self._keywords)
+        if name.lower() in self._keywords:
+            return self._quoted(name)
+        return self.exp.Identifier(this=name, quoted=False)
 
     def table(self, ref: TableRef, alias: str | None = None) -> Any:
         parts = ref.parts()
@@ -459,7 +470,11 @@ class _Converter:
             )
             return e.Subquery(this=inner, alias=e.TableAlias(this=self.alias(x.alias)))
         if isinstance(x, A.CatalogColumns):
-            return e.Subquery(this=self.catalog_columns(x), alias=self._derived_alias())
+            inner = self.catalog_columns(x)
+            if isinstance(inner, e.Var):  # native query text: splice the whole FROM item
+                alias = self._derived_alias().this.name
+                return e.Var(this=f"({inner.this}) {alias}")
+            return e.Subquery(this=inner, alias=self._derived_alias())
         raise RenderError(
             f"FL500 the sqlglot bridge cannot convert {type(x).__name__} as a FROM item"
         )
@@ -482,7 +497,13 @@ class _Converter:
         return base, joins
 
     def catalog_columns(self, x: A.CatalogColumns) -> Any:
-        """The (native or generic) information_schema query; names bound as string params."""
+        """The information_schema query; names bound as string parameters.
+
+        A native target gets the native printer's own query, verbatim (its templates,
+        qualified catalog views, per-kind match modes and quoting); without a profile the
+        bridge writes the generic ``information_schema.columns`` query: quoted names
+        compare exactly, unquoted ones case-folded, an omitted schema is the current one.
+        """
         e = self.exp
         t = self.target
         p = t.profile if t is not None else None
@@ -490,51 +511,45 @@ class _Converter:
         limit = t.max_table_parts if t is not None else DEFAULT_MAX_TABLE_PARTS
         if len(ref.parts()) > limit:
             self.table(ref)  # raises FL505
+        if p is not None:
+            printer = Printer(p)
+            text = printer.catalog_columns(x)
+            for prm in printer.params:
+                self.param(prm)  # FL500 if a plan parameter already uses that name
+            return e.Var(this=text)
         conds: list[Any] = []
 
         def match(column: str, name: Ident) -> None:
             self.check_ident(name.text, name.quoted)
-            if p is None:  # quoted names compare exactly, unquoted ones case-folded
-                mode = "exact" if name.quoted else "casefold"
-            else:
-                mode = p.quoted_catalog_match if name.quoted else p.unquoted_catalog_match
             col = e.Column(this=e.Identifier(this=column))
-            if mode == "casefold":
-                rhs = e.Lower(this=self._catalog_param(name.text))
-                conds.append(e.EQ(this=e.Lower(this=col), expression=rhs))
+            if name.quoted:
+                conds.append(e.EQ(this=col, expression=self._catalog_param(name.text)))
                 return
-            value = {"lower": name.text.lower(), "upper": name.text.upper()}.get(mode, name.text)
-            conds.append(e.EQ(this=col, expression=self._catalog_param(value)))
+            rhs = e.Lower(this=self._catalog_param(name.text))
+            conds.append(e.EQ(this=e.Lower(this=col), expression=rhs))
 
-        dialect = t.sqlglot if t is not None else ""
         match("table_name", ref.table)
         if ref.schema is not None:
             match("table_schema", ref.schema)
-        elif p is not None and p.default_schema_sql is not None:
-            conds.append(_parse(f"table_schema = {p.default_schema_sql}", dialect))
-        elif p is None:
+        else:
             schema = e.Column(this=e.Identifier(this="table_schema"))
             current = getattr(e, "CurrentSchema", None)  # sqlglot < 26 has no node for it
             now = current() if current is not None else e.Anonymous(this="CURRENT_SCHEMA")
             conds.append(e.EQ(this=schema, expression=now))
         if ref.catalog is not None:
             match("table_catalog", ref.catalog)
-        elif p is not None and p.default_catalog_sql is not None:
-            conds.append(_parse(f"table_catalog = {p.default_catalog_sql}", dialect))
         if x.column is not None:
             match("column_name", x.column)
         where = conds[0]
         for cond in conds[1:]:
             where = e.And(this=where, expression=cond)
-        template = p.information_schema_sql if p is not None else _GENERIC_CATALOG
-        tree = _parse(template.format(where=f"{_WHERE_MARKER} = 1"), dialect)
+        tree = _parse(_GENERIC_CATALOG.format(where=f"{_WHERE_MARKER} = 1"), "")
         markers = [
             eq
             for eq in tree.find_all(e.EQ)
             if isinstance(eq.this, e.Column) and eq.this.name == _WHERE_MARKER
         ]
-        if len(markers) != 1:
-            raise RenderError("FL500 information_schema template must use {where} exactly once")
+        assert len(markers) == 1
         markers[0].replace(where)
         return tree
 

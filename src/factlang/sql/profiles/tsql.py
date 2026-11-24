@@ -4,10 +4,12 @@ service container in CI, Task 20).
 Slots: database.schema.table. Identifiers are quoted with ``"`` (QUOTED_IDENTIFIER ON, the
 ODBC/JDBC driver default), never with brackets. Spellings that differ from the ANSI printer:
 ``TOP n``; ``COUNT_BIG`` (``COUNT`` is a 32-bit INT and overflows past 2^31 rows); a
-conditional count is ``COUNT_BIG(CASE WHEN c THEN 1 END)``; ``AVG`` is taken over ``x * 1.0``
+conditional count is ``COUNT_BIG(CASE WHEN c THEN 1 END)``; ``AVG`` is taken over ``x + 0.0``
 (an integer AVG truncates); string concatenation is ``+``; the part before a separator is
-``LEFT(x, CHARINDEX(sep, x + sep) - 1)``; ``SUM`` is taken over ``x * CONVERT(BIGINT, 1)``
-(an INT sum would overflow). Metadata for a ref that names a database reads
+``LEFT(x, CHARINDEX(sep, x + sep) - 1)``; ``SUM`` is taken over ``x + CONVERT(BIGINT, 0)``
+(an INT sum would overflow; the additive form is exact for every DECIMAL(p,s) with s <= 18
+and p <= 37, see :func:`~factlang.sql.profiles._shared.widened_aggregates` for the rule and
+the residual). Metadata for a ref that names a database reads
 ``<db>.INFORMATION_SCHEMA.COLUMNS``, with DECIMAL/NUMERIC spelled ``decimal(p,s)`` so scale-0
 columns map to the integer family. No table-sample method is declared (FL506): page-level
 ``TABLESAMPLE … REPEATABLE`` repeatability is not proven in CI (ruling, Task 15 review), and
@@ -105,7 +107,7 @@ TSQL = DialectProfile(
     quoted_catalog_match="casefold",
     unquoted_catalog_match="casefold",
     overrides={
-        A.Agg: widened_aggregates("COUNT_BIG", sum_widen="CONVERT(BIGINT, 1)"),
+        A.Agg: widened_aggregates("COUNT_BIG", sum_widen="CONVERT(BIGINT, 0)"),
         A.CountIf: _count_if,
         A.SplitPrefix: _split_prefix,
     },

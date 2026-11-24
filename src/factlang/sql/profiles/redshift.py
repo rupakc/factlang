@@ -1,7 +1,7 @@
 """Amazon Redshift profile (tier ``native``: SQL parsed with sqlglot in CI, not executed).
 
 PostgreSQL-like, with these differences: no ``FILTER`` clause (``SUM(CASE …)``), the clock is
-``GETDATE()``, an integer ``AVG`` truncates (so it is taken over ``x * 1.0``), a bare
+``GETDATE()``, an integer ``AVG`` truncates (so it is taken over ``x + 0.0``), a bare
 ``VARCHAR`` is 256 bytes (casts use ``VARCHAR(65535)``) and there is no ``TABLESAMPLE``
 (both table-sample methods are FL506; keyhash is supported).
 """
@@ -77,14 +77,14 @@ REDSHIFT = DialectProfile(
     now_sql="GETDATE()",
     type_families=TYPE_FAMILIES,
     param_types=_PARAM_TYPES,
-    # svv_columns also lists late-binding views and external (Spectrum) tables
     # svv_all_columns covers every database (cross-database queries, datashares), local and
     # external tables; numeric precision/scale are spelled out so numeric(p,0) is an integer
     information_schema_sql=(
         "SELECT column_name, data_type FROM (SELECT database_name AS table_catalog, "
         "schema_name AS table_schema, table_name, column_name, CASE WHEN data_type = 'numeric' "
-        "AND numeric_scale IS NOT NULL THEN 'numeric(' || numeric_precision || ',' || "
-        "numeric_scale || ')' ELSE data_type END AS data_type FROM svv_all_columns) fl_cols "
+        "AND numeric_scale IS NOT NULL THEN 'numeric(' || "
+        "CAST(numeric_precision AS VARCHAR) || ',' || CAST(numeric_scale AS VARCHAR) || ')' "
+        "ELSE data_type END AS data_type FROM svv_all_columns) fl_cols "
         "WHERE {where}"
     ),
     # with the default enable_case_sensitive_identifier = false, quoted names fold too

@@ -264,8 +264,11 @@ def test_tsql_counts_are_count_big_and_sum_avg_widen() -> None:
     assert "COUNT_BIG(*) AS row_count" in text and "COUNT_BIG(amount) AS non_null" in text
     # an INT sum would overflow at 2^31 and an INT AVG divides as integers; the input type
     # is unknown at render time, so the widening is type-agnostic
-    assert "SUM(amount * CONVERT(BIGINT, 1)) AS sum_value" in text
-    assert "AVG(amount * 1.0) AS avg_value" in text
+    # additive widening: x + BIGINT 0 keeps a DECIMAL's scale (a multiply would reduce it
+    # for p >= 19); INT becomes BIGINT; NULL stays NULL
+    assert "SUM(amount + CONVERT(BIGINT, 0)) AS sum_value" in text
+    assert "AVG(amount + 0.0) AS avg_value" in text
+    assert "* 1.0" not in text and "CONVERT(BIGINT, 1)" not in text
     assert not re.search(r"\bCOUNT\(", text)
     assert not re.search(r"\bSUM\(amount\)", text)
 
@@ -280,7 +283,7 @@ def test_other_profiles_do_not_widen_sum() -> None:
 
 
 def test_redshift_avg_is_not_integer_division() -> None:
-    assert "AVG(amount * 1.0) AS avg_value" in sql(
+    assert "AVG(amount + 0.0) AS avg_value" in sql(
         ColumnAggregate(ORDERS, AMOUNT, (Metric.AVG,)), "redshift"
     )
 
@@ -352,12 +355,24 @@ CROSS_CATALOG_SOURCE = {
 }
 
 
+# the exact catalog condition: the folded name, or a casefold compare (T-SQL collation)
+CROSS_CATALOG_CONDITION = {
+    "snowflake": " AND table_catalog = {{cat3}}",
+    "trino": " AND table_catalog = {{cat3}}",
+    "databricks": " AND table_catalog = {{cat3}}",
+    "bigquery": " AND table_catalog = {{cat3}}",
+    "redshift": " AND table_catalog = {{cat3}}",
+    "tsql": " AND LOWER(table_catalog) = LOWER({{cat3}})",
+}
+
+
 @pytest.mark.parametrize("name", sorted(CROSS_CATALOG_SOURCE))
 def test_three_part_metadata_reads_the_catalogs_own_view(name: str) -> None:
     text, values = meta(name, SHOP3)
     assert CROSS_CATALOG_SOURCE[name] in text
-    assert " AND table_catalog = {{cat3}}" in text or "LOWER(table_catalog)" in text
-    assert len(values) == 3
+    assert CROSS_CATALOG_CONDITION[name] in text
+    folded = {"snowflake": "WH", "trino": "wh", "databricks": "wh", "redshift": "wh"}
+    assert values == [values[0], values[1], folded.get(name, "Wh")]
     # without a catalog the unqualified view (current catalog / default dataset) is read
     bare, _ = meta(name, ORDERS)
     assert "Wh" not in bare
@@ -413,7 +428,11 @@ def test_profiles_without_a_column_rule_use_the_table_rule() -> None:
     ("name", "spelled"),
     [
         ("tsql", "CASE WHEN data_type IN ('decimal', 'numeric') THEN data_type + '('"),
-        ("redshift", "CASE WHEN data_type = 'numeric' AND numeric_scale IS NOT NULL"),
+        (
+            "redshift",
+            "CASE WHEN data_type = 'numeric' AND numeric_scale IS NOT NULL THEN 'numeric(' || "
+            "CAST(numeric_precision AS VARCHAR) || ',' || CAST(numeric_scale AS VARCHAR) || ')'",
+        ),
         ("snowflake", "CASE WHEN data_type = 'NUMBER' AND numeric_scale = 0"),
     ],
 )

@@ -396,7 +396,7 @@ Each profile's table is tested against a fixture list of that engine's type name
 | `UNIQUE` | `UNIQUE t.c [WITH [c2,...]]` | ColumnAggregate / CompositeKeyAggregate (NON_NULL, DISTINCT_KEYS, MAX_PER_KEY, DUPLICATE_KEYS) | `duplicate_keys` (number of distinct complete keys held by >1 row), `max_rows_per_key` | `max_rows_per_key <= 1` |
 | `FANOUT` | `FANOUT t.c MAX_PER_KEY <=3 [WITH [...]]` | same | `max_rows_per_key` | Compare MAX_PER_KEY |
 | `VALUES` | `VALUES t.c IN ['a', 'b'] [SPLIT ':'] [ALLOW <=1%]` | ValueMembership | `undeclared_rows`, `undeclared_distinct`, `top_undeclared` (≤ `report_limit` {value,count}), `coverage` | `undeclared_rows == 0`; with `ALLOW`: `1 - coverage <= ALLOW` |
-| `RANGE` | `RANGE t.c BETWEEN [0, 100]` (numbers or typed temporal literals; strings are `FL305`) | ColumnAggregate(MIN_VALUE, MAX_VALUE) | `min_value`, `max_value` | min ≥ lo and max ≤ hi |
+| `RANGE` | `RANGE t.c BETWEEN [0, 100]` (numbers or typed temporal literals; a bare string is `FL305`, a string inside the pair `FL309`; DATE bounds over a TIMESTAMP column mean the half-open UTC interval [lo 00:00Z, hi+1d 00:00Z)) | ColumnAggregate(MIN_VALUE, MAX_VALUE) | `min_value`, `max_value`, `in_range` | `in_range` is true |
 | `PATTERN` | `PATTERN t.c LIKE '%@%.%' RATE >=99%` | PatternCoverage | `match_rate` = matching / non_null | Compare RATE |
 | `FRESH` | `FRESH t.c WITHIN 24h` | ColumnAggregate(MAX_VALUE, NOW) | `age_seconds` | `age_seconds <= WITHIN` |
 

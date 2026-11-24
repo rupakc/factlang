@@ -94,3 +94,53 @@ def test_cached_lru_eviction() -> None:
     assert inner.calls == 3
     c.columns(T("a"))
     assert inner.calls == 4
+
+
+def test_static_qualified_ref_does_not_fall_back_past_registered_schema() -> None:
+    c = StaticCatalog({"s.t": {"a": "int"}})
+    assert c.table_exists(T("t", "other")) is False
+    assert c.columns(T("t", "other")) is None
+    assert c.table_exists(T("t")) is False  # unqualified ref does not match s.t
+    plain = StaticCatalog({"t": {"a": "int"}})
+    assert plain.table_exists(T("t", "other")) is True  # catalog has no schema info for t
+    both = StaticCatalog({"s.t": {"a": "int"}, "t": {"b": "int"}})
+    assert both.table_exists(T("t", "other")) is False
+    assert both.columns(T("t", "s")) == {"a": "int"}
+    assert both.columns(T("t")) == {"b": "int"}
+
+
+class Exists:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def table_exists(self, ref: TableRef) -> bool | None:
+        self.calls.append("e")
+        return True
+
+    def columns(self, ref: TableRef) -> dict[str, str] | None:
+        self.calls.append("c")
+        return None
+
+
+def test_cached_table_exists_and_key_separation() -> None:
+    inner = Exists()
+    c = CachedCatalog(inner, clock=lambda: 0.0)
+    assert c.table_exists(T("t")) is True
+    assert c.table_exists(T("t")) is True
+    assert inner.calls == ["e"]
+    assert c.columns(T("t")) is None  # separate cache entry despite same ref
+    assert c.columns(T("t")) is None
+    assert inner.calls == ["e", "c"]
+
+
+def test_cached_ttl_exact_boundary() -> None:
+    now = [0.0]
+    inner = Exists()
+    c = CachedCatalog(inner, ttl_s=10, clock=lambda: now[0])
+    c.table_exists(T("t"))
+    now[0] = 9.999
+    c.table_exists(T("t"))
+    assert len(inner.calls) == 1
+    now[0] = 10.0  # age == ttl is expired
+    c.table_exists(T("t"))
+    assert len(inner.calls) == 2

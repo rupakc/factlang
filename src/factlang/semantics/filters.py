@@ -33,6 +33,10 @@ class Param:
     value: object
     family: str
 
+    def __post_init__(self) -> None:
+        if self.family not in PARAM_FAMILIES:
+            raise ValueError(f"unknown parameter family {self.family!r}")
+
 
 @dataclass(frozen=True)
 class FCompare:
@@ -101,7 +105,10 @@ def _value_text(value: object) -> str:
         return str(value)
     if isinstance(value, float):
         return repr(value)
-    if isinstance(value, (dt.datetime, dt.date)):
+    if isinstance(value, dt.datetime):
+        aware = value.replace(tzinfo=dt.timezone.utc) if value.tzinfo is None else value
+        return aware.astimezone(dt.timezone.utc).isoformat()
+    if isinstance(value, dt.date):
         return value.isoformat()
     return json.dumps(str(value), ensure_ascii=False)
 
@@ -116,6 +123,24 @@ def _col(c: Ident) -> str:
     return c.text.lower()
 
 
+def _flatten(expr: FAnd | FOr) -> list[FilterExpr]:
+    out: list[FilterExpr] = []
+    for item in expr.items:
+        if type(item) is type(expr):
+            assert isinstance(item, (FAnd, FOr))
+            out.extend(_flatten(item))
+        else:
+            out.append(item)
+    return out
+
+
+def _join(tag: str, expr: FAnd | FOr) -> str:
+    parts = sorted({canonical(i) for i in _flatten(expr)})
+    if len(parts) == 1:
+        return parts[0]
+    return tag + "[" + ",".join(parts) + "]"
+
+
 def canonical(expr: FilterExpr) -> str:
     """Stable text of ``expr`` used by the semantic hash."""
     if isinstance(expr, FCompare):
@@ -123,7 +148,7 @@ def canonical(expr: FilterExpr) -> str:
     if isinstance(expr, FBool):
         return f"({_col(expr.column)} = {_param(Param('', True, 'boolean'))})"
     if isinstance(expr, FIn):
-        items = ",".join(sorted(_param(p) for p in expr.params))
+        items = ",".join(sorted({_param(p) for p in expr.params}))
         word = "NOT IN" if expr.negated else "IN"
         return f"({_col(expr.column)} {word} [{items}])"
     if isinstance(expr, FIsNull):
@@ -132,7 +157,9 @@ def canonical(expr: FilterExpr) -> str:
     if isinstance(expr, FBetween):
         return f"({_col(expr.column)} BETWEEN {_param(expr.low)} {_param(expr.high)})"
     if isinstance(expr, FAnd):
-        return "AND[" + ",".join(sorted(canonical(i) for i in expr.items)) + "]"
+        return _join("AND", expr)
     if isinstance(expr, FOr):
-        return "OR[" + ",".join(sorted(canonical(i) for i in expr.items)) + "]"
-    return f"NOT[{canonical(expr.item)}]"
+        return _join("OR", expr)
+    if isinstance(expr, FNot):
+        return f"NOT[{canonical(expr.item)}]"
+    raise TypeError(f"not a filter expression: {expr!r}")

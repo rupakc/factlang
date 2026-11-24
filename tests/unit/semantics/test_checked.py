@@ -130,3 +130,57 @@ def test_checked_errors() -> None:
         claim([tr("t")], {"s": CheckedAttr(None, True, "boolean")}).number("s")
     with pytest.raises(KeyError):
         claim([tr("t")]).value("nope")
+
+
+def test_param_family_validated() -> None:
+    with pytest.raises(ValueError):
+        Param("p", 1, "number")
+    for fam in ("integer", "decimal", "float", "string", "boolean", "date", "timestamp"):
+        Param("p", 1, fam)
+
+
+def test_nested_and_or_flatten_and_dedupe() -> None:
+    a, b, c = eq("a", 1), eq("b", 2), eq("c", 3)
+    assert canonical(FAnd((a, FAnd((b, c))))) == canonical(FAnd((FAnd((a, b)), c)))
+    assert canonical(FOr((a, FOr((b, c))))) == canonical(FOr((FOr((a, b)), c)))
+    assert canonical(FAnd((a, a))) == canonical(a)
+    assert canonical(FOr((a, a))) == canonical(a)
+    # negative controls: AND inside OR is not flattened; distinct items stay distinct
+    assert canonical(FOr((a, FAnd((b, c))))) != canonical(FOr((a, b, c)))
+    assert canonical(FAnd((a, b))) != canonical(a)
+
+
+def test_in_dedupes_params() -> None:
+    x = FIn(Ident("a"), (P(1, "integer"), P(1, "integer"), P(2, "integer")))
+    y = FIn(Ident("a"), (P(1, "integer"), P(2, "integer")))
+    assert canonical(x) == canonical(y)
+    assert canonical(y) != canonical(FIn(Ident("a"), (P(1, "integer"),)))
+
+
+def test_timestamp_normalised_to_utc() -> None:
+    import datetime as dt
+
+    naive = dt.datetime(2025, 1, 31, 12, 0)
+    utc = dt.datetime(2025, 1, 31, 12, 0, tzinfo=dt.timezone.utc)
+    plus2 = dt.datetime(2025, 1, 31, 14, 0, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    other = dt.datetime(2025, 1, 31, 13, 0, tzinfo=dt.timezone.utc)
+    c = [canonical(eq("t", v, "timestamp")) for v in (naive, utc, plus2)]
+    assert len(set(c)) == 1
+    assert canonical(eq("t", other, "timestamp")) != c[0]
+
+
+def test_canonical_rejects_unknown_node() -> None:
+    with pytest.raises(TypeError):
+        canonical("nope")  # type: ignore[arg-type]
+
+
+def test_attrs_immutable_and_hash() -> None:
+    src = {"n": CheckedAttr(None, 1, "number")}
+    c = claim([tr("t")], src)
+    src["z"] = CheckedAttr(None, 2, "number")
+    assert not c.has("z")
+    with pytest.raises(TypeError):
+        c.attrs["z"] = CheckedAttr(None, 2, "number")  # type: ignore[index]
+    assert hash(c) == hash("h")
+    assert c == claim([tr("t")], {"n": CheckedAttr(None, 1, "number")})
+    assert len({c, claim([tr("t")], {"n": CheckedAttr(None, 1, "number")})}) == 1

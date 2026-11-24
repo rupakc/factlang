@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from types import MappingProxyType
 
 from factlang.diagnostics import Span
 from factlang.semantics.filters import FilterExpr
@@ -29,6 +30,12 @@ class CheckedClaim:
     span: Span
     source_text: str
     comment: str | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "attrs", MappingProxyType(dict(self.attrs)))
+
+    def __hash__(self) -> int:
+        return hash(self.semantic_hash)
 
     @property
     def table(self) -> TableRef:

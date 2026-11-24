@@ -42,10 +42,13 @@ class StaticCatalog:
     def __init__(self, tables: Mapping[str, Mapping[str, str]]) -> None:
         self._exact: dict[str, dict[str, str]] = {}
         self._lower: dict[str, dict[str, str]] = {}
+        self._depth: dict[str, int] = {}  # last part (lower) -> most parts of any key
         for key, cols in tables.items():
             norm = {name: str(typ).lower() for name, typ in cols.items()}
             self._exact[key] = norm
             self._lower.setdefault(key.lower(), norm)
+            segs = key.lower().split(".")
+            self._depth[segs[-1]] = max(self._depth.get(segs[-1], 0), len(segs))
 
     @classmethod
     def from_json(cls, path: str | Path) -> StaticCatalog:
@@ -61,6 +64,10 @@ class StaticCatalog:
             if hit is None and not any(p.quoted for p in sub):
                 hit = self._lower.get(key)
             if hit is not None:
+                # A shorter key is a fallback only when the table was registered without the
+                # dropped qualifiers; if a longer key exists for it, this ref names another.
+                if start > 0 and self._depth.get(sub[-1].text.lower(), 0) > len(sub):
+                    return None
                 return hit
         return None
 

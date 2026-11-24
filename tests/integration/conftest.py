@@ -1,44 +1,84 @@
 """Fixture warehouse with known answers (Task 19; reused by the Task 20 engine matrix).
 
-``make_shop(conn)`` builds the shop tables on any PEP 249 connection with portable SQL
-(``INTEGER``, ``VARCHAR``, ``DECIMAL``, ``TIMESTAMP`` literals). Every number the expectations
-in ``expectations.py`` name follows from the rows written here.
+``make_shop(conn, style=...)`` builds the shop tables on any PEP 249 connection. The schema is
+written once with neutral column types (:data:`TABLES`) and spelled per dialect by a
+:class:`~engines.Style` (``engines.py``), so every engine holds the same rows and every number
+the expectations in ``expectations.py`` name follows from the rows written here.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
 from typing import Any
 
 import pytest
+from engines import DUCKDB_STYLE, Style
 
 # The newest ``events.created_at`` is this long before the moment the fixture is built.
 EVENTS_AGE = dt.timedelta(hours=1)
 ORDERS = 100
 CUSTOMERS = 10
 PARENT_KEYS = 1000
+BIG = 2_000_000_000  # two of these overflow a 32-bit INTEGER sum
+
+# table -> ((column, neutral type), ...); see engines.Style.column_type
+TABLES: dict[str, tuple[tuple[str, str], ...]] = {
+    "customers": (("id", "INT"), ("name", "STR(40)"), ("email", "STR(80)")),
+    "orders": (
+        ("id", "INT"),
+        ("customer_id", "INT"),
+        ("status", "STR(40)"),
+        ("amount", "DEC(10,2)"),
+        ("created_at", "TS"),
+        ("shipped_at", "TS"),
+    ),
+    "order_items": (("order_id", "INT"), ("line", "INT"), ("price", "DEC(10,2)")),
+    "events": (("id", "INT"), ("created_at", "TS")),
+    "empty_t": (("id", "INT"), ("v", "INT"), ("s", "STR(40)"), ("ts", "TS")),
+    "all_null_t": (("id", "INT"), ("v", "INT"), ("s", "STR(40)"), ("ts", "TS")),
+    "Order Items": (("order", "INT"), ("qty", "INT")),
+    "refs_parent": (("k", "INT"),),
+    "refs_child": (("id", "INT"), ("k", "INT")),
+    "comp_left": (("a", "INT"), ("b", "STR(10)")),
+    "comp_right": (("a", "INT"), ("b", "STR(10)")),
+    # Task 20 engine checks: a column literally named ``value`` (a ValueMembership alias), a
+    # NULL among split/membership values, a boolean for bare filter atoms (BIT on T-SQL)
+    "tags": (("id", "INT"), ("label", "STR(20)"), ("value", "INT"), ("deleted", "BOOL")),
+    # NOT NULL columns, no rows: ClickHouse aggregates of no rows over a non-Nullable column
+    # give 0 / nan unless spelled -OrNull; they must stay NULL (NO_DATA), never a measured 0
+    "empty_nn": (("id", "INT!"), ("v", "INT!"), ("d", "DEC(10,2)!")),
+    # an INTEGER column whose SUM overflows 32 bits (T-SQL: loud ERROR, never a wrong number)
+    "big_t": (("id", "INT"), ("v", "INT")),
+}
+
+TAGS_ROWS: tuple[tuple[object, ...], ...] = (
+    (1, "a", 1, False),
+    (2, "a", 2, False),
+    (3, "b", 3, True),
+    (4, None, 4, True),
+    (5, "c: x", None, False),
+    (6, "c", 6, None),
+)
 
 
-def _lit(value: object) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, Decimal)):
-        return str(value)
-    if isinstance(value, dt.datetime):
-        return "TIMESTAMP '" + value.strftime("%Y-%m-%d %H:%M:%S") + "'"
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def _insert(cur: Any, table: str, rows: Sequence[Sequence[object]], chunk: int = 500) -> None:
+def _insert(cur: Any, style: Style, table: str, rows: Sequence[Sequence[object]]) -> None:
+    chunk = 500  # T-SQL takes at most 1000 rows per VALUES list
     for start in range(0, len(rows), chunk):
         values = ", ".join(
-            "(" + ", ".join(_lit(v) for v in row) + ")" for row in rows[start : start + chunk]
+            "(" + ", ".join(style.literal(v) for v in row) + ")"
+            for row in rows[start : start + chunk]
         )
-        cur.execute(f"INSERT INTO {table} VALUES {values}")
+        cur.execute(f"INSERT INTO {style.quote(table)} VALUES {values}")
+        if style.drain:
+            cur.fetchall()
+
+
+def _run(cur: Any, style: Style, sql: str) -> None:
+    cur.execute(sql)
+    if style.drain:
+        cur.fetchall()
 
 
 def order_status(i: int) -> str:
@@ -58,7 +98,7 @@ def items_per_order(i: int) -> int:
 def make_shop(
     conn: Any,
     *,
-    quote: Callable[[str], str] = lambda s: '"' + s + '"',
+    style: Style = DUCKDB_STYLE,
     now: dt.datetime | None = None,
 ) -> dt.datetime:
     """Create and fill the shop tables; returns the naive-UTC ``now`` the events are aged from.
@@ -73,29 +113,22 @@ def make_shop(
     - ``"Order Items"`` 3 rows, with a column named ``order``.
     - ``refs_parent`` keys 1..1000; ``refs_child`` 5 rows referencing 3 of them.
     - ``comp_left``/``comp_right``: a 2-part key pair; one left row has a NULL part.
+    - ``tags`` 6 rows (:data:`TAGS_ROWS`): ``label`` with a NULL and a ``'c: x'``; a column
+      named ``value`` (sum 16 over 5 non-NULL); ``deleted`` TRUE x2, FALSE x3, NULL x1.
+    - ``empty_nn`` 0 rows, every column NOT NULL (non-``Nullable`` on ClickHouse).
+    - ``big_t`` 2 rows with ``v`` = 2,000,000,000 (sum past 2^31).
+
+    Tables that already exist are dropped first, so a long-lived local engine can be reused.
     """
     if now is None:
         now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None, microsecond=0)
-    q = quote
     cur = conn.cursor()
-    ddl = [
-        "CREATE TABLE customers (id INTEGER, name VARCHAR(40), email VARCHAR(80))",
-        "CREATE TABLE orders (id INTEGER, customer_id INTEGER, status VARCHAR(40), "
-        "amount DECIMAL(10,2), created_at TIMESTAMP, shipped_at TIMESTAMP)",
-        "CREATE TABLE order_items (order_id INTEGER, line INTEGER, price DECIMAL(10,2))",
-        "CREATE TABLE events (id INTEGER, created_at TIMESTAMP)",
-        "CREATE TABLE empty_t (id INTEGER, v INTEGER, s VARCHAR(40), ts TIMESTAMP)",
-        "CREATE TABLE all_null_t (id INTEGER, v INTEGER, s VARCHAR(40), ts TIMESTAMP)",
-        f"CREATE TABLE {q('Order Items')} ({q('order')} INTEGER, qty INTEGER)",
-        "CREATE TABLE refs_parent (k INTEGER)",
-        "CREATE TABLE refs_child (id INTEGER, k INTEGER)",
-        "CREATE TABLE comp_left (a INTEGER, b VARCHAR(10))",
-        "CREATE TABLE comp_right (a INTEGER, b VARCHAR(10))",
-    ]
-    for stmt in ddl:
-        cur.execute(stmt)
+    for table, columns in TABLES.items():
+        _run(cur, style, style.drop_sql.format(style.quote(table)))
+        _run(cur, style, style.create(table, columns))
     _insert(
         cur,
+        style,
         "customers",
         [
             (i, f"c{i}", "broken" if i == CUSTOMERS else f"c{i}@shop.test")
@@ -105,6 +138,7 @@ def make_shop(
     base = dt.datetime(2026, 1, 1)
     _insert(
         cur,
+        style,
         "orders",
         [
             (
@@ -120,6 +154,7 @@ def make_shop(
     )
     _insert(
         cur,
+        style,
         "order_items",
         [
             (i, line, Decimal("1.10") * line)
@@ -128,14 +163,19 @@ def make_shop(
         ],
     )
     _insert(
-        cur, "events", [(i, now - EVENTS_AGE - dt.timedelta(hours=20 - i)) for i in range(1, 21)]
+        cur,
+        style,
+        "events",
+        [(i, now - EVENTS_AGE - dt.timedelta(hours=20 - i)) for i in range(1, 21)],
     )
-    _insert(cur, "all_null_t", [(i, None, None, None) for i in range(1, 11)])
-    _insert(cur, q("Order Items"), [(1, 2), (2, 1), (3, 5)])
-    _insert(cur, "refs_parent", [(k,) for k in range(1, PARENT_KEYS + 1)])
-    _insert(cur, "refs_child", [(1, 1), (2, 1), (3, 2), (4, 3), (5, 3)])
-    _insert(cur, "comp_left", [(1, "x"), (1, "x"), (2, "x"), (2, "y"), (3, None)])
-    _insert(cur, "comp_right", [(1, "x"), (2, "x"), (4, "z")])
+    _insert(cur, style, "all_null_t", [(i, None, None, None) for i in range(1, 11)])
+    _insert(cur, style, "Order Items", [(1, 2), (2, 1), (3, 5)])
+    _insert(cur, style, "refs_parent", [(k,) for k in range(1, PARENT_KEYS + 1)])
+    _insert(cur, style, "refs_child", [(1, 1), (2, 1), (3, 2), (4, 3), (5, 3)])
+    _insert(cur, style, "comp_left", [(1, "x"), (1, "x"), (2, "x"), (2, "y"), (3, None)])
+    _insert(cur, style, "comp_right", [(1, "x"), (2, "x"), (4, "z")])
+    _insert(cur, style, "tags", TAGS_ROWS)
+    _insert(cur, style, "big_t", [(1, BIG), (2, BIG)])
     close = getattr(cur, "close", None)
     if close is not None:
         close()

@@ -280,4 +280,96 @@ COVERAGE_FAIL = Case(
     },
 )
 
-__all__ = ["CASES", "COMPOSITE_JOIN", "COVERAGE_FAIL", "Approx", "Case"]
+
+def _exact(text: str) -> Approx:
+    """Equal to ``text`` as a decimal, whether the engine returns a float or a DECIMAL."""
+    return Approx(D(text), D(text))
+
+
+# Task 20: the engine traps reviews carried to the verified-engine matrix, on ``tags``
+# (``conftest.TAGS_ROWS``): a NULL among split / membership values (ClickHouse ``Nullable``
+# split, NULL in the ValueMembership UNION), a user column named ``value`` (the membership
+# alias), an integer AVG that must not truncate (T-SQL ``AVG(x + 0.0)``), bare boolean filter
+# atoms over a BOOLEAN (BIT on T-SQL) column.
+ENGINE_CASES: tuple[Case, ...] = (
+    Case("ROWS", "pass", "ROWS tags VALUE == 6", P, {"row_count": 6}),
+    Case(
+        "VALUES",
+        "pass",
+        "VALUES tags.label IN ['a', 'b', 'c'] SPLIT ':'",
+        P,
+        {"undeclared_rows": 0, "undeclared_distinct": 0, "coverage": D(1)},
+    ),
+    Case(
+        "VALUES",
+        "fail",
+        "VALUES tags.label IN ['a', 'b']",
+        F,
+        {
+            "undeclared_rows": 2,
+            "undeclared_distinct": 2,
+            "top_undeclared": ({"value": "c", "count": 1}, {"value": "c: x", "count": 1}),
+            "coverage": _r(3, 5),
+            "undeclared_share": _r(2, 5),
+        },
+    ),
+    Case(
+        "VALUES",
+        "pass",
+        "VALUES tags.value IN [1, 2, 3, 4, 6]",
+        P,
+        {"undeclared_rows": 0, "coverage": D(1)},
+    ),
+    Case(
+        "VALUES",
+        "fail",
+        "VALUES tags.value IN [1, 2, 3]",
+        F,
+        {"undeclared_rows": 2, "undeclared_distinct": 2, "coverage": _r(3, 5)},
+    ),
+    Case("NULLS", "pass", "NULLS tags.label RATE <= 20%", P, {"null_rate": _r(1, 6)}),
+    Case("SUM", "pass", "SUM tags.value VALUE == 16", P, {"value": 16}),
+    Case("AVG", "pass", "AVG tags.value VALUE == 3.2", P, {"value": _exact("3.2")}),
+    Case("AVG", "fail", "AVG tags.value VALUE == 3", F, {"value": _exact("3.2")}),
+    Case("UNIQUE", "pass", "UNIQUE tags.value", P, {"duplicate_keys": 0, "max_rows_per_key": 1}),
+    Case("DISTINCT", "pass", "DISTINCT tags.value VALUE == 5", P, {"value": 5}),
+    Case(
+        "RANGE",
+        "pass",
+        "RANGE tags.value BETWEEN [1, 6]",
+        P,
+        {"min_value": 1, "max_value": 6, "in_range": True},
+    ),
+    Case("COUNT", "pass", "COUNT tags VALUE == 2 WHERE deleted", P, {"value": 2}),
+    Case("COUNT", "pass", "COUNT tags VALUE == 3 WHERE NOT deleted", P, {"value": 3}),
+    Case("COUNT", "fail", "COUNT tags VALUE == 6 WHERE deleted = TRUE", F, {"value": 2}),
+    Case(
+        "PATTERN",
+        "pass",
+        "PATTERN tags.label LIKE 'c%' RATE >= 40%",
+        P,
+        {"match_rate": _r(2, 5)},
+    ),
+    Case("COUNT", "pass", "COUNT big_t VALUE == 2", P, {"value": 2}),
+    # no rows in NOT NULL (ClickHouse: non-Nullable) columns: measured 0 counts, NO_DATA rest
+    Case("ROWS", "empty", "ROWS empty_nn VALUE == 0", P, {"row_count": 0}),
+    Case("DISTINCT", "empty", "DISTINCT empty_nn.v VALUE == 0", P, {"value": 0}),
+    Case("SUM", "no_data", "SUM empty_nn.v VALUE == 0", N, {"value": None}),
+    Case("SUM", "no_data", "SUM empty_nn.d VALUE == 0", N, {"value": None}),
+    Case("AVG", "no_data", "AVG empty_nn.v VALUE == 0", N, {"value": None}),
+    Case("MIN", "no_data", "MIN empty_nn.v VALUE == 0", N, {"value": None}),
+    Case("MAX", "no_data", "MAX empty_nn.d VALUE == 0", N, {"value": None}),
+    Case("RANGE", "no_data", "RANGE empty_nn.v BETWEEN [0, 1]", N, {"in_range": None}),
+    Case("NULLS", "no_data", "NULLS empty_nn.v RATE <= 5%", N, {"null_rate": None}),
+    Case("UNIQUE", "no_data", "UNIQUE empty_nn.id", N, {"max_rows_per_key": None}),
+    Case(
+        "FANOUT",
+        "no_data",
+        "FANOUT empty_nn.id MAX_PER_KEY <= 3",
+        N,
+        {"max_rows_per_key": None},
+    ),
+    Case("AVG", "pass", "AVG big_t.v VALUE == 2000000000", P, {"value": _exact("2000000000")}),
+)
+
+__all__ = ["CASES", "COMPOSITE_JOIN", "COVERAGE_FAIL", "ENGINE_CASES", "Approx", "Case"]

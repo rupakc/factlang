@@ -78,11 +78,91 @@ jobs:
       - run: pytest -m "not integration and not live" --cov
         shell: bash
 
+  # The verb matrix on every `verified` engine (spec 8.5, 13, 14.2): service containers for
+  # postgres, mysql, clickhouse, sql server and trino, plus duckdb in-process. Every engine is
+  # required here, so one that cannot be reached fails the job instead of being skipped.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: factlang
+          POSTGRES_PASSWORD: factlang
+          POSTGRES_DB: factlang
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U factlang" --health-interval 5s --health-timeout 5s
+          --health-retries 30
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: factlang
+          MYSQL_DATABASE: factlang
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pfactlang" --health-interval 5s
+          --health-timeout 5s --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_USER: factlang
+          CLICKHOUSE_PASSWORD: factlang
+          CLICKHOUSE_DB: factlang
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        options: >-
+          --ulimit nofile=262144:262144
+          --health-cmd "clickhouse-client --user factlang --password factlang -q 'SELECT 1'"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: FactLang-Pass-2026
+        ports: ["1433:1433"]
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P FactLang-Pass-2026 -Q 'SELECT 1'"
+          --health-interval 10s --health-timeout 10s --health-retries 30
+      trino:
+        image: trinodb/trino:latest
+        ports: ["8080:8080"]
+        options: >-
+          --health-cmd "trino --execute 'SELECT 1'" --health-interval 10s
+          --health-timeout 10s --health-retries 30
+    env:
+      FACTLANG_REQUIRE_ENGINES: postgres,mysql,clickhouse,tsql,trino
+      FACTLANG_POSTGRES_DSN: postgresql://factlang:factlang@localhost:5432/factlang
+      FACTLANG_MYSQL_DSN: mysql://root:factlang@127.0.0.1:3306/factlang
+      FACTLANG_CLICKHOUSE_DSN: clickhouse://factlang:factlang@localhost:8123/factlang
+      FACTLANG_TSQL_DSN: "DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost,1433;UID=sa;PWD=FactLang-Pass-2026;TrustServerCertificate=yes"
+      FACTLANG_TRINO_DSN: trino://factlang@localhost:8080/memory/default
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: ODBC Driver 18 for SQL Server
+        run: |
+          if ! odbcinst -q -d -n "ODBC Driver 18 for SQL Server" >/dev/null 2>&1; then
+            curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+              | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+            curl -fsSL "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list" \
+              | sudo tee /etc/apt/sources.list.d/mssql-release.list
+            sudo apt-get update
+            sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
+          fi
+          odbcinst -q -d -n "ODBC Driver 18 for SQL Server"
+      - run: pip install -e ".[dev,postgres,mysql,clickhouse,mssql,trino]"
+      - run: pytest -m integration -rs tests/integration
+
   build:
     # Exactly one of test / test-full runs; the other is skipped. Build proceeds only when
-    # lint and the test job that ran all succeeded (a skipped job counts as passing here).
-    needs: [lint, test, test-full]
-    if: ${{ always() && needs.lint.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs['test-full'].result == 'success' || needs['test-full'].result == 'skipped') }}
+    # lint, integration and the test job that ran all succeeded (a skipped job counts as
+    # passing here).
+    needs: [lint, test, test-full, integration]
+    if: ${{ always() && needs.lint.result == 'success' && needs.integration.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs['test-full'].result == 'success' || needs['test-full'].result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

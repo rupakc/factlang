@@ -1,0 +1,121 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "factlang"
+dynamic = ["version"]
+description = "A formal language for verifying factual claims against data warehouses."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Rupak Chakraborty" }]
+keywords = ["data-quality", "fact-checking", "sql", "data-warehouse", "claims", "llm-agents"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Database",
+  "Topic :: Software Development :: Quality Assurance",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+sqlglot = ["sqlglot>=25"]
+sqlalchemy = ["sqlalchemy>=2"]
+bigquery = ["google-cloud-bigquery>=3"]
+snowflake = ["snowflake-connector-python>=3"]
+redshift = ["redshift-connector>=2"]
+databricks = ["databricks-sql-connector>=3"]
+postgres = ["psycopg[binary]>=3.1"]
+duckdb = ["duckdb>=1.0"]
+mysql = ["pymysql>=1.1"]
+clickhouse = ["clickhouse-connect>=0.7"]
+mssql = ["pyodbc>=5"]
+oracle = ["oracledb>=2"]
+mcp = ["mcp>=1.0"]
+all = [
+  "sqlglot>=25",
+  "sqlalchemy>=2",
+  "google-cloud-bigquery>=3",
+  "snowflake-connector-python>=3",
+  "redshift-connector>=2",
+  "databricks-sql-connector>=3",
+  "psycopg[binary]>=3.1",
+  "duckdb>=1.0",
+  "pymysql>=1.1",
+  "clickhouse-connect>=0.7",
+  "pyodbc>=5",
+  "oracledb>=2",
+  "mcp>=1.0",
+]
+dev = [
+  "pytest>=8",
+  "pytest-cov",
+  "hypothesis>=6",
+  "ruff",
+  "mypy",
+  "build",
+  "twine",
+  "duckdb>=1.0",
+  "sqlglot>=25",
+]
+docs = ["mkdocs-material", "mkdocstrings[python]"]
+
+[project.scripts]
+factlang = "factlang.cli:main"
+
+[project.entry-points."factlang.packs"]
+
+[project.urls]
+Homepage = "https://github.com/rupakc/factlang"
+Issues = "https://github.com/rupakc/factlang/issues"
+Changelog = "https://github.com/rupakc/factlang/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/factlang/__about__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/factlang"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/factlang", "tests", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["docs", ".superpowers", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: needs a service container or local engine",
+  "live: needs real warehouse credentials",
+]
+
+[tool.coverage.run]
+source = ["src/factlang"]
+omit = [
+  "src/factlang/connectors/adapters/*",
+  "src/factlang/agent/mcp.py",
+  "src/factlang/sql/sqlglot_bridge.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

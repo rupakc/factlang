@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from factlang.judge.outcome import Evidence, Outcome, Verdict, json_safe
+from factlang.judge.outcome import Evidence, Outcome, Verdict, json_safe, sample_method
 from factlang.judge.predicate import (
     Always,
     And,
@@ -37,4 +37,5 @@ __all__ = [
     "json_safe",
     "judge_rows",
     "payload_for",
+    "sample_method",
 ]

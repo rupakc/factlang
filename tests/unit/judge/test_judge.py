@@ -151,3 +151,19 @@ def test_outcome_to_dict_is_json_safe() -> None:
     assert back["diagnostics"] == [{"code": "FL313", "span": [1, 2]}]
     o2 = Outcome("x", "x", "h", "NOTE", Verdict.UNPROBEABLE, "semantic", {}, None, ())
     assert json.loads(json.dumps(o2.to_dict()))["evidence"] is None
+
+
+def test_evidence_sample_and_method() -> None:
+    from factlang.ir import SampleSpec
+    from factlang.judge import sample_method
+    from factlang.semantics.refs import Ident
+
+    assert Evidence().method == "exact" and Evidence().sample is None
+    s = SampleSpec("keyhash", Decimal("0.01"), 7, (Ident("id"),))
+    assert sample_method(None) == "exact"
+    assert sample_method(s) == "sampled:keyhash:0.01:7"
+    ev = Evidence(sample=s, method=sample_method(s))
+    o = Outcome("x", "x", "h", "ROWS", Verdict.PASS, "", {}, ev, ())
+    back = json.loads(json.dumps(o.to_dict()))["evidence"]
+    assert back["method"] == "sampled:keyhash:0.01:7"
+    assert back["sample"]["fraction"] == "0.01" and back["sample"]["seed"] == 7

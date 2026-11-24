@@ -11,6 +11,8 @@ from decimal import Decimal
 from enum import Enum
 from types import MappingProxyType
 
+from factlang.ir import SampleSpec
+
 
 class Verdict(str, Enum):
     PASS = "pass"  # measured, predicate true
@@ -30,6 +32,16 @@ class Evidence:
     duration_ms: float | None = None
     bytes_processed: int | None = None
     fused_with: tuple[str, ...] = ()
+    # Amendment B (B3): the sample a raw measurement ran on; claims are always exact
+    sample: SampleSpec | None = None
+    method: str = "exact"  # "exact" | "sampled:<method>:<fraction>:<seed>"
+
+
+def sample_method(sample: SampleSpec | None) -> str:
+    """``"exact"``, or ``"sampled:<method>:<fraction>:<seed>"`` for a sampled measurement."""
+    if sample is None:
+        return "exact"
+    return f"sampled:{sample.method}:{sample.fraction}:{sample.seed}"
 
 
 @dataclass(frozen=True)
@@ -88,4 +100,4 @@ def json_safe(value: object) -> object:
     return str(value)
 
 
-__all__ = ["Evidence", "Outcome", "Verdict", "json_safe"]
+__all__ = ["Evidence", "Outcome", "Verdict", "json_safe", "sample_method"]

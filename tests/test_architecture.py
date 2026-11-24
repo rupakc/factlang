@@ -9,7 +9,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parent.parent / "src" / "factlang"
 
 # module prefix -> layer (spec 5.1). Longest matching prefix wins.
-LAYERS: dict[str, int] = {
+LAYERS: dict[str, float] = {
     "factlang.__about__": 0,
     "factlang.diagnostics": 0,
     "factlang.syntax.tokens": 1,
@@ -17,12 +17,15 @@ LAYERS: dict[str, int] = {
     "factlang.syntax.ast": 3,
     "factlang.syntax.parser": 4,
     "factlang.syntax.formatter": 4,
-    "factlang.semantics.types": 5,
-    "factlang.semantics.signature": 5,
-    "factlang.semantics.catalog": 6,
-    "factlang.semantics.checked": 6,
-    "factlang.semantics.analyzer": 7,
-    "factlang.semantics.identity": 7,
+    # sub-layers within one layer number (spec 5.1): ordered, import earlier only
+    "factlang.semantics.refs": 5.0,
+    "factlang.semantics.types": 5.1,
+    "factlang.semantics.filters": 5.2,
+    "factlang.semantics.signature": 5.3,
+    "factlang.semantics.catalog": 6.0,
+    "factlang.semantics.checked": 6.1,
+    "factlang.semantics.identity": 7.0,
+    "factlang.semantics.analyzer": 7.1,
     "factlang.ir": 8,
     "factlang.judge": 9,
     "factlang.contract": 10,
@@ -113,6 +116,16 @@ def check_stdlib_only(source: str, filename: str = "<module>") -> list[str]:
     return problems
 
 
+def package_layer(package: str) -> float | None:
+    """Layer of a package import: the MAX layer of the mapped submodules inside it.
+
+    Importing a package is therefore legal only from above everything in it. Returns
+    None when no key lies inside ``package`` (the caller falls back to its own key).
+    """
+    inside = [v for k, v in LAYERS.items() if k.startswith(package + ".")]
+    return max(inside) if inside else None
+
+
 def _imported_modules(node: ast.Import | ast.ImportFrom, importer: str, is_pkg: bool) -> list[str]:
     if isinstance(node, ast.Import):
         return [a.name for a in node.names if a.name.split(".")[0] == "factlang"]
@@ -124,20 +137,29 @@ def _imported_modules(node: ast.Import | ast.ImportFrom, importer: str, is_pkg: 
         mod = node.module or ""
     if mod.split(".")[0] != "factlang":
         return []
-    out = [mod]
-    # `from factlang.x import y` may import submodule y
+    # `from pkg import name`: `name` is a submodule when it has its own LAYERS key
+    out: list[str] = []
     for alias in node.names:
         cand = f"{mod}.{alias.name}"
-        if layer_key(cand) not in (None, layer_key(mod)):
-            out = [cand if o == mod else o for o in out]
-            out.append(cand)
-    return out
+        out.append(cand if cand in LAYERS else mod)
+    return out or [mod]
+
+
+def target_layer(target: str) -> tuple[str, float] | None:
+    """(key, layer) for an imported module name, or None if unmapped."""
+    if target in LAYERS and target != "factlang":
+        return target, LAYERS[target]
+    pkg = package_layer(target)
+    if pkg is not None:  # a bare package such as factlang.syntax
+        return target, pkg
+    key = layer_key(target)
+    return (key, LAYERS[key]) if key is not None else None
 
 
 def check_layering(
     source: str, importer: str, filename: str = "<module>", is_pkg: bool = False
 ) -> list[str]:
-    """Violations: module-level imports not from a strictly lower layer."""
+    """Violations: module-level imports not from a strictly lower (sub-)layer."""
     own_key = layer_key(importer)
     if own_key is None:
         return [f"{filename}: module '{importer}' has no layer in LAYERS"]
@@ -145,13 +167,13 @@ def check_layering(
     problems: list[str] = []
     for node in _module_level_imports(ast.parse(source, filename)):
         for target in _imported_modules(node, importer, is_pkg):
-            key = layer_key(target)
-            if key is None:
+            resolved = target_layer(target)
+            if resolved is None:
                 problems.append(f"{filename}:{node.lineno}: '{target}' has no layer in LAYERS")
-            elif key != own_key and LAYERS[key] >= own:
+            elif resolved[0] != own_key and resolved[1] >= own:
                 problems.append(
                     f"{filename}:{node.lineno}: '{importer}' (layer {own}) imports "
-                    f"'{target}' (layer {LAYERS[key]})"
+                    f"'{target}' (layer {resolved[1]})"
                 )
     return problems
 
@@ -209,6 +231,38 @@ def test_layering_allows_downward_and_lazy_upward() -> None:
     assert check_layering(ok, "factlang.syntax.lexer") == []
     lazy = "def f():\n    from factlang.engine import Checker\n"
     assert check_layering(lazy, "factlang.syntax.lexer") == []
+
+
+def test_sublayers_are_ordered() -> None:
+    bad = "from factlang.semantics.signature import VerbSpec\n"
+    assert check_layering(bad, "factlang.semantics.types")  # negative control
+    assert (
+        check_layering("from factlang.semantics.types import T\n", "factlang.semantics.signature")
+        == []
+    )
+    assert check_layering(
+        "from factlang.semantics.analyzer import A\n", "factlang.semantics.identity"
+    )
+    assert (
+        check_layering("from factlang.semantics.identity import h\n", "factlang.semantics.analyzer")
+        == []
+    )
+    assert check_layering(
+        "from factlang.semantics.checked import C\n", "factlang.semantics.catalog"
+    )
+    assert check_layering("from factlang.semantics.filters import F\n", "factlang.semantics.types")
+    assert (
+        check_layering("from factlang.semantics.refs import R\n", "factlang.semantics.types") == []
+    )
+
+
+def test_package_imports_resolve_to_submodule_layer() -> None:
+    # `from factlang.syntax import tokens` is the tokens module (layer 1), legal from the lexer
+    assert check_layering("from factlang.syntax import tokens\n", "factlang.syntax.lexer") == []
+    # ... but a package import is the MAX layer of its members: the lexer is below the parser
+    assert check_layering("from factlang.syntax import Token\n", "factlang.syntax.lexer")
+    assert check_layering("from factlang.syntax import Token\n", "factlang.semantics.types") == []
+    assert check_layering("from factlang.syntax import parser\n", "factlang.syntax.lexer")
 
 
 def test_layering_allows_same_package_and_flags_unknown() -> None:

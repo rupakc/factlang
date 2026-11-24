@@ -29,7 +29,7 @@ mypy --strict src
 - Metric aliases (wire format): `row_count non_null distinct_keys max_rows_per_key min_value max_value sum_value avg_value duplicate_keys server_now`.
 - No input sampling, ever. No raw SQL in claims. Every literal is a typed bind parameter.
 - MIT license, `Copyright (c) 2026 Rupak Chakraborty`.
-- No mention anywhere of the company, product, datasets or table names of the project FactLang originated in (do not mention "ClaimLang"'s origin company; generic shop domain only: orders, customers, order_items, products, events, opportunities).
+- No mention anywhere of the company, product, datasets or table names of the project FactLang originated in (generic shop domain only: orders, customers, order_items, products, events, opportunities).
 - Commits: conventional-commit style, each commit leaves pytest green, each commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Stage explicit paths only (never `git add -A`). Never commit `.superpowers/`.
 - Use `python3`. Use a venv at /Users/rupak/factlang/.venv (create if absent; it is gitignored).

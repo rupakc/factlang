@@ -157,7 +157,7 @@ def optimize(items: Sequence[WorkItem], *, fuse: bool = True) -> list[FusedProbe
         if len(slot) == 1:
             out.append(_single(*slot[0]))
             continue
-        plans = tuple(p for _, p in slot)  # type: ignore[misc]
+        plans = tuple(p for _, p in slot)
         first = plans[0]
         assert isinstance(first, (ColumnAggregate, CompositeKeyAggregate))
         fused = FusedAggregate(first.table, plans, first.filter, first.sample)  # type: ignore[arg-type]

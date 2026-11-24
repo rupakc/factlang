@@ -781,8 +781,8 @@ ratio > 1) · FL311 no such table/column · FL312 cross-type join without CAST
 (warning) · FL313 could not verify names (info) · FL500 primitive not renderable ·
 FL501 metric not renderable · FL502 identifier not representable · FL503 cast not
 expressible · FL504 unknown dialect · FL505 too many table-name parts for dialect · FL600 decide reads a fact derive never
-produces · FL601 decide reads an undeclared attribute · FL602 contract has no
-examples · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
+produces · FL601 decide reads an undeclared attribute · FL602 contract has fewer than 3 valid + 3 invalid
+examples · FL603 an example does not behave as declared (or its plan/catalog function raises) · FL604 incomplete contract (decorator builder missing a part) · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
 `FL5xx` raise `RenderError`; `FL6xx` are asserted by tests over every registered
 pack; `FL7xx` become `ERROR` outcomes.
 

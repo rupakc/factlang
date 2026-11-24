@@ -120,7 +120,9 @@ class Contract:
 
 
 def plan_for(contract: Contract, claim: CheckedClaim) -> ProbePlan:
-    """The contract's plan for ``claim``; a sampled plan is a contract bug (FL404)."""
+    """The contract's plan for ``claim``. A sampled plan (FL404) and a filterable verb whose
+    plan drops the claim's ``WHERE`` filter (FL605; for ``KeyOverlap`` the left ``filter``)
+    are contract bugs and raise ``ValueError``."""
     if contract.plan is None:
         raise ValueError(f"contract {contract.name} has no plan (it is catalog or unprobeable)")
     plan = contract.plan(claim)
@@ -128,6 +130,16 @@ def plan_for(contract: Contract, claim: CheckedClaim) -> ProbePlan:
         raise ValueError(
             f"FL404 sampled plan in a claim: contract {contract.name} returned a plan with "
             "sample set; claims and contracts are always measured exactly"
+        )
+    if (
+        claim.filter is not None
+        and contract.spec.filterable
+        and getattr(plan, "filter", None) is None
+    ):
+        raise ValueError(
+            f"FL605 filterable verb {contract.name} dropped the claim's WHERE filter: its "
+            "plan has filter=None, so it would measure the whole table; pass "
+            "filter=claim.filter on"
         )
     return plan
 
@@ -512,8 +524,9 @@ def _check_example(contract: Contract, ex: Example, registry: VerbRegistry) -> l
         elif contract.catalog_facts is not None:
             contract.catalog_facts(claim, NullCatalog())
     except ValueError as exc:
-        if str(exc).startswith("FL404"):
-            return [f"FL404: {where}: {exc}"]
+        for code in ("FL404", "FL605"):
+            if str(exc).startswith(code):
+                return [f"{code}: {where}: {exc}"]
         return [f"FL603: {where}: planning raised ValueError: {exc}"]
     except Exception as exc:
         return [f"FL603: {where}: planning raised {type(exc).__name__}: {exc}"]
@@ -556,7 +569,8 @@ def check_pack(pack: ContractPack) -> list[str]:
     Codes: FL600/FL601 (decide reads undeclared facts/attributes), FL602 (too few
     examples), FL603 (an example does not behave as declared, or its plan/catalog function
     raises), FL604 (an incomplete decorator-built contract; reported, never raised, and
-    the other contracts are still checked), FL404 (a sampled plan). Aliases are checked
+    the other contracts are still checked), FL404 (a sampled plan), FL605 (a valid example with
+    a ``WHERE`` whose plan drops the filter). Aliases are checked
     through their target.
     """
     incomplete = pack._flush_lenient()

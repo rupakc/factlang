@@ -6,11 +6,13 @@ package; the live server tests are skipped when ``mcp`` is not installed.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import importlib
 import json
 import subprocess
 import sys
+import types
 from collections.abc import Iterator
 from typing import Any
 
@@ -71,6 +73,86 @@ def test_serve_without_the_extra_names_it(monkeypatch: pytest.MonkeyPatch) -> No
     _without_mcp(monkeypatch)
     with pytest.raises(ImportError, match=r"factlang\[mcp\]"):
         fl_mcp.serve(Checker(dialect="duckdb"))
+
+
+def test_run_needs_a_dsn_or_a_dialect(capsys: pytest.CaptureFixture[str]) -> None:
+    args = fl_mcp.configure_parser(argparse.ArgumentParser()).parse_args([])
+    assert fl_mcp.run(args) == 2
+    assert "--dsn" in capsys.readouterr().err
+
+
+class _FakeTypes:
+    class Tool:
+        @staticmethod
+        def model_validate(data: dict[str, Any]) -> dict[str, Any]:
+            return data
+
+    class TextContent:
+        def __init__(self, type: str, text: str) -> None:
+            self.type, self.text = type, text
+
+    class ListToolsResult:
+        @staticmethod
+        def model_validate(data: dict[str, Any]) -> dict[str, Any]:
+            return data
+
+    class CallToolResult:
+        @staticmethod
+        def model_validate(data: dict[str, Any]) -> dict[str, Any]:
+            return data
+
+
+class _FakeServerV1:
+    """mcp 1.x shape: decorator registration."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.handlers: dict[str, Any] = {}
+
+    def list_tools(self) -> Any:
+        return lambda fn: self.handlers.setdefault("list", fn)
+
+    def call_tool(self) -> Any:
+        return lambda fn: self.handlers.setdefault("call", fn)
+
+
+class _FakeServerV2:
+    """mcp 2.x shape: ``on_*`` handlers, no ``list_tools`` attribute."""
+
+    def __init__(self, name: str, *, on_list_tools: Any, on_call_tool: Any) -> None:
+        self.name = name
+        self.handlers = {"list": on_list_tools, "call": on_call_tool}
+
+
+def _fake_mcp(monkeypatch: pytest.MonkeyPatch, server: type) -> None:
+    lowlevel = types.SimpleNamespace(Server=server)
+    modules = {"mcp.server.lowlevel": lowlevel, "mcp.types": _FakeTypes}
+    monkeypatch.setattr(fl_mcp, "_mcp", lambda name: modules[name])
+
+
+def test_v1_server_raises_on_a_failed_call_so_the_sdk_sets_is_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_mcp(monkeypatch, _FakeServerV1)
+    server = fl_mcp.build_server(Checker(dialect="duckdb", catalog=NullCatalog()))
+    listed = asyncio.run(server.handlers["list"]())
+    assert [t["name"] for t in listed] == ["factlang_check", "factlang_lint", "factlang_explain"]
+    ok = asyncio.run(server.handlers["call"]("factlang_lint", {"claims": "UNIQUE orders.id"}))
+    assert json.loads(ok[0].text)["ok"] is True
+    with pytest.raises(fl_mcp.ToolCallFailed) as exc:
+        asyncio.run(server.handlers["call"]("factlang_lint", None))
+    assert json.loads(str(exc.value))["error"]["code"] == "invalid_arguments"
+
+
+def test_v2_server_returns_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_mcp(monkeypatch, _FakeServerV2)
+    server = fl_mcp.build_server(Checker(dialect="duckdb", catalog=NullCatalog()))
+    params = types.SimpleNamespace(name="nope", arguments={})
+    result = asyncio.run(server.handlers["call"](None, params))
+    assert result["isError"] is True
+    assert json.loads(result["content"][0].text)["error"]["code"] == "unknown_tool"
+    listed = asyncio.run(server.handlers["list"](None, None))
+    assert len(listed["tools"]) == 3
 
 
 def test_main_needs_a_dsn_or_a_dialect(capsys: pytest.CaptureFixture[str]) -> None:

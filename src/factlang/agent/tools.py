@@ -212,7 +212,7 @@ def _explain(checker: Checker, claims: str, dialect: str) -> dict[str, object]:
         target = Checker(
             dialect=dialect,
             pack=checker.pack,
-            catalog=checker._offline_catalog(),
+            catalog=checker.offline_catalog(),
             prefer=checker.prefer,
         )
     entries: list[dict[str, object]] = []

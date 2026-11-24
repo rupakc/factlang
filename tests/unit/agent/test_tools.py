@@ -79,7 +79,7 @@ def test_custom_pack_reaches_the_check_description() -> None:
 
     @pack.verb("POSITIVE", summary="All values > 0.", operands=[Operand.column()])
     def positive(claim: CheckedClaim) -> ColumnAggregate:
-        return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,))
+        return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,), filter=claim.filter)
 
     @positive.derive
     def _(payload: Any, claim: CheckedClaim) -> dict[str, object]:

@@ -1,10 +1,11 @@
-"""Contract completeness (spec 1.1 items 3 and 13, 12 FL6xx, 19 B4 FL404).
+"""Contract completeness (spec 1.1 items 3 and 13, 12 FL6xx incl. FL605, 19 B4 FL404).
 
 ``assert_pack_complete`` is run over every pack: decide reads only declared facts (FL600)
 and declared attributes (FL601), each contract has >=3 valid and >=3 invalid examples that
 (FL602) and behave as declared through ``parse`` + ``analyze`` with ``NullCatalog``, each
 starting with its own verb (FL603), every decorator-built contract is complete (FL604), and
-no plan samples its input (FL404). Each check has a negative control below.
+no plan samples its input (FL404) or drops a claim's WHERE filter (FL605). Each check has a
+negative control below.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ def assert_pack_complete(pack: ContractPack) -> None:
 
 
 def _plan(claim: CheckedClaim) -> ir.ProbePlan:
-    return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,))
+    return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,), filter=claim.filter)
 
 
 def _derive(payload: Mapping[str, object], claim: CheckedClaim) -> dict[str, object]:
@@ -167,6 +168,23 @@ def test_fl404_sampled_plan_negative_control() -> None:
     problems = check_pack(_pack(replace(_good(), plan=sampled)))
     assert set(_codes(problems)) == {"FL404"}
     assert len(problems) == 3  # one per valid example
+
+
+def test_fl605_plan_dropping_the_filter_negative_control() -> None:
+    def dropping(claim: CheckedClaim) -> ir.ProbePlan:
+        return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,))
+
+    problems = check_pack(_pack(replace(_good(), plan=dropping)))
+    assert _codes(problems) == ["FL605"]  # only the valid example that has a WHERE
+    assert "WHERE status = 'paid'" in problems[0]
+    # a verb that is not filterable cannot be handed a filter, so it is never FL605
+    spec = replace(_good().spec, filterable=False)
+    examples = tuple(e for e in EXAMPLES if "WHERE" not in e.source)
+    examples += (
+        Example("POSITIVE orders.amount AT_LEAST > 1"),
+        Example("POSITIVE orders.amount WHERE x = 1", valid=False, expect="FL308"),
+    )
+    assert check_pack(_pack(replace(_good(), spec=spec, plan=dropping, examples=examples))) == []
 
 
 def test_catalog_and_unprobeable_contracts_are_checked_too() -> None:

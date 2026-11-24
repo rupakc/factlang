@@ -30,6 +30,11 @@ INSTALL_HINT = "the MCP server needs the mcp package: pip install 'factlang[mcp]
 SERVER_NAME = "factlang"
 
 
+class ToolCallFailed(Exception):
+    """Raised by the mcp 1.x call handler for a failed call, so the SDK sets ``isError``;
+    its message is the tool's ``{"error": ...}`` JSON."""
+
+
 def _mcp(module: str) -> ModuleType:
     try:
         return importlib.import_module(module)
@@ -61,8 +66,9 @@ def build_server(checker: Checker, *, name: str = SERVER_NAME) -> Any:
     """A low-level ``mcp`` server with the three tools registered (needs ``factlang[mcp]``).
 
     Works with both ``mcp`` 1.x (decorator registration) and 2.x (``on_*`` handlers); a
-    failed call is a normal result carrying the ``{"error": ...}`` JSON (``isError`` set
-    where the version supports it).
+    failed call carries the ``{"error": ...}`` JSON with ``isError`` set (2.x: in the
+    result; 1.x: the handler raises :class:`ToolCallFailed`, which the SDK turns into an
+    error result with that JSON as its text).
     """
     lowlevel = _mcp("mcp.server.lowlevel")
     types = _mcp("mcp.types")
@@ -81,7 +87,11 @@ def build_server(checker: Checker, *, name: str = SERVER_NAME) -> Any:
             return tools
 
         async def call_tool_v1(tool: str, arguments: dict[str, Any] | None) -> list[Any]:
-            content, _ = await run_tool(tool, arguments)
+            content, failed = await run_tool(tool, arguments)
+            if failed:
+                # mcp 1.x sets isError only for a handler that raises; the message is the
+                # same {"error": ...} JSON a 2.x client gets as content
+                raise ToolCallFailed(content.text)
             return [content]
 
         server.list_tools()(list_tools_v1)
@@ -166,6 +176,7 @@ if __name__ == "__main__":  # pragma: no cover
 
 __all__ = [
     "INSTALL_HINT",
+    "ToolCallFailed",
     "build_server",
     "call_tool",
     "configure_parser",

@@ -65,6 +65,8 @@ EXPORTS = {
     "CostEstimate",
     "RenderedFragment",
     "run_metadata",
+    # review round 1: R10 names fl.connectors.run_metadata
+    "connectors",
 }
 
 
@@ -93,7 +95,8 @@ def test_exported_objects_are_the_real_ones() -> None:
     # R6 / R8: reachable through their packages too
     assert fl.sql.render_filter is sql_mod.render_filter
     assert fl.sql.render_join is sql_mod.render_join
-    assert fl.connectors.run_metadata is connectors.run_metadata  # type: ignore[attr-defined]
+    assert fl.connectors is connectors
+    assert fl.connectors.run_metadata is connectors.run_metadata
     assert fl.types.register is types_mod.register_type
     assert fl.__version__ == "0.1.0" and fl.LANGUAGE_VERSION == "1.0"
 
@@ -252,11 +255,28 @@ def test_measure_one_plan_or_many() -> None:
     assert all(x.payload == m.payload for x in ms)
 
 
+def test_measure_a_failing_plan_sets_error_and_never_raises() -> None:
+    conn = _duckdb()
+    c = fl.DBAPIConnector(conn, "duckdb")
+    missing = TableRef(None, None, Ident("no_such_table"))
+    m = fl.measure(fl.ir.ColumnAggregate(missing, Ident("x"), [fl.Metric.ROW_COUNT]), connector=c)
+    assert isinstance(m, fl.Measurement) and m.payload is None
+    assert m.error is not None and m.error.code.startswith("FL7")
+    assert m.verdict_hint is fl.Verdict.ERROR
+
+
+def test_offline_catalog_is_public_and_never_the_warehouse_one() -> None:
+    conn = _duckdb()
+    c = fl.DBAPIConnector(conn, "duckdb")
+    assert fl.Checker(c).offline_catalog() is None  # its own WarehouseCatalog runs queries
+    cat = StaticCatalog({"orders": {"id": "integer"}})
+    assert fl.Checker(c, catalog=cat).offline_catalog() is cat
+    assert fl.Checker(dialect="duckdb").offline_catalog() is None
+
+
 # --- spec section 10, run verbatim on DuckDB --------------------------------------------
 
-# Spec section 10's two code blocks, character for character, except ONE marked line:
-# spec 10 types ``parse_filter`` as ``-> tuple[FilterExpr | None, DiagnosticBag]`` while its
-# example passes the result straight to ``render_filter``; the tuple is unpacked here.
+# Spec section 10's two code blocks, character for character (drift-checked below).
 SPEC_10 = (
     """\
 import factlang as fl
@@ -278,7 +298,8 @@ report = checker.check(open("facts.fl").read())
 pack = fl.standard_pack().extend("mine", "1.0")
 @pack.verb("POSITIVE", operands=[fl.Operand.column()], filterable=True)
 def positive(claim):                                    # returns the plan
-    return fl.ir.ColumnAggregate(claim.table, claim.column, [fl.Metric.MIN_VALUE])
+    return fl.ir.ColumnAggregate(claim.table, claim.column, [fl.Metric.MIN_VALUE],
+                                 filter=claim.filter)  # a filterable verb must pass it on (FL605)
 @positive.derive
 def _(payload, claim): return {"min": payload["min_value"]}
 positive.decide(fl.Compare("min", ">", value=0))
@@ -288,7 +309,7 @@ positive.example("POSITIVE orders.amount", valid=True)
     + """\
 m = fl.measure(fl.ir.ValueMembership(t, col, declared=(), report_limit=20), connector=c)  # exact top-k
 est = checker.estimate("JOIN orders.customer_id -> customers.id MATCH >=99%")             # dry-run bytes
-f, diags = fl.parse_filter("deleted IS NULL OR NOT deleted")     # FilterExpr + diagnostics, no claim  # DEVIATION
+f, diags = fl.parse_filter("deleted IS NULL OR NOT deleted")     # (FilterExpr | None, DiagnosticBag), no claim
 frag = fl.sql.render_filter(f, table=t, dialect="snowflake")     # RenderedFragment(sql_template, params)
 snippet = fl.sql.render_join([edge1, edge2], dialect="bigquery",
                              filters={t1: f})                     # RenderedFragment, display/bindable
@@ -328,9 +349,9 @@ def test_spec_section_10_example_runs(tmp_path: Path, monkeypatch: pytest.Monkey
     assert isinstance(outcome, fl.Outcome) and outcome.verdict is fl.Verdict.PASS
     assert report.ok and [o.verdict for o in report.outcomes] == [fl.Verdict.PASS] * 2
     pack = ns["pack"]
-    ext = fl.Checker(connector, pack=pack).check("POSITIVE orders.amount")
+    ext = fl.Checker(connector, pack=pack).check("POSITIVE orders.amount WHERE status = 'paid'")
     assert [o.verdict for o in ext.outcomes] == [fl.Verdict.PASS]
-    assert ext.outcomes[0].facts["min"] == Decimal("2.25")
+    assert ext.outcomes[0].facts["min"] == Decimal("5.00")  # the filter reached the plan
     m = ns["m"]
     assert isinstance(m, fl.Measurement) and m.error is None and m.payload is not None
     est = ns["est"]
@@ -356,11 +377,8 @@ def test_spec_10_copy_matches_the_spec_when_available() -> None:
     if not spec.exists():
         pytest.skip("spec not shipped")
     text = spec.read_text(encoding="utf-8")
-    original = SPEC_10.replace(
-        'f, diags = fl.parse_filter("deleted IS NULL OR NOT deleted")     '
-        "# FilterExpr + diagnostics, no claim  # DEVIATION",
-        'f = fl.parse_filter("deleted IS NULL OR NOT deleted")            '
-        "# FilterExpr + diagnostics, no claim",
-    )
-    for line in original.splitlines():
-        assert line in text.splitlines(), line
+    end = 'positive.example("POSITIVE orders.amount", valid=True)\n'
+    block1, block2 = SPEC_10.split(end + "\n")
+    block1 += end
+    assert "```python\n" + block1 + "```" in text
+    assert "```python\n" + block2 + "```" in text

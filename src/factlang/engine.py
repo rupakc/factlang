@@ -373,7 +373,7 @@ class Checker:
         """
         bag = DiagnosticBag()
         out: list[RenderedProbe | Outcome] = []
-        for slot in self._front(text, self._offline_catalog(), bag):
+        for slot in self._front(text, self.offline_catalog(), bag):
             if slot.outcome is not None:
                 out.append(slot.outcome)
                 continue
@@ -444,8 +444,11 @@ class Checker:
             raise ValueError("this Checker has no connector to execute probes on")
         return self.connector
 
-    def _offline_catalog(self) -> Catalog | None:
-        """The catalog to analyse with when nothing may be executed."""
+    def offline_catalog(self) -> Catalog | None:
+        """The catalog to analyse with when nothing may be executed: the one the host gave,
+        or ``None`` when this Checker built its own warehouse catalog (that one runs queries).
+        Use it to build a sibling Checker for another dialect without touching the warehouse.
+        """
         return None if self.catalog is self._default_catalog else self.catalog
 
     def _renderer(self) -> Callable[[ProbePlan], RenderedProbe]:

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, overload
 
-from factlang import ir, sql
+from factlang import connectors, ir, sql
 from factlang.__about__ import LANGUAGE_VERSION, __version__
 from factlang.connectors import (
     BigQueryConnector,
@@ -186,6 +186,7 @@ __all__ = [
     "check",
     "compile",
     "connect",
+    "connectors",
     "format",
     "ir",
     "lint",

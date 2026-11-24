@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
@@ -35,7 +34,7 @@ def _spec(name: str = "POSITIVE") -> VerbSpec:
 
 
 def _plan(claim: CheckedClaim) -> ir.ProbePlan:
-    return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,))
+    return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,), filter=claim.filter)
 
 
 def _derive(payload: Mapping[str, object], claim: CheckedClaim) -> dict[str, object]:
@@ -317,19 +316,15 @@ def test_merge_carries_aliases_as_aliases() -> None:
 
 
 def test_spec_section_10_decorator_example_runs_verbatim() -> None:
-    # the names the facade will export (Task 21); the body below is spec section 10 verbatim
-    fl = SimpleNamespace(
-        standard_pack=lambda: ContractPack("standard", "1.0"),
-        Operand=Operand,
-        ir=ir,
-        Metric=Metric,
-        Compare=Compare,
-    )
+    import factlang as fl  # the real facade (Task 21); the body below is spec section 10
+
     pack = fl.standard_pack().extend("mine", "1.0")
 
     @pack.verb("POSITIVE", operands=[fl.Operand.column()], filterable=True)
     def positive(claim):  # type: ignore[no-untyped-def]  # returns the plan
-        return fl.ir.ColumnAggregate(claim.table, claim.column, [fl.Metric.MIN_VALUE])
+        return fl.ir.ColumnAggregate(
+            claim.table, claim.column, [fl.Metric.MIN_VALUE], filter=claim.filter
+        )  # a filterable verb must pass it on (FL605)
 
     @positive.derive
     def _(payload, claim):  # type: ignore[no-untyped-def]
@@ -344,11 +339,23 @@ def test_spec_section_10_decorator_example_runs_verbatim() -> None:
     claim = _claim("POSITIVE orders.amount WHERE status = 'paid'", pack)
     plan = plan_for(c, claim)
     assert isinstance(plan, ColumnAggregate) and plan.metrics == (Metric.MIN_VALUE,)
+    assert plan.filter is not None and plan.filter == claim.filter
     assert positive(claim) == plan  # the builder still calls the plan
     facts = c.derive({"min_value": Decimal("0.5")}, claim)
     assert facts == {"min": Decimal("0.5")}
     assert c.decide.evaluate(facts, claim)[0] is True
     assert c.examples == (Example("POSITIVE orders.amount"),)
+
+
+def test_fl605_filterable_plan_that_drops_the_filter() -> None:
+    pack = ContractPack("p", "1.0")
+    pack.register(_contract(plan=lambda c: ColumnAggregate(c.table, c.column, (Metric.MIN_VALUE,))))
+    c = pack.get("POSITIVE")
+    assert c is not None and c.spec.filterable
+    with pytest.raises(ValueError, match=r"^FL605 .*POSITIVE"):
+        plan_for(c, _claim("POSITIVE orders.amount WHERE status = 'paid'", pack))
+    # without a WHERE there is nothing to drop
+    assert plan_for(c, _claim("POSITIVE orders.amount", pack)).filter is None
 
 
 def _builder_pack() -> tuple[ContractPack, ContractBuilder]:

@@ -1,24 +1,30 @@
 """The ``factlang`` command (spec 10; layer 17), stdlib ``argparse`` only.
 
 Subcommands: ``lint FILE…``, ``fmt [--check] FILE…``, ``explain FILE --dialect D``,
-``check FILE (--dsn URL | --connector module:attr [--dialect D])`` and ``verbs [--json]``;
-``--format text|json|markdown`` before or after the subcommand.
+``check FILE (--dsn URL | --connector module:attr [--dialect D])``, ``verbs [--json]`` and
+``mcp`` (the MCP server, extra ``factlang[mcp]``); ``--format text|json|markdown`` before or
+after the subcommand. ``FILE`` may be ``-`` for standard input (``fmt`` then prints the
+canonical form). ``check`` reads the URL from ``FACTLANG_DSN`` when neither ``--dsn`` nor
+``--connector`` is given; prefer it, since ``--dsn`` puts credentials in the process list.
 
 Exit codes: 0 ok · 1 a claim FAILED (``fmt --check``: a file would be reformatted) ·
 2 invalid input (bad usage, unreadable file, a claim or directive with front-end errors,
-a connector that cannot be loaded) · 3 errors or undecidable (an ``ERROR`` or ``NO_DATA``
-outcome, a claim that cannot be rendered). When several apply: 2, then 1, then 3.
+a connector that cannot be loaded, a file that cannot be written) · 3 errors or undecidable
+(an ``ERROR`` or ``NO_DATA`` outcome, a claim that cannot be rendered, an unexpected
+internal error). When several apply: 2, then 1, then 3.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, TextIO
+from typing import TextIO
 
 from factlang.__about__ import __version__
 from factlang.api import format as format_text
@@ -46,11 +52,32 @@ class UsageError(Exception):
 # -- helpers ---------------------------------------------------------------------------------
 
 
+STDIN = "-"
+DSN_ENV = "FACTLANG_DSN"
+_stdin_text: list[str] = []  # standard input is read once, however often "-" is named
+
+
 def _read(path: str) -> str:
+    if path == STDIN:
+        if not _stdin_text:
+            buffer = getattr(sys.stdin, "buffer", None)
+            try:
+                raw = buffer.read().decode("utf-8") if buffer is not None else sys.stdin.read()
+            except (OSError, UnicodeDecodeError) as exc:
+                raise UsageError(f"cannot read standard input: {exc}") from exc
+            _stdin_text.append(raw)
+        return _stdin_text[0]
     try:
         return Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise UsageError(f"cannot read {path}: {exc}") from exc
+
+
+def _write(path: str, text: str) -> None:
+    try:
+        Path(path).write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise UsageError(f"cannot write {path}: {exc}") from exc
 
 
 def _cell(text: str) -> str:
@@ -72,11 +99,6 @@ def _verdict_exit(verdicts: Sequence[Verdict], front_end_errors: bool = False) -
 
 
 # -- lint ------------------------------------------------------------------------------------
-
-
-def _location(d: dict[str, Any]) -> tuple[int, int]:
-    span = d.get("span")
-    return (span["line"], span["col"]) if isinstance(span, dict) else (0, 0)
 
 
 def cmd_lint(args: argparse.Namespace, out: TextIO) -> int:
@@ -133,9 +155,14 @@ def cmd_fmt(args: argparse.Namespace, out: TextIO) -> int:
     pairs = [(p, *_formatted(p)) for p in args.files]  # validate every file before writing
     changed = [p for p, text, canonical in pairs if text != canonical]
     if not args.check:
+        if STDIN in args.files:
+            if len(args.files) != 1:
+                raise UsageError("fmt - (standard input) cannot be mixed with files")
+            out.write(pairs[0][2])  # standard input: print the canonical form
+            return EXIT_OK
         for p, text, canonical in pairs:
             if text != canonical:
-                Path(p).write_text(canonical, encoding="utf-8")
+                _write(p, canonical)
     if args.format == "json":
         _dump({"files": [{"file": p, "changed": p in changed} for p, _, _ in pairs]}, out)
     else:
@@ -167,6 +194,11 @@ def _claim_texts(text: str, items: Sequence[RenderedProbe | Outcome]) -> list[st
         else:
             texts.append(item.claim_text)
     return texts
+
+
+def _sql_comment(text: str) -> str:
+    """``text`` as SQL line comments: every line (a continued claim has several) gets ``-- ``."""
+    return "\n".join(f"-- {line}" for line in text.split("\n"))
 
 
 def cmd_explain(args: argparse.Namespace, out: TextIO) -> int:
@@ -207,18 +239,22 @@ def cmd_explain(args: argparse.Namespace, out: TextIO) -> int:
                 if fence:
                     out.write(f"**{_cell(str(r['claim']))}**\n\n```sql\n{r['sql']};\n```\n\n")
                 else:
-                    out.write(f"-- {r['claim']}\n{r['sql']};\n\n")
+                    out.write(f"{_sql_comment(str(r['claim']))}\n{r['sql']};\n\n")
             else:
                 head = f"{r['verdict']}: {r['explanation']}"
                 if fence:
                     out.write(f"**{_cell(str(r['claim']))}**\n\n> {_cell(head)}\n\n")
                 else:
-                    out.write(f"-- {r['claim']}\n-- {head}\n\n")
+                    out.write(f"{_sql_comment(str(r['claim']))}\n{_sql_comment(head)}\n\n")
     verdicts = [i.verdict for i in items if isinstance(i, Outcome)]
     return _verdict_exit(verdicts)
 
 
 # -- check -----------------------------------------------------------------------------------
+
+
+def _describe(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _is_connector(obj: object) -> bool:
@@ -232,10 +268,15 @@ def load_connector(target: str, dialect: str | None) -> Connector | AsyncConnect
     module_name, sep, attr = target.partition(":")
     if not sep or not module_name or not attr:
         raise UsageError(f"--connector must be module:attr, got {target!r}")
+    cwd = os.getcwd()
+    if cwd not in sys.path and "" not in sys.path:
+        # the console script's sys.path[0] is its bin directory, not the working directory;
+        # module:attr names a module the user sees from where they run the command
+        sys.path.insert(0, cwd)
     try:
         module = importlib.import_module(module_name)
-    except Exception as exc:
-        raise UsageError(f"cannot import {module_name!r}: {exc}") from exc
+    except (Exception, SystemExit) as exc:
+        raise UsageError(f"cannot import {module_name!r}: {_describe(exc)}") from exc
     obj: object = module
     for part in attr.split("."):
         try:
@@ -245,8 +286,8 @@ def load_connector(target: str, dialect: str | None) -> Connector | AsyncConnect
     if not _is_connector(obj) and callable(obj) and not hasattr(obj, "cursor"):
         try:
             obj = obj()
-        except Exception as exc:
-            raise UsageError(f"{target} raised {type(exc).__name__}: {exc}") from exc
+        except (Exception, SystemExit) as exc:  # a factory calling sys.exit() is a bad target
+            raise UsageError(f"{target} raised {_describe(exc)}") from exc
     if _is_connector(obj):
         return obj  # type: ignore[return-value]
     if hasattr(obj, "cursor"):
@@ -267,8 +308,16 @@ def _render_report(report: Report, fmt: str, out: TextIO) -> None:
         out.write(f"{o.verdict.name:<11} {o.claim_text.strip()}\n")
         if o.explanation:
             out.write(f"            {o.explanation}\n")
+    # errors already shown with their claim (an INVALID outcome's explanation) are not
+    # repeated; the rest (e.g. a broken USE directive with no claim after it) are printed once
+    shown = {
+        (str(d.get("code")), str(d.get("message"))) for o in report.outcomes for d in o.diagnostics
+    }
+    printed: set[tuple[str, str]] = set()
     for d in report.diagnostics:
-        if d.severity.value == "error":
+        key = (d.code, d.message)
+        if d.severity.value == "error" and key not in shown and key not in printed:
+            printed.add(key)
             out.write(f"{d.severity.value}[{d.code}]: {d.message}\n")
     counts = ", ".join(f"{n} {v.name}" for v, n in report.summary().items() if n)
     out.write(f"{'ok' if report.ok else 'not ok'}: {counts or 'no claims'}\n")
@@ -277,9 +326,14 @@ def _render_report(report: Report, fmt: str, out: TextIO) -> None:
 def cmd_check(args: argparse.Namespace, out: TextIO) -> int:
     text = _read(args.file)
     connector: Connector | AsyncConnector
-    if args.dsn is not None:
+    dsn = args.dsn
+    if dsn is None and args.connector is None:
+        dsn = os.environ.get(DSN_ENV) or None
+        if dsn is None:
+            raise UsageError(f"check needs --dsn URL, --connector MODULE:ATTR or ${DSN_ENV}")
+    if dsn is not None:
         try:
-            connector = connect(args.dsn)
+            connector = connect(dsn)
         except Exception as exc:
             raise UsageError(f"cannot connect to --dsn: {type(exc).__name__}: {exc}") from exc
     else:
@@ -372,8 +426,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("check", parents=[common], help="check claims on a warehouse")
     p.add_argument("file", metavar="FILE")
-    source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("--dsn", help="SQLAlchemy URL (needs factlang[sqlalchemy])")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument(
+        "--dsn",
+        help=(
+            f"SQLAlchemy URL (needs factlang[sqlalchemy]); default ${DSN_ENV}. A URL with a "
+            f"password on the command line is visible to other users: prefer ${DSN_ENV}"
+        ),
+    )
     source.add_argument(
         "--connector",
         metavar="MODULE:ATTR",
@@ -385,10 +445,27 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("verbs", parents=[common], help="list the standard verbs")
     p.add_argument("--json", action="store_true", help="same as --format json")
     p.set_defaults(func=cmd_verbs)
+
+    # lazily: factlang.agent is the same layer (17); importing it never imports mcp
+    from factlang.agent import mcp as agent_mcp
+
+    p = sub.add_parser("mcp", help="serve the FactLang tools over MCP on stdio")
+    agent_mcp.configure_parser(p)
+    p.set_defaults(func=lambda args, out: agent_mcp.run(args))
     return parser
 
 
+def _utf8(stream: object) -> None:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        with contextlib.suppress(OSError, ValueError):  # a stream that refuses
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _utf8(sys.stdout)  # claims and diagnostics are UTF-8 whatever the console's code page
+    _utf8(sys.stderr)
+    _stdin_text.clear()
     parser = build_parser()
     args = parser.parse_args(argv)
     func: Callable[[argparse.Namespace, TextIO], int] | None = getattr(args, "func", None)
@@ -400,6 +477,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except UsageError as exc:
         sys.stderr.write(f"factlang: {exc}\n")
         return EXIT_INVALID
+    except Exception as exc:  # a bug or an unforeseen failure: say so, never a traceback
+        sys.stderr.write(f"factlang: internal error: {_describe(exc)}\n")
+        return EXIT_ERROR
 
 
 __all__ = ["EXIT_ERROR", "EXIT_FAILED", "EXIT_INVALID", "EXIT_OK", "build_parser", "main"]

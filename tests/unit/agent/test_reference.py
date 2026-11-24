@@ -29,7 +29,7 @@ def _custom_pack() -> ContractPack:
         filterable=True,
     )
     def positive(claim: CheckedClaim) -> ColumnAggregate:
-        return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,))
+        return ColumnAggregate(claim.table, claim.column, (Metric.MIN_VALUE,), filter=claim.filter)
 
     @positive.derive
     def _(payload: object, claim: CheckedClaim) -> dict[str, object]:
@@ -122,9 +122,8 @@ def test_custom_verb_added_via_extend_appears() -> None:
         text = verb_reference(pack, style=style)  # type: ignore[arg-type]
         assert "POSITIVE <table.column> [WHERE <condition>]" in text
         assert "POSITIVE orders.total" in text
-        assert "Every non-NULL value of the column is greater than zero." in text or (
-            style == "compact"
-        )
+        # both styles carry the verb's summary (this used to be vacuous for compact)
+        assert "Every non-NULL value of the column is greater than zero." in text
         assert "mine" in text
     # the parent pack is untouched
     assert "POSITIVE" not in verb_reference(standard_pack())

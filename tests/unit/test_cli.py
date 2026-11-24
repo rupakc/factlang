@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
 import sys
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -143,7 +145,7 @@ def test_explain_requires_dialect(tmp_path: Path, capsys: pytest.CaptureFixture[
 
 
 @pytest.fixture
-def connector_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+def connector_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """A module exposing a DuckDB connector, a DB-API connection and a factory."""
     pytest.importorskip("duckdb")
     db = tmp_path / "shop.duckdb"
@@ -157,6 +159,8 @@ def connector_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
         "connector = DBAPIConnector(conn, 'duckdb')\n"
         "def make():\n"
         "    return connector\n"
+        "def exits():\n"
+        "    raise SystemExit(5)\n"
         "not_a_connector = 42\n"
         "def _run(sql, params):\n"
         "    if 'nope' in sql or 'nope' in str(params):\n"
@@ -168,7 +172,10 @@ def connector_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(tmp_path))
-    return name
+    yield name
+    module = sys.modules.pop(name, None)
+    if module is not None:
+        module.conn.close()
 
 
 def test_check_pass_exits_0(
@@ -277,12 +284,103 @@ def test_check_dsn_failure_is_invalid_input(
     assert code == 2 and "sqlalchemy" in err
 
 
-def test_check_needs_exactly_one_source(tmp_path: Path) -> None:
-    f = str(tmp_path / "a.fl")
-    for args in (["check", f], ["check", f, "--dsn", "a://", "--connector", "m:a"]):
-        with pytest.raises(SystemExit) as exc:
-            cli.main(args)
-        assert exc.value.code == 2
+def test_check_needs_one_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("FACTLANG_DSN", raising=False)
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id\n")
+    code, _, err = run(["check", f], capsys)
+    assert code == 2 and "FACTLANG_DSN" in err
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["check", f, "--dsn", "a://", "--connector", "m:a"])
+    assert exc.value.code == 2
+
+
+def test_check_reads_the_dsn_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    duckdb = pytest.importorskip("duckdb")
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE orders (id INTEGER)")
+    conn.execute("INSERT INTO orders VALUES (1), (2)")
+    seen: list[str] = []
+
+    def fake_connect(dsn: str) -> Any:
+        seen.append(dsn)
+        return DBAPIConnector(conn, "duckdb")
+
+    monkeypatch.setattr(cli, "connect", fake_connect)
+    monkeypatch.setenv("FACTLANG_DSN", "duckdb:///from-env")
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id\n")
+    code, _, _ = run(["check", f], capsys)
+    assert code == 0 and seen == ["duckdb:///from-env"]
+    code, _, _ = run(["check", f, "--dsn", "duckdb:///flag"], capsys)
+    assert code == 0 and seen[-1] == "duckdb:///flag"  # the flag wins
+    conn.close()
+
+
+def test_connector_module_is_found_from_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("duckdb")
+    work = tmp_path / "work"
+    work.mkdir()
+    name = f"fl_cwd_conn_{uuid.uuid4().hex}"
+    (work / f"{name}.py").write_text(
+        "import duckdb\n"
+        "from factlang import DBAPIConnector\n"
+        "conn = duckdb.connect()\n"
+        "conn.execute('CREATE TABLE orders (id INTEGER)')\n"
+        "conn.execute('INSERT INTO orders VALUES (1), (2)')\n"
+        "connector = DBAPIConnector(conn, 'duckdb')\n",
+        encoding="utf-8",
+    )
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id\n")
+    monkeypatch.chdir(work)
+    # a console script's sys.path[0] is its bin directory: neither the cwd nor ""
+    path = [p for p in sys.path if p not in ("", str(work), os.getcwd())]
+    monkeypatch.setattr(sys, "path", ["/nonexistent/bin", *path])
+    try:
+        code, out, err = run(["check", f, "--connector", f"{name}:connector"], capsys)
+        assert code == 0 and "PASS" in out, err
+        assert str(work) in sys.path
+    finally:
+        module = sys.modules.pop(name, None)
+        if module is not None:
+            module.conn.close()
+
+
+def test_factory_that_exits_is_invalid_input(
+    tmp_path: Path, connector_module: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id\n")
+    code, _, err = run(["check", f, "--connector", f"{connector_module}:exits"], capsys)
+    assert code == 2 and "SystemExit" in err
+
+
+def test_unwritable_file_is_invalid_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = write(tmp_path, "a.fl", "UNIQUE   orders.id\n")
+
+    def refuse(self: Path, *a: Any, **k: Any) -> int:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "write_text", refuse)
+    code, _, err = run(["fmt", f], capsys)
+    assert code == 2 and "cannot write" in err and "Permission denied" in err
+
+
+def test_unexpected_exception_is_exit_3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom(text: str) -> Any:
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(cli, "lint", boom)
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id\n")
+    code, _, err = run(["lint", f], capsys)
+    assert code == 3 and "internal error" in err and "kaboom" in err
 
 
 # --- verbs ------------------------------------------------------------------------------
@@ -326,3 +424,110 @@ def test_python_dash_m(tmp_path: Path) -> None:
         check=False,
     )
     assert proc.returncode == 2 and "FL300" in proc.stdout
+
+
+# --- review round 1: stdin, markdown, multi-line claims, errors once, mcp -----------------
+
+
+class _Stdin(io.StringIO):
+    """A text stdin with a UTF-8 ``buffer``, like the real one."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.buffer = io.BytesIO(text.encode("utf-8"))
+
+
+def test_stdin_for_lint_fmt_and_explain(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "stdin", _Stdin("BOGUS orders.id  # é\n"))
+    code, out, _ = run(["lint", "-"], capsys)
+    assert code == 2 and "-:1:1: error[FL300]" in out
+    monkeypatch.setattr(sys, "stdin", _Stdin("UNIQUE   orders.id\n"))
+    code, out, _ = run(["fmt", "--check", "-"], capsys)
+    assert code == 1 and "would reformat -" in out
+    monkeypatch.setattr(sys, "stdin", _Stdin("UNIQUE   orders.id\n"))
+    code, out, _ = run(["fmt", "-"], capsys)
+    assert code == 0 and out == "UNIQUE orders.id\n"
+    monkeypatch.setattr(sys, "stdin", _Stdin("UNIQUE orders.id\n"))
+    code, out, _ = run(["explain", "-", "--dialect", "duckdb"], capsys)
+    assert code == 0 and "SELECT" in out
+
+
+def test_fmt_stdin_cannot_be_mixed_with_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "stdin", _Stdin("UNIQUE orders.id\n"))
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id\n")
+    code, _, err = run(["fmt", "-", f], capsys)
+    assert code == 2 and "standard input" in err
+
+
+def test_check_from_stdin(
+    connector_module: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "stdin", _Stdin("UNIQUE orders.id\n"))
+    code, out, _ = run(["check", "-", "--connector", f"{connector_module}:connector"], capsys)
+    assert code == 0 and "PASS" in out
+
+
+def test_explain_comments_every_line_of_a_continued_claim(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id \\\n  WHERE status = 'paid'\nBOGUS \\\n x.y\n")
+    code, out, _ = run(["explain", f, "--dialect", "duckdb"], capsys)
+    assert code == 2
+    assert "-- UNIQUE orders.id \\\n--   WHERE status = 'paid'\nSELECT" in out
+    assert "-- BOGUS \\\n--  x.y\n-- invalid:" in out
+    for line in out.splitlines():
+        assert line == "" or line.startswith(("-- ", "SELECT", " ", "FROM", "WHERE")) or ";" in line
+
+
+def test_check_text_prints_each_error_once(
+    tmp_path: Path, connector_module: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = write(tmp_path, "a.fl", "BOGUS orders.id\nUSE a.b.c.d\n")
+    code, out, _ = run(["check", f, "--connector", f"{connector_module}:connector"], capsys)
+    assert code == 2
+    assert out.count("unknown verb BOGUS") == 1
+    assert out.count("error[FL") == 1  # the USE directive's error has no claim to carry it
+
+
+def test_markdown_outputs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    ok = write(tmp_path, "ok.fl", "UNIQUE orders.id\n")
+    code, out, _ = run(["lint", ok, "--format", "markdown"], capsys)
+    assert code == 0
+    assert out == "| file | line | code | severity | message |\n|---|---|---|---|---|\n"
+    ugly = write(tmp_path, "ugly.fl", "UNIQUE   orders.id\n")
+    code, out, _ = run(["fmt", "--check", ok, ugly, "--format", "markdown"], capsys)
+    assert code == 1 and out == f"- would reformat {ugly}\n- 1 file(s) unchanged\n"
+    mixed = write(tmp_path, "m.fl", "UNIQUE orders.id\nBOGUS orders.id\n")
+    code, out, _ = run(["explain", mixed, "--dialect", "duckdb", "--format", "markdown"], capsys)
+    assert code == 2
+    assert "**UNIQUE orders.id**\n\n```sql\nSELECT" in out and ";\n```\n" in out
+    assert "**BOGUS orders.id**\n\n> invalid:" in out
+
+
+def test_mcp_subcommand_is_wired(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from factlang.agent import mcp as agent_mcp
+
+    served: list[Any] = []
+    monkeypatch.setattr(agent_mcp, "serve", lambda checker, **kw: served.append((checker, kw)))
+    code, _, _ = run(["mcp", "--dialect", "postgres", "--name", "shop"], capsys)
+    assert code == 0 and served[0][0].dialect == "postgres" and served[0][1] == {"name": "shop"}
+    code, _, err = run(["mcp"], capsys)
+    assert code == 2 and "--dsn" in err
+
+
+def test_output_is_utf8_whatever_the_console(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+    monkeypatch.setattr(sys, "stdout", stream)
+    f = write(tmp_path, "a.fl", "BOGUS orders.id  # café\n")
+    assert cli.main(["lint", f]) == 2
+    stream.flush()
+    assert "café".encode() in raw.getvalue()

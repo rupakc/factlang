@@ -60,7 +60,7 @@ def test_registry() -> None:
     r.register(u)
     r.register(spec("EXISTS"))
     assert r.get("UNIQUE") is u and r.get("NOPE") is None
-    assert r.names() == ["EXISTS", "UNIQUE"] or r.names() == ["UNIQUE", "EXISTS"]
+    assert r.names() == ["EXISTS", "UNIQUE"]
     with pytest.raises(ValueError, match="already"):
         r.register(spec())
 
@@ -73,3 +73,15 @@ def test_suggest() -> None:
     assert r.suggest("EXIST") == "EXISTS"
     assert r.suggest("ZZZZZZ") is None
     assert VerbRegistry().suggest("UNIQE") is None
+
+
+def test_requires_must_name_declared_attrs() -> None:
+    with pytest.raises(ValueError, match="undeclared"):
+        spec(attrs=(AttrSpec("A", "NUMBER"),), requires=(("A", "B"),))
+    with pytest.raises(ValueError, match="undeclared"):
+        spec(attrs=(AttrSpec("B", "NUMBER"),), requires=(("A", "B"),))
+
+
+def test_duplicate_operand_names() -> None:
+    with pytest.raises(ValueError, match="operand"):
+        VerbSpec("JOIN", "s", (T, OperandSpec("t", OperandKind.COLUMN)))

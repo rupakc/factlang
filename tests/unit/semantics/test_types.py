@@ -241,3 +241,29 @@ def test_separator_ok(sep: str) -> None:
 @pytest.mark.parametrize("sep", ["", "abcd", "a", "::::", "\t", "é", ":a"])
 def test_separator_bad(sep: str) -> None:
     bad("SEPARATOR", lit(LK.STRING, sep))
+
+
+def test_timestamp_overflow_is_invalid() -> None:
+    bad("TEMPORAL", lit(LK.TIMESTAMP, "0001-01-01T00:00:00+05:00"))
+    bad("TEMPORAL", lit(LK.TIMESTAMP, "9999-12-31T23:59:59-05:00"))
+
+
+def test_huge_exponent_is_invalid_and_fast() -> None:
+    huge = num("1E+9999999")
+    for name in ("NUMBER", "INTEGER", "RATIO", "NUMBER_OR_TEMPORAL"):
+        assert "out of range" in bad(name, huge)
+    assert "out of range" in bad("VALUE_LIST", lst(huge)) or bad("VALUE_LIST", lst(huge))
+    bad("RANGE_PAIR", lst(huge, num("1")))
+    ok("NUMBER", num("1E+1000"))
+    assert "out of range" in bad("NUMBER", num("1E-1001"))
+
+
+def test_range_pair_mixed_and_inverted() -> None:
+    bad("RANGE_PAIR", lst(lit(LK.DATE, "2025-01-01"), lit(LK.TIMESTAMP, "2025-02-01T00:00:00Z")))
+    assert "inverted" in bad("RANGE_PAIR", lst(num("5"), num("1")))
+    bad("RANGE_PAIR", lst(lit(LK.DATE, "2025-02-01"), lit(LK.DATE, "2025-01-01")))
+    ok("RANGE_PAIR", lst(num("2"), num("2")))
+    ok(
+        "RANGE_PAIR",
+        lst(lit(LK.TIMESTAMP, "2025-01-01T00:00:00Z"), lit(LK.TIMESTAMP, "2025-01-01T00:00:01Z")),
+    )

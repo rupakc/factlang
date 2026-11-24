@@ -16,7 +16,7 @@ from decimal import Decimal
 
 from factlang.semantics.refs import Ident
 from factlang.syntax.ast import Literal, LiteralKind
-from factlang.syntax.formatter import _number
+from factlang.syntax.formatter import format_number
 
 LK = LiteralKind
 
@@ -76,26 +76,38 @@ def _msg(value: object) -> str | None:
 # --- numbers ------------------------------------------------------------------------
 
 
+MAX_EXPONENT = 1000
+
+
+def _bounded(value: Decimal) -> Decimal | Invalid:
+    return Invalid("number out of range") if abs(value.adjusted()) > MAX_EXPONENT else value
+
+
 def _decimal(lit: Literal) -> object:
     assert isinstance(lit.value, Decimal)
-    return lit.value
+    return _bounded(lit.value)
 
 
 def _integer_coerce(lit: Literal) -> object:
     v = _decimal(lit)
-    assert isinstance(v, Decimal)
+    if not isinstance(v, Decimal):
+        return v
     return int(v) if v == v.to_integral_value() else v
 
 
 def _integer_validate(value: object) -> str | None:
+    if isinstance(value, Invalid):
+        return value.message
     return None if isinstance(value, int) else "expected a whole number"
 
 
 def _ratio_validate(value: object) -> str | None:
+    if isinstance(value, Invalid):
+        return value.message
     assert isinstance(value, Decimal)
     if 0 <= value <= 1:
         return None
-    return f"ratio must be between 0 and 1 (0% to 100%), got {_number(value)}"
+    return f"ratio must be between 0 and 1 (0% to 100%), got {format_number(value)}"
 
 
 # --- temporal -----------------------------------------------------------------------
@@ -127,7 +139,7 @@ def _parse_timestamp(text: str) -> dt.datetime | Invalid:
     iso += "+00:00" if zone in (None, "Z") else zone
     try:
         return dt.datetime.fromisoformat(iso).astimezone(dt.timezone.utc)
-    except ValueError:
+    except (ValueError, OverflowError):
         return err
 
 
@@ -189,7 +201,7 @@ def _column_list_validate(value: object) -> str | None:
 def _value_text(item: Literal) -> str | None:
     if item.kind is LK.NUMBER:
         assert isinstance(item.value, Decimal)
-        return _number(item.value)
+        return None if abs(item.value.adjusted()) > MAX_EXPONENT else format_number(item.value)
     if item.kind is LK.BOOL:
         return "true" if item.value else "false"
     if item.kind is LK.STRING:
@@ -219,9 +231,20 @@ def _range_pair_coerce(lit: Literal) -> object:
         if isinstance(v, Invalid):
             return v
         out.append(v)
-    if isinstance(out[0], Decimal) != isinstance(out[1], Decimal):
-        return Invalid("range bounds must both be numbers or both be dates/timestamps")
-    return tuple(out)
+    lo, hi = out
+    kinds = {
+        "number"
+        if isinstance(v, Decimal)
+        else "timestamp"
+        if isinstance(v, dt.datetime)
+        else "date"
+        for v in out
+    }
+    if len(kinds) != 1:
+        return Invalid("range bounds must both be numbers, both dates, or both timestamps")
+    if lo > hi:  # type: ignore[operator]
+        return Invalid("range is inverted: the low bound is greater than the high bound")
+    return (lo, hi)
 
 
 def _invalid_only(value: object) -> str | None:
@@ -231,7 +254,7 @@ def _invalid_only(value: object) -> str | None:
 _NUMBER_OR_TEMPORAL = frozenset({LK.NUMBER, LK.DATE, LK.TIMESTAMP})
 
 for _vt in (
-    ValueType("NUMBER", frozenset({LK.NUMBER}), _decimal),
+    ValueType("NUMBER", frozenset({LK.NUMBER}), _decimal, _invalid_only),
     ValueType("INTEGER", frozenset({LK.NUMBER}), _integer_coerce, _integer_validate),
     ValueType("RATIO", frozenset({LK.PERCENT, LK.NUMBER}), _decimal, _ratio_validate),
     ValueType("STRING", frozenset({LK.STRING}), _text),

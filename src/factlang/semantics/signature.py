@@ -58,6 +58,13 @@ class VerbSpec:
             if a.name in seen:
                 raise ValueError(f"{self.name}: duplicate attribute {a.name!r}")
             seen.add(a.name)
+        names = [o.name for o in self.operands]
+        if len(set(names)) != len(names):
+            raise ValueError(f"{self.name}: duplicate operand name")
+        for first, second in self.requires:
+            for n in (first, second):
+                if n not in seen:
+                    raise ValueError(f"{self.name}: requires names undeclared attribute {n!r}")
 
 
 class VerbRegistry:

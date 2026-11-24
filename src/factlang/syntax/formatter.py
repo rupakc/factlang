@@ -35,7 +35,7 @@ def _shift(value: Decimal, places: int) -> Decimal:
     return Decimal((sign, digits, exp + places))
 
 
-def _number(value: Decimal) -> str:
+def format_number(value: Decimal) -> str:
     """Plain-notation text of ``value`` without trailing zeros, exact at any width."""
     if value.is_zero():
         return "0"
@@ -53,6 +53,9 @@ def _number(value: Decimal) -> str:
     else:
         text = text[:exp] + "." + text[exp:]
     return ("-" if sign else "") + text
+
+
+_number = format_number  # alias kept for importers not yet migrated
 
 
 def _duration(seconds: int) -> str:
@@ -84,10 +87,10 @@ def _literal(lit: ast.Literal) -> str:
     kind, value = lit.kind, lit.value
     if kind is LK.NUMBER:
         assert isinstance(value, Decimal)
-        return _number(value)
+        return format_number(value)
     if kind is LK.PERCENT:
         assert isinstance(value, Decimal)
-        return _number(_shift(value, 2)) + "%"
+        return format_number(_shift(value, 2)) + "%"
     if kind is LK.DURATION:
         assert isinstance(value, int)
         return _duration(value)

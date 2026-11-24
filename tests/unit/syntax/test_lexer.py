@@ -204,3 +204,14 @@ def test_cardinality_only_before_non_identifier_char() -> None:
     assert kinds("1:1x") == [K.NUMBER, K.ERROR, K.NUMBER, K.IDENT]
     assert kinds("N:Mx") == [K.IDENT, K.ERROR, K.IDENT]
     assert kinds("1:1)") == [K.CARDINALITY, K.RPAREN]
+
+
+def test_number_exponent_limit() -> None:
+    toks, bag = lex("1e1000")
+    assert len(bag) == 0 and toks[0].kind is K.NUMBER
+    for src in ("1e1001", "1e1001%", "1e-1001", "9" * 5 + "e999999999"):
+        toks, bag = lex(src)
+        assert bag.codes() == ["FL102"] and toks[0].kind is K.ERROR, src
+        assert toks[-1].kind is K.EOF
+    toks, bag = lex("1e1000%")
+    assert len(bag) == 0 and toks[0].kind is K.PERCENT

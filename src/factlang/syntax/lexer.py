@@ -163,6 +163,15 @@ def tokenize(source: str, bag: DiagnosticBag) -> list[Token]:
                 error(i, end, "FL102", "invalid number")
                 i = end
                 continue
+            if abs(num.adjusted()) > 1000:
+                error(
+                    i,
+                    end + (1 if end < n and src[end] == "%" else 0),
+                    "FL102",
+                    "number out of range",
+                )
+                i = end + (1 if end < n and src[end] == "%" else 0)
+                continue
             if end < n and src[end] == "%":
                 emit(TokenKind.PERCENT, i, end + 1, _percent(num))
                 i = end + 1

@@ -258,25 +258,22 @@ def test_split_prefix_spelling(name: str) -> None:
     assert f"TRIM({SPLIT[name]})" in text
 
 
-def test_tsql_counts_are_count_big_and_sum_avg_widen() -> None:
+def test_tsql_counts_are_count_big_sum_is_native_and_avg_widens() -> None:
     metrics = (Metric.ROW_COUNT, Metric.NON_NULL, Metric.SUM, Metric.AVG)
     text = sql(ColumnAggregate(ORDERS, AMOUNT, metrics), "tsql")
     assert "COUNT_BIG(*) AS row_count" in text and "COUNT_BIG(amount) AS non_null" in text
-    # an INT sum would overflow at 2^31 and an INT AVG divides as integers; the input type
-    # is unknown at render time, so the widening is type-agnostic
-    # additive widening: x + BIGINT 0 keeps a DECIMAL's scale (a multiply would reduce it
-    # for p >= 19); INT becomes BIGINT; NULL stays NULL
-    assert "SUM(amount + CONVERT(BIGINT, 0)) AS sum_value" in text
+    # SUM stays native: an INT overflow is a driver error (FL700 -> ERROR), never a wrong
+    # number, while any widening would change a digit of some DECIMAL (spec G7)
+    assert "SUM(amount) AS sum_value" in text
+    assert "CONVERT(BIGINT" not in text
+    # AVG widens: a native INT AVG silently truncates
     assert "AVG(amount + 0.0) AS avg_value" in text
-    assert "* 1.0" not in text and "CONVERT(BIGINT, 1)" not in text
+    assert "* 1.0" not in text
     assert not re.search(r"\bCOUNT\(", text)
-    assert not re.search(r"\bSUM\(amount\)", text)
 
 
-def test_other_profiles_do_not_widen_sum() -> None:
+def test_no_profile_widens_sum() -> None:
     for name in NEW:
-        if name == "tsql":
-            continue
         assert "SUM(amount) AS sum_value" in sql(
             ColumnAggregate(ORDERS, AMOUNT, (Metric.SUM,)), name
         ), name

@@ -34,25 +34,23 @@ def derived_union_subquery(printer: Printer, x: A.SubqueryFrom) -> str:
     return f"({inner}) {printer.alias(x.alias)}"
 
 
-def widened_aggregates(count_fn: str = "COUNT", sum_widen: str | None = None) -> Override:
-    """``Agg`` printer for engines whose aggregates keep a narrow integer input type.
+def widened_aggregates(count_fn: str = "COUNT") -> Override:
+    """``Agg`` printer for engines whose ``AVG`` keeps an integer input's type.
 
-    The input's type is not known at render time, so the widening is type-agnostic and
-    additive (adding a zero changes no value and NULL stays NULL):
+    ``AVG(x + 0.0)``: a native INT AVG silently truncates (it divides as integers), and the
+    input's type is not known at render time, so the widening is type-agnostic and additive
+    (adding zero changes no value; NULL stays NULL). An INT becomes DECIMAL; DECIMAL/FLOAT
+    inputs keep their kind. ``COUNT`` is spelled ``count_fn`` (T-SQL ``COUNT_BIG``).
 
-    - ``AVG(x + 0.0)``: an INT input becomes DECIMAL, so AVG no longer divides as integers;
-      DECIMAL/FLOAT inputs keep their kind.
-    - ``SUM(x + <sum_widen>)`` when given (T-SQL ``CONVERT(BIGINT, 0)``): an INT sum becomes
-      BIGINT instead of overflowing past 2^31; FLOAT/MONEY are unchanged.
+    Trade-off (T-SQL ``e1 + e2``: scale ``max(s1, s2)``, precision ``max(s1, s2) +
+    max(p1 - s1, p2 - s2) + 1``, scale cut by any overflow above 38 but never below
+    ``min(s, 6)``): ``x + 0.0`` (DECIMAL(1,1)) is exact for every input except a
+    DECIMAL(38,s) with ``s > 0``, which loses one fractional digit before AVG's own result
+    type applies. Accepted: a silently truncated INT average is the larger error.
 
-    Precision rule (T-SQL ``e1 + e2``): scale ``max(s1, s2)``, precision
-    ``max(s1, s2) + max(p1 - s1, p2 - s2) + 1``; above 38 the scale is cut by the overflow,
-    but never below ``min(s, 6)``. With BIGINT = DECIMAL(19,0), ``DECIMAL(p,s) + BIGINT`` keeps
-    every digit when ``s <= 18`` and ``p <= 37`` (``x * CONVERT(BIGINT, 1)`` would add 19
-    digits of precision and round already at ``p >= 19``). Residual: a DECIMAL with
-    ``s > 18`` and ``p - s < 19`` loses ``s - 18`` fractional digits, and a DECIMAL(38,s)
-    with ``s > 0`` loses one. ``x + 0.0`` (DECIMAL(1,1)) adds one fractional digit, so only a
-    DECIMAL(38,s) loses one before AVG's own result type applies.
+    ``SUM`` is deliberately left native (correctness over coverage, spec G7): every
+    type-agnostic widening changes a digit of some DECIMAL, while a native INT overflow is a
+    driver error (FL700 -> ERROR verdict), never a wrong number.
     """
 
     def agg(printer: Printer, x: A.Agg) -> str:
@@ -60,8 +58,6 @@ def widened_aggregates(count_fn: str = "COUNT", sum_widen: str | None = None) ->
         distinct = "DISTINCT " if x.distinct else ""
         if x.fn == "AVG":
             return f"AVG({distinct}{arg} + 0.0)"
-        if x.fn == "SUM" and sum_widen is not None:
-            return f"SUM({distinct}{arg} + {sum_widen})"
         fn = count_fn if x.fn == "COUNT" else x.fn
         return f"{fn}({distinct}{arg})"
 

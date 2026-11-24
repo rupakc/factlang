@@ -1,7 +1,6 @@
 """Execute lowered plans on DuckDB: the AST means what spec 8.1/18/19 say it means.
 
-The printer below is a minimal ANSI/DuckDB spelling local to this test (Task 14 brings the
-real profiles); it exists only to run the lowering's trees against an engine.
+The trees are printed by the real ``duckdb`` profile (Task 14).
 """
 
 from __future__ import annotations
@@ -22,103 +21,12 @@ from factlang.ir import (
 )
 from factlang.semantics.filters import FBool, FCompare, FIsNull, FNot, FOr, Param
 from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
-from factlang.sql import ast as A
+from factlang.sql import get_profile, render, render_join
 from factlang.sql.fragment import lower_join
-from factlang.sql.lower import lower
-from factlang.sql.probe import RenderedProbe
 
 duckdb = pytest.importorskip("duckdb")
-
-_TYPES = {"string": "VARCHAR", "integer": "BIGINT", "decimal": "DECIMAL(38,9)"}
-
-
-def _ident(i: Ident) -> str:
-    return '"' + i.text.replace('"', '""') + '"' if i.quoted else i.text
-
-
-def expr(x: object) -> str:
-    if isinstance(x, A.Column):
-        return (x.qualifier + "." if x.qualifier else "") + _ident(x.name)
-    if isinstance(x, A.ParamRef):
-        return "{{" + x.param.name + "}}"
-    if isinstance(x, A.Literal):
-        if x.value is None:
-            return "NULL"
-        return "'" + x.value + "'" if isinstance(x.value, str) else str(x.value)
-    if isinstance(x, A.Agg):
-        arg = "*" if x.arg is None else expr(x.arg)
-        return f"{x.fn}({'DISTINCT ' if x.distinct else ''}{arg})"
-    if isinstance(x, A.CountIf):
-        return f"COALESCE(SUM(CASE WHEN {expr(x.cond)} THEN 1 ELSE 0 END), 0)"
-    if isinstance(x, A.Lower):
-        return f"LOWER({expr(x.e)})"
-    if isinstance(x, A.Trim):
-        return f"TRIM({expr(x.e)})"
-    if isinstance(x, A.SplitPrefix):
-        return f"SPLIT_PART({expr(x.e)}, {expr(x.separator)}, 1)"
-    if isinstance(x, A.Like):
-        return f"({expr(x.e)} LIKE {expr(x.pattern)})"
-    if isinstance(x, A.Cast):
-        return f"CAST({expr(x.e)} AS {_TYPES[x.family]})"
-    if isinstance(x, A.Coalesce):
-        return "COALESCE(" + ", ".join(map(expr, x.items)) + ")"
-    if isinstance(x, A.Case):
-        whens = " ".join(f"WHEN {expr(c)} THEN {expr(r)}" for c, r in x.whens)
-        tail = f" ELSE {expr(x.else_)}" if x.else_ is not None else ""
-        return f"CASE {whens}{tail} END"
-    if isinstance(x, A.Now):
-        return "CURRENT_TIMESTAMP"
-    if isinstance(x, A.Compare):
-        return f"({expr(x.left)} {'<>' if x.op == '!=' else x.op} {expr(x.right)})"
-    if isinstance(x, (A.And, A.Or)):
-        word = " AND " if isinstance(x, A.And) else " OR "
-        return "(" + word.join(map(expr, x.items)) + ")"
-    if isinstance(x, A.Not):
-        return f"(NOT {expr(x.e)})"
-    if isinstance(x, A.InList):
-        return f"({expr(x.e)} {'NOT ' if x.negated else ''}IN ({', '.join(map(expr, x.items))}))"
-    if isinstance(x, A.IsNull):
-        return f"({expr(x.e)} IS {'NOT ' if x.negated else ''}NULL)"
-    if isinstance(x, A.Between):
-        return f"({expr(x.e)} BETWEEN {expr(x.lo)} AND {expr(x.hi)})"
-    if isinstance(x, A.KeyHash):  # spec 19 keyhash ruling, duckdb row
-        s = " || '|' || ".join([expr(x.seed), *map(expr, x.parts)])
-        return f"(hash({s}) % 1000000)"
-    raise TypeError(x)
-
-
-def from_item(x: object) -> str:
-    if isinstance(x, A.TableName):
-        out = ".".join(_ident(p) for p in x.ref.parts()) + (" " + x.alias if x.alias else "")
-        if x.sample is not None:
-            pct = x.sample.fraction * 100
-            out += f" TABLESAMPLE {pct}% ({x.sample.method}, {x.sample.seed})"
-        return out
-    if isinstance(x, A.SubqueryFrom):
-        return f"({statement(x.select)}) {x.alias}"
-    if isinstance(x, A.Join):
-        on = f" ON {expr(x.on)}" if x.on is not None else ""
-        return f"{from_item(x.left)} {x.kind} JOIN {from_item(x.right)}{on}"
-    raise TypeError(x)
-
-
-def statement(x: A.Select | A.UnionAll) -> str:
-    if isinstance(x, A.UnionAll):  # branches with ORDER BY/LIMIT must be parenthesised
-        return " UNION ALL ".join(f"({statement(s)})" for s in x.selects)
-    out = "SELECT " + ", ".join(f"{expr(c.expr)} AS {c.alias}" for c in x.columns)
-    out += " FROM " + from_item(x.from_)
-    if x.where is not None:
-        out += " WHERE " + expr(x.where)
-    if x.group_by:
-        out += " GROUP BY " + ", ".join(map(expr, x.group_by))
-    if x.order_by:
-        out += " ORDER BY " + ", ".join(
-            expr(o.expr) + (" DESC" if o.descending else " ASC") for o in x.order_by
-        )
-    if x.limit is not None:
-        out += f" LIMIT {x.limit}"
-    return out
-
+DUCK = get_profile("duckdb")
+assert DUCK is not None
 
 ORDERS = TableRef(None, None, Ident("orders"))
 ITEMS = TableRef(None, None, Ident("items"))
@@ -152,15 +60,7 @@ def con() -> Any:
 
 
 def run(con: Any, plan: object) -> list[dict[str, object]]:
-    tree = lower(plan)  # type: ignore[arg-type]
-    probe = RenderedProbe(
-        statement(tree),
-        A.params_of(tree),
-        plan.arity,
-        plan,
-        "duckdb",
-        "test",  # type: ignore[attr-defined]
-    )
+    probe = render(plan, DUCK)  # type: ignore[arg-type]
     sql, values = probe.bind("qmark")
     cur = con.execute(sql, list(values))  # type: ignore[arg-type]
     cols = [d[0] for d in cur.description]
@@ -356,13 +256,10 @@ def test_bernoulli_single_read_sample_runs(con: Any) -> None:
 def test_join_fragment_matches_a_hand_written_join(con: Any) -> None:
     paid = FCompare(Ident("status"), "=", Param("p1", "paid", "string"))
     edge = EdgeRef(c(ITEMS, "order_id"), c(ORDERS, "id"))
-    from_, where = lower_join([edge], filters={ORDERS: paid})
+    _, where = lower_join([edge], filters={ORDERS: paid})
     assert where is None
-    on_params = A.params_of(from_)
-    sql = "SELECT COUNT(*) FROM " + from_item(from_)
-    for p in on_params:
-        sql = sql.replace("{{" + p.name + "}}", "?")
-    (got,) = con.execute(sql, [p.value for p in on_params]).fetchone()
+    sql, values = render_join([edge], "duckdb", filters={ORDERS: paid}).bind("qmark")
+    (got,) = con.execute("SELECT COUNT(*) " + sql, list(values)).fetchone()
     (want,) = con.execute(
         "SELECT COUNT(*) FROM items i JOIN orders o ON i.order_id = o.id AND o.status = 'paid'"
     ).fetchone()

@@ -24,6 +24,22 @@ class OperandSpec:
     kind: OperandKind
 
 
+class Operand:
+    """Shorthands for the common operand specs (spec 10): ``Operand.column()`` etc."""
+
+    @staticmethod
+    def table(name: str = "table") -> OperandSpec:
+        return OperandSpec(name, OperandKind.TABLE)
+
+    @staticmethod
+    def column(name: str = "column") -> OperandSpec:
+        return OperandSpec(name, OperandKind.COLUMN)
+
+    @staticmethod
+    def edge(name: str = "edge") -> OperandSpec:
+        return OperandSpec(name, OperandKind.EDGE)
+
+
 @dataclass(frozen=True)
 class AttrSpec:
     """``ops == ()``: an operator is forbidden; otherwise one of ``ops`` is required."""

@@ -188,6 +188,8 @@ Tasks in braces may be dispatched to parallel goldfish; all others sequentially.
 
 ### Task 8: IR and judge
 
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** `SampleSpec` + `sample` fields (and `KeyOverlap.right_sample`) per spec §19 B1, validated in `__post_init__` (fraction in (0,1], keyhash needs key, MetadataQuery has none); `ir.canonical_key` includes the sample.
+
 > **Amendment A (2026-11-24, spec §18 — owner-directed, URGENT):** (R2) `ValueMembership.declared` may be empty; `report_limit` 1..1000 (already). (R3) `KeyOverlap(left: tuple[ColumnRef, ...], right: tuple[ColumnRef, ...], cast_to=None, measure_multiplicity=False, filter=None, right_filter: FilterExpr | None = None)` — non-empty, equal length, each side's columns on one table (`__post_init__`). (R4) `KeyOverlap.result_columns()` adds `distinct_right`, `left_non_null`, `matched_left_rows`. (R1) `ir.canonical_key(plan) -> str` (deterministic JSON of the plan) used for measure de-duplication.
 
 **Files:** Create `src/factlang/ir/__init__.py`, `ir/metrics.py`, `ir/primitives.py`, `src/factlang/judge/__init__.py`, `judge/predicate.py`, `judge/outcome.py`, `judge/run.py`; Test `tests/unit/ir/test_primitives.py`, `tests/unit/judge/test_predicate.py`, `test_judge.py`
@@ -205,6 +207,8 @@ Tasks in braces may be dispatched to parallel goldfish; all others sequentially.
 ---
 
 ### Task 9: Contract, ContractPack, decorator API, completeness
+
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** A contract's `plan` returning a sampled primitive is FL404 (spec §19 B4) — add a negative-control test.
 
 **Files:** Create `src/factlang/contract.py`; Test `tests/unit/test_contract.py`, `tests/conformance/test_contract_completeness.py`
 
@@ -255,6 +259,8 @@ Common to all three:
 
 ### Task 13: SQL AST, lowering, RenderedProbe
 
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** Lower `sample` per §19 B2: a `Sample` FROM-modifier node (system/bernoulli) or a keyhash `WHERE` predicate built from a new `KeyHash(columns, seed)` AST node; the 'no LIMIT/SAMPLE' structure assertions become 'only when plan.sample is set'.
+
 > **Amendment A (2026-11-24, spec §18 — owner-directed, URGENT):** (R3/R4) lower `KeyOverlap` over key tuples (exclude a tuple with any NULL part on each side; compare part-wise; `CAST` per part) and emit `distinct_right`, `left_non_null`, `matched_left_rows`; `right_filter` applied to the right side's distinct-key subquery. (R2) `ValueMembership` with empty `declared` lowers with no IN-list (every non-NULL value undeclared). (R9) lower `FBool`. (R6) add `sql/fragment.py`: `RenderedFragment(sql_template, params, dialect, tier)` with `bind`/`inline` shared with `RenderedProbe`, plus `lower_filter(filter, alias) -> Expr` and `lower_join(edges, filters, aliases) -> FromItem` (left-most table's filter in WHERE-part returned separately, others ANDed into ON).
 
 **Files:** Create `src/factlang/sql/__init__.py`, `sql/ast.py`, `sql/lower.py`, `sql/probe.py`; Test `tests/unit/sql/test_lower.py`, `test_probe.py`
@@ -270,6 +276,8 @@ Common to all three:
 ---
 
 ### Task 14: Native printer, DuckDB + Postgres profiles, dialect conformance suite
+
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** `DialectProfile.sample_styles` + `keyhash_expr`; DuckDB and Postgres implement all three methods; conformance per §19 B4 (render-or-FL506; sample text only in sampled plans); DuckDB execution tests (a)–(e).
 
 > **Amendment A (2026-11-24, spec §18 — owner-directed, URGENT):** (R6) `render_filter(filter, *, table, dialect, alias=None) -> RenderedFragment` and `render_join(edges, *, dialect, filters=None, aliases=None) -> RenderedFragment` in `sql/registry.py` (exported as `fl.sql.render_filter`/`render_join`); conformance: both render on every profile, hostile literal only in params; DuckDB executes `SELECT COUNT(*) ` + render_join output and equals a hand-written join. Add `SQLGLOT_NAMES['trino'] = 'trino'`.
 
@@ -287,10 +295,14 @@ Common to all three:
 
 ### Task 15: Remaining native profiles
 
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** Each profile declares `sample_styles`/`keyhash_expr` per §19 B2 (incl. trino); unsupported methods → FL506, tested.
+
 > **Amendment A (2026-11-24, spec §18 — owner-directed, URGENT):** (R7) also `sql/profiles/trino.py` (+ `tests/fixtures/type_names/trino.json`): tier `verified`; double-quote identifiers; `unquoted_case='lower'`; `count_if_style='count_if'`; `limit_style='limit'`; `now_sql='current_timestamp'`; `param_types` (`integer→bigint, decimal→decimal, float→double, string→varchar, boolean→boolean, date→date, timestamp→timestamp(6) with time zone`); namespace slots catalog.schema.table (3). Commit message adds `trino`.
 **Files:** `sql/profiles/{bigquery,snowflake,redshift,databricks,clickhouse,tsql,mysql,oracle}.py` + `tests/fixtures/type_names/<each>.json`. Tiers per §8.5. Namespace slots per §4.3 table. Notable spellings: BigQuery `COUNTIF`, backtick quote, `CURRENT_TIMESTAMP()`, `param_types` (`integer→INT64, decimal→NUMERIC, float→FLOAT64, string→STRING, boolean→BOOL, date→DATE, timestamp→TIMESTAMP`); Snowflake `COUNT_IF`, upper case; T-SQL `TOP`, `[`…`]` quoting is **not** used (use `"` with QUOTED_IDENTIFIER semantics), `SYSUTCDATETIME()`; Oracle `FETCH FIRST`, upper case, `SYS_EXTRACT_UTC(SYSTIMESTAMP)`; MySQL backtick, `UTC_TIMESTAMP()`; ClickHouse `countIf`, `now()`; Databricks backtick, `count_if`, `current_timestamp()`; Redshift like Postgres but `GETDATE()` and `sum_case`. Conformance suite from Task 14 must pass for all. Commit `feat(sql): bigquery, snowflake, redshift, databricks, clickhouse, tsql, mysql, oracle profiles`.
 
 ### Task 16: sqlglot bridge
+
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** Bridge renders system/bernoulli where sqlglot supports `TABLESAMPLE`, keyhash only with a hash mapping, else FL506 (§19 B2).
 **Files:** `sql/sqlglot_bridge.py`; Test `tests/unit/sql/test_sqlglot_bridge.py` (skipped if sqlglot missing).
 **Interfaces:** `to_sqlglot(node) -> sqlglot.exp.Expression`; `render_sqlglot(plan, dialect: str) -> RenderedProbe` (tier `best_effort`, placeholders as `{{pN}}` identical to native so `bind` works). `renderer_for(..., prefer="sqlglot")` and the non-native fallback call it. Tests: renders for `trino`, `presto`, `athena`, `hive`, `teradata`, `starrocks`; **cross-check**: for every primitive, DuckDB execution of native SQL and of `render_sqlglot(plan, "duckdb")` returns identical rows on the Task 19 fixture set (fixtures created inline here). Commit `feat(sql): sqlglot bridge for long-tail dialects`.
 
@@ -317,6 +329,8 @@ Common to all three:
 
 ### Task 19: Engine, Report, execution matrix on DuckDB
 
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** `measure` accepts sampled plans; evidence carries `sample` and `method` per §19 B3; payloads add `sampled_rows` (/`sampled_left_rows`,`sampled_right_rows`); `check` rejects sampled plans (FL404); `estimate` prices sampled plans.
+
 > **Amendment A (2026-11-24, spec §18 — owner-directed, URGENT):** (R1) `Checker.measure(plans) -> list[Measurement]` / `ameasure` and `Measurement(plan, payload, evidence, error)` per spec §9.3 Amendment A — same render → cost-guard → execute → split path, de-dup by `ir.canonical_key`, fusion of compatible aggregates; never raises on execution failure. (R5) `Checker.estimate(items) -> list[CostEstimate]` — renders, calls `dry_run_bytes` if present, never executes (assert with a call-logging fake connector). Fixture additions: `refs_parent` with 1,000 keys and `refs_child` referencing 3 of them (forward match 1.0, coverage 0.003); a 2-part composite key pair with one NULL part row. Tests: every primitive via `measure` returns the payload the matching claim's derive receives; composite JOIN PASS/FAIL/NO_DATA; COVERAGE FAIL on the asymmetric pair; `ValueMembership(declared=())` top-k equals a reference GROUP BY.
 **Files:** `src/factlang/engine.py`; `tests/integration/conftest.py` (fixture warehouse builder), `tests/integration/test_verbs_duckdb.py`.
 **Interfaces:** `Checker(connector: Connector | None = None, *, dialect: str | None = None, pack: ContractPack | None = None, catalog: Catalog | None = None, concurrency: int = 4, timeout_s: float | None = 60, max_bytes: int | None = None, fuse: bool = True, prefer: str = "native")`; `.check(text: str) -> Report`, `.acheck(text) -> Report` (asyncio; uses `aexecute` if present else `asyncio.to_thread`), `.compile(text) -> list[RenderedProbe | Outcome]`; `Report(outcomes: tuple[Outcome, ...], diagnostics: DiagnosticBag)` with `.ok` (no FAIL/ERROR/INVALID), `.summary() -> dict[Verdict, int]`, `.to_dict()`, `.to_json(indent=2)`, `.to_markdown()`. Flow: parse → analyze (catalog default per §6.1) → per claim: INVALID (with its diagnostics) / UNPROBEABLE / catalog verbs / plan → optimize → render → (cost guard FL701) → execute (thread pool `concurrency`, FL700/FL702 → ERROR) → split → judge → Outcome with Evidence (`sql` = `probe.inline(...)`). Order of outcomes = source order.
@@ -342,6 +356,8 @@ Common to all three:
 ---
 
 ### Task 23: Documentation site + playground
+
+> **Amendment B (2026-11-24, spec §19 — owner-directed, URGENT):** `docs/guide/measure.md` gains a 'Sampling very large tables' section (§19: measurement only, never verdicts; methods; determinism); FL404/FL506 in diagnostics doc.
 
 > **Amendment A (2026-11-24, spec §18 — owner-directed, URGENT):** Docs: `docs/guide/measure.md` (raw measurement, estimate, metadata SQL), `docs/extending/fragments.md` (render_filter/render_join), Trino in dialect tables, FL703 in `docs/reference/diagnostics.md`, API reference marks the R10 items as stable public API.
 **Files:** `mkdocs.yml`, `docs/index.md` (landing: problem → claim → verdict, "where it shines": agent answer verification, schema/registry validation, data contracts in CI, migration parity checks, LLM eval grounding), `docs/getting-started.md`, `docs/guide/{language,verbs,filters,namespaces,verdicts,evidence,batching}.md`, `docs/extending/{verbs,dialects,connectors,catalogs,packs,types,primitives}.md`, `docs/agents.md`, `docs/cli.md`, `docs/reference/{grammar (exists),verbs,diagnostics,api}.md`, `docs/playground.md` + `site-playground/{playground.js,playground.css}`, `scripts/gen_reference.py` (writes `docs/reference/verbs.md` from `standard_pack()`), `.github/workflows/docs.yml`; Test `tests/conformance/test_diagnostics_doc.py` (codes in `docs/reference/diagnostics.md` == codes emitted in `src/` by regex `"FL\d{3}"`), `tests/conformance/test_docs_examples.py` (every ```` ```python ```` block in `docs/getting-started.md` and `docs/extending/verbs.md` executes against DuckDB).
@@ -373,7 +389,7 @@ Common to all three:
 
 ### Task 27: Amendment A acceptance sweep — after Task 22
 **Files:** `tests/integration/test_amendment_a.py`.
-- One test per row of spec §18's table (R1–R10) asserting its acceptance criterion end to end on DuckDB (and Trino in CI); a test that greps `docs/reference/diagnostics.md` for FL703. Commit `test: Amendment A acceptance sweep`. Report done to the SchemaGuru Elephant.
+- One test per row of spec §18's table (R1–R10) and per §19 B1–B4 (sampling) asserting its acceptance criterion end to end on DuckDB (and Trino in CI); a test that greps `docs/reference/diagnostics.md` for FL703. Commit `test: Amendment A acceptance sweep`. Report done to the SchemaGuru Elephant.
 
 ---
 

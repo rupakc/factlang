@@ -48,3 +48,12 @@ How to apply: spec §18 is the index and acceptance list (R1–R10); each item i
 inline in the section it names. Plan: Task 26 (parser/formatter bare boolean atom) runs
 NOW in parallel with Task 5; every not-yet-started task carries an "Amendment A" note that
 is part of its scope; Task 27 is the acceptance sweep before release. New code FL703.
+
+## 2026-11-24 — Amendment B: sampled *measurement* (never sampled verdicts) for very large tables
+Why: the owner ruled that SchemaGuru must measure terabyte tables on a representative
+sample; SchemaGuru renders no SQL, so FactLang must provide it. The original "no sampling"
+rule protected verdicts — a LIMIT "sample" once overstated a rate 3.3×.
+How to apply: spec §19. `SampleSpec` (keyhash / system / bernoulli, seeded) only via
+`Checker.measure`; claims/contracts never sample (FL404); a dialect that cannot express a
+method raises FL506, never falls back to exact or LIMIT. Payloads are raw sample metrics +
+`sampled_rows`; the host estimates. Same-seed keyhash on both join sides keeps the same keys.

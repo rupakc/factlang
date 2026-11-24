@@ -1,6 +1,6 @@
 # FactLang — Design Specification
 
-Status: APPROVED 2026-11-24 · **Amended 2026-11-24 (Amendment A — downstream SchemaGuru requirements, owner-directed, §18)** · Process: Elephant-Goldfish (see §15)
+Status: APPROVED 2026-11-24 · **Amended 2026-11-24 (Amendments A and B — downstream SchemaGuru requirements, owner-directed, §18–§19)** · Process: Elephant-Goldfish (see §15)
 
 This document is the single source of truth for building FactLang v1. A builder with
 no access to the conversation that produced it must be able to implement the library
@@ -113,7 +113,9 @@ which exists because its absence caused a measured wrong answer, are:
   no syntax that would block it — see §4.3).
 - Natural-language → FactLang translation (that is the agent's job; FactLang gives
   it the tool schema and verb reference to do it).
-- Approximate/sampled measurement modes.
+- Sampled **claim verification**. Claims are always judged on all rows. (Sampled
+  *measurement* of very large tables exists only through `Checker.measure` with an
+  explicit `SampleSpec` — Amendment B, §19.)
 
 ### Anti-goals (would make v1 a failure even if it "works")
 - A verdict of PASS produced from missing, NULL-coerced or sampled data.
@@ -509,12 +511,14 @@ columns (never concatenates); `non_null` over a tuple counts rows with a complet
 values; `ValueMembership` excludes NULL and with `split` compares the trimmed prefix
 before the first separator.
 
-No primitive samples its **input** (anti-goal): every count is over all rows that
-match the filter. The single permitted row limit is `ValueMembership.report_limit`,
+No primitive samples its **input** unless its `sample` field is set (Amendment B, §19),
+which only `Checker.measure` accepts and no claim, contract or analyser ever produces:
+for claims every count is over all rows that match the filter. The single permitted row limit is `ValueMembership.report_limit`,
 which truncates the *ranked list of undeclared values reported*, after exact
 aggregation; the summary counts are exact regardless. The conformance suite asserts
 that `LIMIT`/`TOP`/`FETCH FIRST` appears only in that primitive, only on the
-outermost ranked list, and never `SAMPLE`/`TABLESAMPLE` anywhere. A custom primitive registered
+outermost ranked list, and never `SAMPLE`/`TABLESAMPLE`/sample predicates anywhere **except** in a plan whose
+`sample` field is set (Amendment B). A custom primitive registered
 by a plugin must declare its arity and result columns and supply a builder to the
 internal SQL AST (§8.2); otherwise rendering it is `FL500`.
 
@@ -778,7 +782,7 @@ ratio > 1) · FL311 no such table/column · FL312 cross-type join without CAST
 FL501 metric not renderable · FL502 identifier not representable · FL503 cast not
 expressible · FL504 unknown dialect · FL505 too many table-name parts for dialect · FL600 decide reads a fact derive never
 produces · FL601 decide reads an undeclared attribute · FL602 contract has no
-examples · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A).
+examples · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
 `FL5xx` raise `RenderError`; `FL6xx` are asserted by tests over every registered
 pack; `FL7xx` become `ERROR` outcomes.
 
@@ -956,3 +960,61 @@ table and `docs/reference/diagnostics.md`.
 are a new plan task executed immediately; the rest are folded into the not-yet-started
 plan tasks (see the plan's "Amendment A" notes). SchemaGuru pins `factlang>=0.1,<0.2` and
 develops against FactLang `main` until 0.1.0 is on PyPI.
+
+---
+
+## 19. Amendment B — sampled measurement for very large tables (2026-11-24, owner-directed)
+
+**Context.** The owner ruled that SchemaGuru must measure terabyte-scale tables on a
+*representative sample* (small tables stay exact). SchemaGuru renders no SQL itself, so
+FactLang provides sampling — **for raw measurement only**. The anti-goal stands: no
+verdict (PASS/FAIL/NO_DATA) is ever produced from sampled data; claims, contracts and the
+analyser never produce a sampled plan. `LIMIT` is never a sampling method.
+
+**B1 — `SampleSpec` (IR, layer 8).**
+```python
+@dataclass(frozen=True)
+class SampleSpec:
+    method: Literal["keyhash", "system", "bernoulli"]
+    fraction: Decimal          # 0 < fraction <= 1 (e.g. Decimal("0.01"))
+    seed: int = 0              # deterministic; same seed + same data => same sample
+    key: tuple[Ident, ...] = ()  # required for keyhash (columns hashed), empty otherwise
+```
+Primitives `ColumnAggregate`, `CompositeKeyAggregate`, `ValueMembership`, `KeyOverlap`,
+`PatternCoverage` gain `sample: SampleSpec | None = None`. `KeyOverlap` has
+`sample` (left) and `right_sample` (right); with `keyhash` on both sides using the same
+`fraction` and `seed`, both sides keep exactly the same key values (the keyhash predicate
+depends only on the key value, the seed and the fraction). `MetadataQuery` is never sampled.
+
+**B2 — rendering (layer 12).** `DialectProfile` gains `sample_styles: Mapping[str, str |
+None]` per method and a `keyhash_expr` (deterministic 64-bit hash of the cast-to-string
+key parts, seeded, mapped to `[0, 1_000_000)`; predicate `bucket < fraction * 1_000_000`).
+Lowering adds the sample to the `FROM` item (block/Bernoulli: dialect's
+`TABLESAMPLE SYSTEM|BERNOULLI (p PERCENT) [REPEATABLE(seed)]` / Snowflake `SAMPLE
+SYSTEM|BERNOULLI (p) SEED (seed)` / DuckDB `USING SAMPLE p% (system|bernoulli, seed)` /
+Oracle `SAMPLE BLOCK (p) SEED (seed)` / `SAMPLE (p)` etc.) or as a `WHERE` predicate
+(keyhash: e.g. BigQuery `MOD(ABS(FARM_FINGERPRINT(CONCAT(CAST(seed AS STRING), '|',
+CAST(k AS STRING)))), 1000000)`, Postgres/Redshift via `hashtext`/`FNV_HASH`-class
+functions, ClickHouse `cityHash64`, Snowflake `HASH`, DuckDB `hash`, Trino
+`xxhash64(to_utf8(...))`). Exact per-profile spellings are the builder's, pinned by
+conformance tests. A method the dialect cannot express → **`FL506` sample method not
+supported by dialect** (RenderError) — never a silent exact or silent `LIMIT`. Fraction 1
+renders no sample. The sqlglot bridge supports `system`/`bernoulli` where sqlglot has
+`TABLESAMPLE`, and `keyhash` only when the bridge has a hash mapping; otherwise FL506.
+
+**B3 — results.** A sampled `Measurement.evidence` carries `sample` (method, fraction,
+seed, key) and `method = "sampled:<method>:<fraction>:<seed>"`; exact measurements carry
+`method = "exact"`. Payloads are the **raw metrics on the sampled rows** (FactLang does not
+scale or estimate — the host does) plus `sampled_rows` (rows in the sample; for
+`KeyOverlap` per side: `sampled_left_rows`, `sampled_right_rows`). `Checker.estimate`
+prices sampled plans (dry-run bytes reflect block sampling where the warehouse does).
+
+**B4 — guards and tests.** `Checker.check`/contracts reject a plan with `sample` set
+(`FL404 sampled plan in a claim`, planning range — a contract bug, surfaced as ERROR).
+Conformance: every profile renders each method it declares or raises FL506; sample text
+appears only in sampled plans; DuckDB execution: (a) keyhash on both sides of a join with
+the same seed keeps identical key sets; (b) keyhash on a key keeps all rows of each kept
+key; (c) same seed ⇒ same sample on re-run; (d) fraction 1 ⇒ identical to exact;
+(e) `system`/`bernoulli` row counts within a binomial tolerance on a 1M-row table.
+New codes: **FL404**, **FL506**. Ships in 0.1.0 with Amendment A; covered by R10's
+stability promise.

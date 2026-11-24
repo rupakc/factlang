@@ -175,6 +175,13 @@ def _separator_validate(value: object) -> str | None:
     return None
 
 
+def _like_pattern_validate(value: object) -> str | None:
+    assert isinstance(value, str)
+    if not value.strip("%_"):
+        return "LIKE pattern has only wildcards (% and _); it would match every value"
+    return None
+
+
 # --- lists --------------------------------------------------------------------------
 
 
@@ -268,5 +275,6 @@ for _vt in (
     ValueType("VALUE_LIST", frozenset({LK.LIST}), _value_list_coerce, _invalid_only),
     ValueType("RANGE_PAIR", frozenset({LK.LIST}), _range_pair_coerce, _invalid_only),
     ValueType("SEPARATOR", frozenset({LK.STRING}), _text, _separator_validate),
+    ValueType("LIKE_PATTERN", frozenset({LK.STRING}), _text, _like_pattern_validate),
 ):
     register_type(_vt)

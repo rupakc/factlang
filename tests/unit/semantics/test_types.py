@@ -78,6 +78,7 @@ def test_builtins_registered() -> None:
         "VALUE_LIST",
         "RANGE_PAIR",
         "SEPARATOR",
+        "LIKE_PATTERN",
     ]:
         assert T.get_type(n).name == n
 
@@ -241,6 +242,16 @@ def test_separator_ok(sep: str) -> None:
 @pytest.mark.parametrize("sep", ["", "abcd", "a", "::::", "\t", "é", ":a"])
 def test_separator_bad(sep: str) -> None:
     bad("SEPARATOR", lit(LK.STRING, sep))
+
+
+@pytest.mark.parametrize("pat", ["%@%.%", "SKU-%", "a", "_a_"])
+def test_like_pattern_ok(pat: str) -> None:
+    assert ok("LIKE_PATTERN", lit(LK.STRING, pat)) == pat  # kept as written; plans fold case
+
+
+@pytest.mark.parametrize("pat", ["", "%", "%%", "_", "%_%"])
+def test_like_pattern_only_wildcards(pat: str) -> None:
+    bad("LIKE_PATTERN", lit(LK.STRING, pat))
 
 
 def test_timestamp_overflow_is_invalid() -> None:

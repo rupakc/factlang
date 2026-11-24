@@ -18,6 +18,11 @@ _MODULES: tuple[str, ...] = (
     "dead",
     "unique",
     "fanout",
+    "join",
+    "values",
+    "range",
+    "pattern",
+    "fresh",
 )
 
 

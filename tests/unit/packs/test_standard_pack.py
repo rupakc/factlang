@@ -34,4 +34,14 @@ def test_every_contract_has_a_one_sentence_summary() -> None:
 
 def test_filterable_flags_follow_spec() -> None:
     filterable = {c.name for c in standard_pack().contracts() if c.spec.filterable}
-    assert filterable == {"ROWS", "NULLS", "UNIQUE", "FANOUT"}
+    assert filterable == {
+        "ROWS",
+        "NULLS",
+        "UNIQUE",
+        "FANOUT",
+        "VALUES",
+        "RANGE",
+        "PATTERN",
+        "FRESH",
+        "JOIN",
+    }

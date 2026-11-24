@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 from collections.abc import Mapping
 from decimal import Decimal
@@ -34,12 +35,21 @@ def number(value: object) -> Decimal | None:
     raise TypeError(f"expected a number, got {value!r}")
 
 
+def ratio(numerator: object, denominator: object) -> Decimal | None:
+    """``numerator / denominator`` exactly; ``None`` (never 0) when either is NULL or the
+    denominator is 0."""
+    n, d = number(numerator), number(denominator)
+    if n is None or d is None or d == 0:
+        return None
+    return n / d
+
+
 def null_rate(payload: Mapping[str, object]) -> Decimal | None:
     """``(row_count - non_null) / row_count``; ``None`` when there are no rows."""
     rows, non_null = number(payload["row_count"]), number(payload["non_null"])
-    if rows is None or non_null is None or rows == 0:
+    if rows is None or non_null is None:
         return None
-    return (rows - non_null) / rows
+    return ratio(rows - non_null, rows)
 
 
 def key_plan(claim: CheckedClaim, metrics: tuple[Metric, ...]) -> ir.ProbePlan:
@@ -50,3 +60,12 @@ def key_plan(claim: CheckedClaim, metrics: tuple[Metric, ...]) -> ir.ProbePlan:
         columns = (claim.column.column, *extra)
         return CompositeKeyAggregate(claim.table, columns, metrics, filter=claim.filter)
     return ColumnAggregate(claim.table, claim.column.column, metrics, filter=claim.filter)
+
+
+def as_utc(value: dt.date) -> dt.datetime:
+    """A timestamp in UTC: naive timestamps are UTC, a DATE is its midnight UTC (spec 6.2)."""
+    if not isinstance(value, dt.datetime):
+        return dt.datetime(value.year, value.month, value.day, tzinfo=dt.timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=dt.timezone.utc)
+    return value.astimezone(dt.timezone.utc)

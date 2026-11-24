@@ -162,6 +162,8 @@ jobs:
       # skip in the matrix jobs; here the extras are installed, so a skip is a failure.
       - name: Tests that need the mcp and sqlalchemy extras
         run: |
+          # a failing pytest must fail the step even though its output is piped to tee
+          set -o pipefail
           pytest -m "not integration and not live" -rs -p no:cacheprovider \
             tests/unit/agent/test_mcp.py tests/unit/connectors/test_sqlalchemy_fake.py \
             | tee extras.log

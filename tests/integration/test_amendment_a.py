@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import importlib.util
 import math
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -27,6 +29,8 @@ import pytest
 from engines import ENGINE_NAMES, Style, open_engine
 from expectations import CASES, COMPOSITE_JOIN, COVERAGE_FAIL, ENGINE_CASES, Case
 from shop import make_shop
+from test_verbs_engines import ALL_CASES as MATRIX_CASES
+from test_verbs_engines import _assert_case as assert_matrix_case
 
 import factlang as fl
 from factlang.connectors import (
@@ -52,7 +56,7 @@ from factlang.ir import (
     ValueMembership,
     canonical_key,
 )
-from factlang.judge import Outcome, Verdict
+from factlang.judge import Verdict
 from factlang.packs.standard import standard_pack
 from factlang.semantics.analyzer import analyze
 from factlang.semantics.catalog import Catalog, NullCatalog
@@ -227,7 +231,7 @@ def test_R1_measured_payload_equals_what_derive_receives(shop: Shop) -> None:
         assert isinstance(m, fl.Measurement)
         assert m.error is None, (shop.name, claim.canonical_text, m.error)
         assert m.plan == plan
-        assert claim.semantic_hash in seen or m.payload is None, claim.canonical_text
+        assert claim.semantic_hash in seen, (shop.name, claim.canonical_text)
         assert _norm(m.payload) == _norm(seen.get(claim.semantic_hash)), (
             shop.name,
             claim.canonical_text,
@@ -504,10 +508,30 @@ def test_R6_executed_render_join_matches_hand_written_join(shop: Shop) -> None:
 # == R7  native trino profile, tier verified =================================================
 
 
+def _load(path: Path, name: str) -> Any:
+    """Import a test module by path (test directories are not packages)."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_R7_trino_profile_is_native_verified_and_in_the_matrix() -> None:
-    assert "trino" in native_dialects()  # the conformance suite parametrises over these
+    assert "trino" in native_dialects()
     profile = get_profile("trino")
     assert profile is not None and profile.tier == "verified"
+    # the conformance suite's dialect parametrisation includes trino
+    conformance = _load(ROOT / "tests" / "conformance" / "test_dialects.py", "fl_t27_dialects")
+    assert "trino" in conformance.PROFILES
+    by_name = [
+        mark.args[1]
+        for obj in vars(conformance).values()
+        if callable(obj) and getattr(obj, "__name__", "").startswith("test_")
+        for mark in getattr(obj, "pytestmark", [])
+        if mark.name == "parametrize" and mark.args[0] == "name"
+    ]
+    assert by_name and all("trino" in list(values) for values in by_name), len(by_name)
     assert "trino" in ENGINE_NAMES  # the Task-20 verb matrix (and this file) run on it
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "trinodb/trino" in ci  # a Trino service container in integration CI ...
@@ -518,28 +542,12 @@ def test_R7_trino_profile_is_native_verified_and_in_the_matrix() -> None:
 def test_R7_verb_matrix_runs_on_trino(shop: Shop) -> None:
     if shop.name != "trino":
         pytest.skip("the Trino row of the matrix")
-    failures = []
-    for case in ALL_CASES:
+    for case in MATRIX_CASES:  # the Task-20 matrix and its own assertion helper
         checker = Checker(shop.connector, catalog=NullCatalog() if case.catalog == "null" else None)
         (outcome,) = checker.check(case.claim).outcomes
-        problem = _case_problem(outcome, case)
-        if problem:
-            failures.append(problem)
-    assert not failures, failures
-
-
-def _case_problem(outcome: Outcome, case: Case) -> str | None:
-    if outcome.verdict is not case.verdict:
-        return f"{case.claim}: {outcome.verdict} != {case.verdict} ({outcome.explanation})"
-    for name, want in case.facts.items():
-        got = outcome.facts.get(name)
-        if want == got:  # Approx compares on the left
-            continue
-        return f"{case.claim}: {name} = {outcome.facts.get(name)!r}, want {want!r}"
-    evidence = outcome.evidence
-    if evidence is not None and evidence.tier is not None and evidence.tier != "verified":
-        return f"{case.claim}: tier {evidence.tier}"
-    return None
+        assert_matrix_case(outcome, case, shop.name)
+        if outcome.verdict in (Verdict.PASS, Verdict.FAIL, Verdict.NO_DATA):
+            assert outcome.evidence is not None and outcome.evidence.tier == "verified"
 
 
 # == R8  fl.connectors.run_metadata, FL703 ===================================================
@@ -578,7 +586,8 @@ def test_R8_information_schema_select_works(shop: Shop) -> None:
 
 def test_R8_show_tables_allowed(shop: Shop) -> None:
     if shop.name == "tsql":
-        # T-SQL statements need no separator, so its guard admits SELECT only (spec 9.1)
+        # spec 9.1 (run_metadata on T-SQL): statements need no separator there, so the guard
+        # admits only a SELECT, which runs wrapped as a derived table; SHOW is refused
         with pytest.raises(ExecutionError, match="FL703"):
             check_metadata_sql("SHOW TABLES", "tsql")
         return
@@ -590,14 +599,12 @@ def test_R8_show_tables_allowed(shop: Shop) -> None:
     assert {"orders", "customers"} <= names, (shop.name, sorted(names))
 
 
-@pytest.mark.xfail(
-    not (ROOT / "docs" / "reference" / "diagnostics.md").exists(),
-    reason="docs task pending",
-    strict=True,
-)
-def test_R8_fl703_is_documented_in_diagnostics_reference() -> None:
-    text = (ROOT / "docs" / "reference" / "diagnostics.md").read_text(encoding="utf-8")
-    assert "FL703" in text
+def test_R8_fl703_is_documented() -> None:
+    wiki = (ROOT / "docs" / "wiki" / "Diagnostics.md").read_text(encoding="utf-8")
+    assert "FL703" in wiki
+    reference = ROOT / "docs" / "reference" / "diagnostics.md"
+    if reference.exists():  # created by the docs task
+        assert "FL703" in reference.read_text(encoding="utf-8")
 
 
 # == R9  bare boolean filter atom ============================================================
@@ -650,37 +657,62 @@ R10_NAMES = (
     "parse_filter",
     "RenderedFragment",
     "run_metadata",
+    "connectors",
+    "sql",
+    "ir",
+)
+R10_CODE_SPANS = (
+    "fl.measure",
+    "Checker.estimate",
+    "fl.parse_filter",
+    "fl.sql.render_filter",
+    "fl.sql.render_join",
+    "fl.connectors.run_metadata",
 )
 
 
-def test_R10_exports_tests_and_api_docs() -> None:
-    assert set(R10_NAMES) <= set(fl.__all__)
-    assert fl.Checker.measure and fl.Checker.ameasure and fl.Checker.estimate
-    assert fl.sql.render_filter and fl.sql.render_join
-    assert fl.connectors.run_metadata is fl.run_metadata
+def test_R10_exports_are_pinned_exactly() -> None:
+    from factlang import connectors, engine, ir, sql
+
+    api_test = _load(ROOT / "tests" / "unit" / "test_api.py", "fl_t27_api")
+    assert set(fl.__all__) == api_test.EXPORTS  # the unit test pins the exact list
+    assert len(fl.__all__) == len(set(fl.__all__))
+    assert set(R10_NAMES) <= api_test.EXPORTS
+    assert fl.measure.__module__ == "factlang.api"
+    assert fl.Measurement is engine.Measurement and fl.CostEstimate is engine.CostEstimate
+    assert fl.Checker is engine.Checker
+    for method in ("measure", "ameasure", "estimate"):
+        assert callable(getattr(fl.Checker, method)), method
+    assert fl.RenderedFragment is sql.RenderedFragment
+    assert fl.sql is sql and fl.sql.render_filter is sql.render_filter
+    assert fl.sql.render_join is sql.render_join
+    assert fl.connectors is connectors and fl.run_metadata is connectors.run_metadata
+    assert fl.connectors.run_metadata is connectors.run_metadata
+    assert fl.ir is ir
     for name in ("SampleSpec", "ValueMembership", "KeyOverlap", "MetadataQuery"):
-        assert name in fl.ir.__all__, name
-    api_test = (ROOT / "tests" / "unit" / "test_api.py").read_text(encoding="utf-8")
-    assert "fl.__all__" in api_test
-    for name in R10_NAMES:
-        assert f'"{name}"' in api_test, name  # the unit test pins each export
-    docs = (ROOT / "docs" / "wiki" / "Measurement-API.md").read_text(encoding="utf-8")
+        assert name in ir.__all__, name
+
+
+def test_R10_api_docs_list_them_with_the_stability_promise() -> None:
+    api = (ROOT / "docs" / "reference" / "api.md").read_text(encoding="utf-8")
+    wiki = (ROOT / "docs" / "wiki" / "Measurement-API.md").read_text(encoding="utf-8")
+    for text in (api, wiki):
+        assert "SemVer" in text
+    assert "Stable API" in api
+    for span in R10_CODE_SPANS:
+        assert re.search(r"`" + re.escape(span) + r"[`(]", api), span  # a code span
     for name in (
-        *R10_NAMES,
-        "Checker.measure",
-        "ameasure",
-        "Checker.estimate",
-        "render_filter",
-        "render_join",
         "right_filter",
         "report_limit",
         "SampleSpec",
+        "RenderedFragment",
+        "CostEstimate",
         "FL703",
         "FL404",
         "FL405",
         "FL506",
     ):
-        assert name in docs, name
+        assert name in wiki, name
 
 
 # == B1  SampleSpec (IR) =====================================================================
@@ -714,8 +746,11 @@ def test_B1_sample_spec_and_primitive_fields() -> None:
     assert canonical_key(exact) != canonical_key(dataclasses.replace(exact, sample=spec))
 
 
-def test_B1_fl405_block_and_row_samples_need_a_single_read(duck_conn: DBAPIConnector) -> None:
-    rows = SampleSpec("bernoulli", Decimal("0.5"), 1)
+@pytest.mark.parametrize("method", ["system", "bernoulli"])
+def test_B1_fl405_block_and_row_samples_need_a_single_read(
+    duck_conn: DBAPIConnector, method: str
+) -> None:
+    rows = SampleSpec(method, Decimal("0.5"), 1)  # type: ignore[arg-type]
     multi_read = [
         ColumnAggregate(ORDERS, Ident("id"), (Metric.MAX_PER_KEY,), sample=rows),
         ColumnAggregate(ORDERS, Ident("id"), (Metric.DUPLICATE_KEYS,), sample=rows),
@@ -730,7 +765,10 @@ def test_B1_fl405_block_and_row_samples_need_a_single_read(duck_conn: DBAPIConne
         assert m.payload is None
     single = ColumnAggregate(ORDERS, Ident("id"), (Metric.ROW_COUNT,), sample=rows)
     (ok,) = fl.measure([single], connector=duck_conn)
-    assert ok.error is None, ok.error
+    if method == "system":  # a single read passes planning; DuckDB declares no SYSTEM style
+        assert ok.error is not None and ok.error.code == "FL506", ok.error
+    else:
+        assert ok.error is None, ok.error
 
     # keyhash is deterministic and allowed everywhere
     def kh(column: str) -> SampleSpec:
@@ -765,6 +803,26 @@ KEYHASH_TOKENS: dict[str, tuple[tuple[str, ...], bool]] = {
     "trino": (("from_big_endian_64(xxhash64(to_utf8(",), True),
 }
 SAMPLE_TEXT = ("TABLESAMPLE", "SAMPLE ", "1000000", "|")
+FOLDED = re.compile(
+    r"MOD\(MOD\(.+, 1000000\) \+ 1000000, 1000000\)"  # MOD(MOD(h, B) + B, B)
+    r"|\(\(.+ % 1000000 \+ 1000000\) % 1000000\)"  # ((h % B + B) % B)
+)
+UNFOLDED = re.compile(r"MOD\(.+, 1000000\)|% 1000000\)")
+
+
+def test_B2_keyhash_excludes_null_key_parts_and_rounds_half_up() -> None:
+    key = (Ident("id"), Ident("customer_id"))
+    for dialect in native_dialects():
+        render = _renderer_for(dialect)
+        spec = SampleSpec("keyhash", Decimal("0.5"), 1, key)
+        sql = render(ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,), sample=spec)).sql_template
+        for column in ("id", "customer_id"):
+            assert re.search(rf"\b{column}\W? IS NOT NULL", sql), (dialect, column, sql)
+        for fraction, threshold in (("0.0000005", 1), ("0.0000015", 2), ("0.0000025", 3)):
+            spec = SampleSpec("keyhash", Decimal(fraction), 1, key[:1])
+            probe = render(ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,), sample=spec))
+            ints = [p.value for p in probe.params if p.family == "integer"]
+            assert ints == [threshold], (dialect, fraction, ints)  # ROUND half-up, not even
 
 
 def test_B2_keyhash_predicate_per_profile() -> None:
@@ -777,8 +835,11 @@ def test_B2_keyhash_predicate_per_profile() -> None:
         for token in tokens:
             assert token in sql, (dialect, token, sql)
         assert "ABS(" not in sql.upper(), dialect
-        if signed:
-            assert "+ 1000000" in sql, (dialect, sql)
+        if signed:  # MOD(MOD(h, B) + B, B); T-SQL spells MOD as %
+            assert FOLDED.search(sql), (dialect, sql)
+        else:  # h is non-negative: one MOD, no fold
+            assert "+ 1000000" not in sql and not FOLDED.search(sql), (dialect, sql)
+            assert UNFOLDED.search(sql), (dialect, sql)
         values = [p.value for p in probe.params]
         assert "42" in values, (dialect, values)  # the seed, bound as a string
         assert 250000 in values, (dialect, values)  # fraction x 1e6, bound as an integer
@@ -810,7 +871,9 @@ def test_B2_methods_render_or_fl506_and_fraction_one_renders_no_sample() -> None
 
 
 def test_B2_sqlglot_bridge_keyhash_is_fl506_off_the_ruled_dialects() -> None:
-    pytest.importorskip("sqlglot")
+    import sqlglot  # a dev dependency: its absence is a failure, never a skip
+
+    assert sqlglot.__version__
     spec = SampleSpec("keyhash", Decimal("0.5"), 1, (Ident("id"),))
     plan = ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,), sample=spec)
     with pytest.raises(RenderError, match=r"^FL506"):
@@ -860,21 +923,32 @@ def test_B3_estimate_prices_sampled_plans(duck_conn: DBAPIConnector) -> None:
 # == B4  guards and execution ================================================================
 
 
-def test_B4_check_rejects_a_sampled_plan_fl404(shop: Shop) -> None:
+def test_B4_check_rejects_a_sampled_plan_fl404(duck_conn: DBAPIConnector) -> None:
     pack = standard_pack().extend("sampling", "1.0")
-    rows = pack.get("ROWS")
-    assert rows is not None
-    sample = SampleSpec("keyhash", Decimal("0.5"), 1, (Ident("id"),))
+    rows, join = pack.get("ROWS"), pack.get("JOIN")
+    assert rows is not None and join is not None
 
-    def sampled_plan(claim: CheckedClaim) -> ProbePlan:
-        return ColumnAggregate(claim.table, None, (Metric.ROW_COUNT,), sample=sample)
+    def kh(column: str) -> SampleSpec:
+        return SampleSpec("keyhash", Decimal("0.5"), 1, (Ident(column),))
 
-    pack.override(dataclasses.replace(rows, plan=sampled_plan))
-    logged = Logged(shop.connector)
-    (outcome,) = (
-        Checker(logged, pack=pack, catalog=NullCatalog()).check("ROWS orders VALUE >= 1").outcomes
+    def sampled_rows(claim: CheckedClaim) -> ProbePlan:
+        return ColumnAggregate(claim.table, None, (Metric.ROW_COUNT,), sample=kh("id"))
+
+    def sampled_join(claim: CheckedClaim) -> ProbePlan:
+        plan = join.plan(claim)  # type: ignore[misc]
+        assert isinstance(plan, KeyOverlap)
+        return dataclasses.replace(plan, right_sample=kh("id"))
+
+    pack.override(dataclasses.replace(rows, plan=sampled_rows))
+    pack.override(dataclasses.replace(join, plan=sampled_join))
+    logged = Logged(duck_conn)
+    report = Checker(logged, pack=pack, catalog=NullCatalog()).check(
+        "ROWS orders VALUE >= 1\nJOIN orders.customer_id -> customers.id MATCH >= 1%"
     )
-    assert outcome.verdict is Verdict.ERROR and outcome.explanation.startswith("FL404")
+    for outcome in report.outcomes:
+        assert outcome.verdict is Verdict.ERROR, (outcome.verb, outcome.explanation)
+        assert outcome.explanation.startswith("FL404"), outcome.explanation
+    assert [o.verb for o in report.outcomes] == ["ROWS", "JOIN"]
     assert logged.executed == []
 
 
@@ -892,6 +966,22 @@ def test_B4_a_keyhash_both_sides_keep_identical_key_sets(shop: Shop) -> None:
     right = set(_kept(shop, "orders", "id", 7, "0.5"))
     assert left == right, (shop.name, sorted(left ^ right))
     assert 0 < len(left) < 100
+    # a KeyOverlap under real keyhash sampling, same seed and fraction on both sides
+    plan = KeyOverlap(
+        (_c("order_items", "order_id"),),
+        (_c("orders", "id"),),
+        sample=SampleSpec("keyhash", Decimal("0.5"), 7, (Ident("order_id"),)),
+        right_sample=SampleSpec("keyhash", Decimal("0.5"), 7, (Ident("id"),)),
+    )
+    m = fl.measure(plan, connector=shop.connector)
+    assert m.error is None and m.payload is not None, (shop.name, m.error)
+    p = {k: int(v) for k, v in m.payload.items()}  # type: ignore[call-overload]
+    assert p["distinct_left"] == p["distinct_right"] == p["matched"] == len(right), p
+    assert 0 < p["sampled_right_rows"] < 100, p  # orders has 100 rows
+    lines = _sql(shop, "SELECT order_id AS k, COUNT(*) AS n FROM order_items GROUP BY order_id")
+    kept_rows = sum(int(r["n"]) for r in lines if str(int(r["k"])) in right)
+    assert p["sampled_left_rows"] == kept_rows, (p, kept_rows)
+    assert p["sampled_right_rows"] == len(right)  # orders.id is unique
 
 
 def test_B4_b_keyhash_keeps_every_row_of_a_kept_key(shop: Shop) -> None:

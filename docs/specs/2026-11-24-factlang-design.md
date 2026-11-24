@@ -627,7 +627,7 @@ the same execution, timeout, paramstyle binding and error mapping (`FL700`/`FL70
 probes. It is for libraries built on FactLang that must list schemas/tables; it is not a
 claim and produces no `Outcome`. Guard (raises `ExecutionError("FL703 …")` before
 executing): one statement, no `;` outside string literals, and the first keyword is one of
-`SELECT WITH SHOW DESCRIBE DESC`. Params are bound, never spliced.
+`SELECT WITH SHOW DESCRIBE DESC EXPLAIN` (not `EXPLAIN ANALYZE`); the body of every statement is scanned for write keywords (`SHOW CREATE …` allowed); `;`, Snowflake's `->>` chain operator and MySQL executable comments (`/*! … */`, `/*M! … */`) outside literals are refused. The guard is a keyword guard, not a sandbox: the connection's credentials are the real security boundary. Params are bound, never spliced.
 
 ### 9.2 Catalogs
 ```python

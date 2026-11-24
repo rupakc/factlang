@@ -986,7 +986,7 @@ Primitives `ColumnAggregate`, `CompositeKeyAggregate`, `ValueMembership`, `KeyOv
 `fraction` and `seed`, both sides keep exactly the same key values (the keyhash predicate
 depends only on the key value, the seed and the fraction). `MetadataQuery` is never sampled.
 
-**FL405 ruling (2026-11-24, builder; SchemaGuru Elephant agreed).** `system` and `bernoulli` samples are allowed only on single-read primitives (`ColumnAggregate`, `CompositeKeyAggregate`, `PatternCoverage`). `ValueMembership` and `KeyOverlap` read the sampled table more than once and a block/row sample is not guaranteed to repeat across reads (e.g. BigQuery re-evaluates CTEs), so lowering raises **FL405** "sample method needs a single read; use keyhash" (planning range). `keyhash` is deterministic and allowed everywhere.
+**FL405 ruling (2026-11-24, builder; SchemaGuru Elephant agreed).** `system` and `bernoulli` samples are allowed only on plans that lower to a single read. `ValueMembership`, `KeyOverlap`, and `ColumnAggregate`/`CompositeKeyAggregate` that request a keyed metric (`MAX_PER_KEY`, `DUPLICATE_KEYS`, composite `DISTINCT_KEYS`) read the sampled table more than once and a block/row sample is not guaranteed to repeat across reads (e.g. BigQuery re-evaluates CTEs), so lowering raises **FL405** "sample method needs a single read; use keyhash" (planning range). `keyhash` is deterministic and allowed everywhere.
 
 **B2 — rendering (layer 12).** `DialectProfile` gains `sample_styles: Mapping[str, str |
 None]` per method and a `keyhash_expr` (deterministic 64-bit hash of the cast-to-string

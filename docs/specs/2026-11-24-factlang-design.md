@@ -1,6 +1,6 @@
 # FactLang — Design Specification
 
-Status: APPROVED 2026-11-24 · Date: 2026-11-24 · Process: Elephant-Goldfish (see §15)
+Status: APPROVED 2026-11-24 · **Amended 2026-11-24 (Amendment A — downstream SchemaGuru requirements, owner-directed, §18)** · Process: Elephant-Goldfish (see §15)
 
 This document is the single source of truth for building FactLang v1. A builder with
 no access to the conversation that produced it must be able to implement the library
@@ -72,7 +72,7 @@ which exists because its absence caused a measured wrong answer, are:
 
 | Gap in the predecessor | FactLang v1 |
 |---|---|
-| Two dialects (BigQuery, Postgres) | 10 native dialect profiles + any sqlglot dialect (§8) |
+| Two dialects (BigQuery, Postgres) | 11 native dialect profiles (incl. Trino, Amendment A) + any sqlglot dialect (§8) |
 | Host must execute SQL | Optional connectors that execute, with timeouts and cost guards (§9) |
 | Refs are exactly `table.column` | Qualified refs up to `catalog.schema.table.column`, quoted identifiers, `USE` namespace directive (§4) |
 | Filters only on one verb, by a column list | General safe `WHERE` filter on every measurable verb (§4.5) |
@@ -96,8 +96,8 @@ which exists because its absence caused a measured wrong answer, are:
 - G3. **Robust front end**: lexer/parser/analyser never raise on any input
   (property-tested), recover per line, emit coded diagnostics with spans.
 - G4. **Many warehouses**: BigQuery, Snowflake, Redshift, Postgres, DuckDB,
-  Databricks/Spark SQL, ClickHouse, SQL Server/Azure Synapse, MySQL/MariaDB, Oracle
-  natively; anything else sqlglot can generate, as best-effort.
+  Databricks/Spark SQL, ClickHouse, SQL Server/Azure Synapse, MySQL/MariaDB, Oracle,
+  Trino (Amendment A) natively; anything else sqlglot can generate, as best-effort.
 - G5. **Agent-native**: machine-readable verdicts and diagnostics (JSON), an
   LLM tool definition generated from the active pack, a prompt-ready verb reference.
 - G6. **Scale**: works on warehouses with hundreds of thousands of schemas — never
@@ -238,6 +238,7 @@ profile fact (§8.3):
 | duckdb | database | schema | table | 3 |
 | databricks | catalog | schema | table | 3 |
 | tsql | database | schema | table | 3 |
+| trino | catalog | schema | table | 3 |
 | mysql, clickhouse | — | database | table | 2 |
 | oracle | — | schema (owner) | table | 2 |
 
@@ -255,7 +256,7 @@ This is what makes claims short on warehouses with very many schemas.
 ```ebnf
 condition  = conj { "OR" conj } ;
 conj       = atom { "AND" atom } ;
-atom       = "NOT" atom | "(" condition ")" | comparison ;
+atom       = "NOT" atom | "(" condition ")" | comparison | name ;   (* bare boolean column, Amendment A *)
 comparison = name OP literal
            | name "IN" list
            | name "NOT" "IN" list
@@ -272,6 +273,13 @@ with a filter keyword must be quoted. Filters reference columns of the claim's
 (§8.4): NUMBER → integer or decimal, STRING → string, TRUE/FALSE → boolean,
 `DATE '…'` → date, `TIMESTAMP '…'` → timestamp (no offset = UTC). An invalid ISO
 string is `FL309`. `x IS NULL` is the only way to test NULL; `x = NULL` is `FL206`.
+**Bare boolean atom (Amendment A, R9):** a `name` standing alone as an atom tests a
+boolean column for truth: `deleted` ≡ `deleted = TRUE`, so `NOT deleted` is
+`NOT (deleted = TRUE)` — which, under SQL three-valued logic, excludes NULL rows. The
+idiomatic live-row filter for a flag that is TRUE or NULL is therefore
+`deleted IS NULL OR NOT deleted`. The analyser reports `FL305` when the catalog knows the
+column is not boolean. The formatter prints the bare form back as written (`deleted`),
+and the semantic hash treats `deleted` and `deleted = TRUE` as identical.
 A filter is part of the claim's semantic identity. Each verb declares
 `filterable: bool`; a filter on a non-filterable verb is `FL308`. Filterable in the
 standard pack: `ROWS NULLS UNIQUE FANOUT VALUES RANGE PATTERN FRESH JOIN COUNT
@@ -401,13 +409,31 @@ Exact fact definitions (these are the product; each is pinned by execution tests
 ### 6.3 Relationship facts
 | Verb | Form | Primitive | Facts | Decide |
 |---|---|---|---|---|
-| `JOIN` | `JOIN a.x -> b.y MATCH >=99% [CARD N:1] [CAST string]` | KeyOverlap | `match_rate`, `max_left_per_key`, `max_right_per_key` | MATCH compare, and CARD consistent with multiplicities (`N:1` ⇒ right ≤1, `1:1` ⇒ both ≤1, `1:N` ⇒ left ≤1) |
+| `JOIN` | `JOIN a.x -> b.y MATCH >=99% [CARD N:1] [CAST string] [COVERAGE >=50%] [WITH [x2, ...] TO [y2, ...]]` | KeyOverlap | `match_rate`, `coverage`, `row_match_rate`, `fan_in`, `distinct_left`, `distinct_right`, `matched`, `left_non_null`, `max_left_per_key`, `max_right_per_key` | MATCH compare, COVERAGE compare when present, and CARD consistent with multiplicities (`N:1` ⇒ right ≤1, `1:1` ⇒ both ≤1, `1:N` ⇒ left ≤1) |
 
 The filter on `JOIN` applies to the left side only. `match_rate` = matched distinct
 non-NULL left keys / distinct non-NULL left keys (`None` when there are none). NULL
 left keys are excluded — their share is a `NULLS` claim, not a join claim. Without
 `CAST`, keys are compared in their native types; with `CAST <family>` both sides
 are cast to that type family.
+
+**Amendment A (R3, R4) — composite keys and reverse facts.**
+- *Composite join keys*: `WITH [x2, ...]` lists further LEFT-table columns and
+  `TO [y2, ...]` the matching RIGHT-table columns, positionally:
+  `JOIN order_items.order_id -> orders.order_id WITH [shop_id] TO [shop_id] MATCH >=99%`
+  joins on `(order_id, shop_id) = (order_id, shop_id)`. `WITH` and `TO` must appear
+  together (`FL304` naming the missing one) and have equal length (`FL309`). A key
+  tuple with any NULL part is excluded on its side (same rule as composite keys in
+  §8.1). `CAST` applies to every key part.
+- *Additional facts* (all `None` when undecidable, never 0):
+  `coverage` = matched distinct right keys / distinct non-NULL right keys (reverse
+  support — the share of the right side reached; `None` when the right side has no
+  non-NULL keys); `row_match_rate` = left rows with a non-NULL key that matched /
+  left rows with a non-NULL key; `fan_in` = `left_non_null / distinct_left` (left rows
+  per distinct left key); `distinct_left`, `distinct_right`, `matched`,
+  `left_non_null` are exposed as facts.
+- *`COVERAGE`* (RATIO, ops `>= == <= < >`, optional) is decided like `MATCH` against
+  the `coverage` fact.
 
 ### 6.4 Answer facts (what agents state in answers)
 | Verb | Form | Primitive | Facts |
@@ -460,8 +486,8 @@ absence of data.
 |---|---|---|---|
 | `ColumnAggregate` | `table`, `column?`, `metrics`, `filter?` | SINGLE_ROW | metric aliases |
 | `CompositeKeyAggregate` | `table`, `columns`, `metrics`, `filter?` | SINGLE_ROW | metric aliases |
-| `ValueMembership` | `table`, `column`, `declared` (tuple of text), `split?`, `report_limit` (default 20), `filter?` | ROW_SET | one summary row (`kind='summary'`, `non_null`, `declared_rows`, `undeclared_distinct`) plus ≤ `report_limit` rows (`kind='undeclared'`, `value`, `freq`) ranked by freq desc, value asc |
-| `KeyOverlap` | `left`, `right`, `cast_to?`, `measure_multiplicity`, `filter?` | SINGLE_ROW | `distinct_left`, `matched`, (`max_left_per_key`, `max_right_per_key`) |
+| `ValueMembership` | `table`, `column`, `declared` (tuple of text; **may be empty** — then every value is undeclared and the ranked list is the exact top-k observed values, Amendment A R2), `split?`, `report_limit` (default 20, max 1000), `filter?` | ROW_SET | one summary row (`kind='summary'`, `non_null`, `declared_rows`, `undeclared_distinct`) plus ≤ `report_limit` rows (`kind='undeclared'`, `value`, `freq`) ranked by freq desc, value asc |
+| `KeyOverlap` | `left`, `right` (each a non-empty tuple of column refs on one table, equal length — Amendment A R3), `cast_to?`, `measure_multiplicity`, `filter?` (left side), `right_filter?` (right side, IR-only — Amendment A R4) | SINGLE_ROW | `distinct_left`, `matched`, `distinct_right`, `left_non_null`, `matched_left_rows`, (`max_left_per_key`, `max_right_per_key`) |
 | `PatternCoverage` | `table`, `column`, `pattern`, `filter?` | SINGLE_ROW | `non_null`, `matching` |
 | `MetadataQuery` | `table`, `column?` | ROW_SET | `column_name`, `data_type` |
 
@@ -510,7 +536,7 @@ cannot disagree on semantics.
    `information_schema` query template, plus an optional `overrides` mapping from
    internal-AST node type to a print function for the rare node a profile must spell
    differently.
-   Native profiles in v1: `bigquery`, `snowflake`, `redshift`, `postgres`, `duckdb`,
+   Native profiles in v1 (`trino` added by Amendment A, R7): `trino`, `bigquery`, `snowflake`, `redshift`, `postgres`, `duckdb`,
    `databricks` (Spark SQL), `clickhouse`, `tsql` (SQL Server/Synapse/Fabric),
    `mysql` (also MariaDB), `oracle`.
 2. **sqlglot bridge** (extra `factlang[sqlglot]`): converts the internal AST to a
@@ -552,7 +578,7 @@ if installed; else `FL504 unknown dialect` listing native names and the hint
   `SELECT`/`WITH` and contains no `;` outside literals.
 
 ### 8.5 Tiers
-- `verified` — native profile executed against a real engine in CI: `duckdb`,
+- `verified` — native profile executed against a real engine in CI: `trino` (Amendment A, `trinodb/trino` service container), `duckdb`,
   `postgres`, `mysql`, `clickhouse`, `tsql` (GitHub Actions service containers).
 - `native` — native profile whose SQL is checked in CI by parsing it with sqlglot in
   that dialect and by golden structural tests, but not executed in CI because it
@@ -581,7 +607,17 @@ clickhouse-connect's DB-API), `SQLAlchemyConnector(engine)` (dialect inferred fr
 maximum_bytes_billed?)` (uses query parameters and dry-run cost check),
 `CallableConnector(fn, dialect)` for hosts that run SQL themselves.
 `factlang.connect(dsn)` builds a connector from a SQLAlchemy URL when SQLAlchemy is
-installed.
+installed. `TrinoConnector` is covered by `DBAPIConnector` over the `trino` driver
+(extra `trino`, Amendment A).
+
+**Metadata SQL (Amendment A, R8).** `fl.connectors.run_metadata(connector, sql, params=(),
+*, timeout_s=None) -> QueryResult` executes host-authored **catalog metadata** SQL
+(system views, `INFORMATION_SCHEMA`, `SHOW …`, `DESCRIBE …`) through any connector, using
+the same execution, timeout, paramstyle binding and error mapping (`FL700`/`FL702`) as
+probes. It is for libraries built on FactLang that must list schemas/tables; it is not a
+claim and produces no `Outcome`. Guard (raises `ExecutionError("FL703 …")` before
+executing): one statement, no `;` outside string literals, and the first keyword is one of
+`SELECT WITH SHOW DESCRIBE DESC`. Params are bound, never spliced.
 
 ### 9.2 Catalogs
 ```python
@@ -608,6 +644,21 @@ and an `FL313` info when it could not check.
   `to_dict()/to_json()/to_markdown()`.
 - Cost guard: when the connector supports dry-run (BigQuery) and `max_bytes` is set,
   a probe over budget is `ERROR` with `FL701 over cost budget`, never executed.
+- **Raw measurement (Amendment A, R1).** `Checker.measure(plans: Sequence[ProbePlan])
+  -> list[Measurement]` (and `ameasure`) runs IR primitives that have no claim, through the
+  same render → (cost guard) → execute path, with fusion and de-duplication across the
+  batch (identity = the plan's canonical form). `Measurement(plan, payload, verdict_hint,
+  evidence, error)`: `payload` is exactly what `judge.run.payload_for` would hand a
+  contract (`SINGLE_ROW` → the row dict in wire-format aliases; `ROW_SET` →
+  `{"rows": [...]}`; no rows → `None`); `evidence` is the same `Evidence` an `Outcome`
+  carries; `error` is `None` or a `Diagnostic` (`FL700`/`FL701`/`FL702`). It never raises
+  for execution failures. `fl.measure(plan_or_plans, *, connector, **checker_kwargs)` is
+  the one-call form.
+- **Cost estimate (Amendment A, R5).** `Checker.estimate(items: str | Sequence[ProbePlan])
+  -> list[CostEstimate]` renders claims (text) or plans and asks the connector's optional
+  dry-run for bytes **without executing**. `CostEstimate(semantic_hash_or_plan_key,
+  sql, bytes: int | None, method: "dry_run" | "unknown")`; connectors without dry-run give
+  `bytes=None, method="unknown"` — never a guess.
 
 ---
 
@@ -640,6 +691,28 @@ positive.decide(fl.Compare("min", ">", value=0))
 positive.example("POSITIVE orders.amount", valid=True)
 ```
 
+**Amendment A additions (R1, R5, R6):**
+```python
+m = fl.measure(fl.ir.ValueMembership(t, col, declared=(), report_limit=20), connector=c)  # exact top-k
+est = checker.estimate("JOIN orders.customer_id -> customers.id MATCH >=99%")             # dry-run bytes
+f = fl.parse_filter("deleted IS NULL OR NOT deleted")            # FilterExpr + diagnostics, no claim
+frag = fl.sql.render_filter(f, table=t, dialect="snowflake")     # RenderedFragment(sql_template, params)
+snippet = fl.sql.render_join([edge1, edge2], dialect="bigquery",
+                             filters={t1: f})                     # RenderedFragment, display/bindable
+print(frag.inline())                                              # display-only text, literals escaped
+```
+`fl.parse_filter(text, *, catalog=None, table=None) -> tuple[FilterExpr | None,
+DiagnosticBag]` parses and analyses a bare §4.5 condition (no `WHERE` keyword needed;
+accepted with it too). `RenderedFragment` has the same `sql_template` placeholders,
+`params`, `bind(paramstyle)` and `inline(...)` as `RenderedProbe` but is **not** a full
+statement and is never executed by FactLang: `render_filter` produces a boolean expression
+qualified with an optional alias; `render_join(edges, dialect, *, filters=None,
+aliases=None)` produces `FROM a JOIN b ON … [AND …]` for a path of `EdgeRef`s (composite
+edges allowed; `CAST` honoured), with each table's filter ANDed into its `ON`/`WHERE`
+per the documented rule (left-most table's filter in `WHERE`, others in their `ON`).
+Both go through the same internal SQL AST and identifier rules (§8.2, §8.4), on native
+profiles and the sqlglot bridge.
+
 Extension operations on `ContractPack`: `register(c)` (raises on duplicate),
 `override(c)` (replaces, records the replaced version), `alias("CNT", "COUNT")`,
 `remove(name)`, `extend(name, version)` (copy-on-write child pack),
@@ -668,8 +741,12 @@ exit codes 0 ok, 1 a claim FAILED, 2 invalid input, 3 errors/undecidable.
 ## 11. Distribution
 
 Extras: `sqlglot`, `sqlalchemy`, `bigquery`, `snowflake`, `redshift`, `databricks`,
-`postgres`, `duckdb`, `mysql`, `clickhouse`, `mssql`, `oracle`, `mcp`, `all`, `dev`,
-`docs`. Version from `factlang/__about__.py`, SemVer, starting `0.1.0`; the language
+`postgres`, `duckdb`, `mysql`, `clickhouse`, `mssql`, `oracle`, `trino` (`trino>=0.330`,
+Amendment A), `mcp`, `all`, `dev`, `docs`. **Public-API stability (Amendment A, R10):**
+`factlang.ir` primitives and their fields/result columns, `Checker.measure`/`estimate`,
+`fl.measure`, `fl.parse_filter`, `fl.sql.render_filter`/`render_join`,
+`RenderedFragment`, `fl.connectors.run_metadata` are public API under SemVer: no breaking
+change within a `0.x` minor series. Version from `factlang/__about__.py`, SemVer, starting `0.1.0`; the language
 itself has a `LANGUAGE_VERSION = "1.0"` independent of package version.
 
 ---
@@ -695,7 +772,7 @@ ratio > 1) · FL311 no such table/column · FL312 cross-type join without CAST
 FL501 metric not renderable · FL502 identifier not representable · FL503 cast not
 expressible · FL504 unknown dialect · FL505 too many table-name parts for dialect · FL600 decide reads a fact derive never
 produces · FL601 decide reads an undeclared attribute · FL602 contract has no
-examples · FL700 execution failed · FL701 over cost budget · FL702 timeout.
+examples · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A).
 `FL5xx` raise `RenderError`; `FL6xx` are asserted by tests over every registered
 pack; `FL7xx` become `ERROR` outcomes.
 
@@ -839,3 +916,37 @@ Also decided by the owner: build from scratch, reusing the predecessor's concept
 Exact internal class names below the public API; error message wording (codes and
 ranges are fixed); the profile field set beyond §8.3 if a dialect needs more; docs
 site theme details; whether the playground can execute queries in-browser.
+
+---
+
+## 18. Amendment A — requirements from SchemaGuru (2026-11-24, owner-directed)
+
+**Context.** SchemaGuru (`github.com/rupakc/schemaguru`, spec
+`~/schemaguru/docs/specs/2026-11-24-schemaguru-design.md` §5.2) is an open-source schema
+intelligence library that **depends on FactLang** for all measurement SQL, dialect
+knowledge, connectors and verdicts (owner decision). A cold builder check of its spec
+found capabilities FactLang v1 did not provide. The owner directed (2026-11-24) that they
+be added to **FactLang 0.1.0** with immediate effect, so SchemaGuru never renders
+measurement SQL itself or depends on FactLang internals. Each item is specified inline
+in the section named; this table is the index and the acceptance list.
+
+| # | Requirement | Specified in | Acceptance (tests) |
+|---|---|---|---|
+| R1 | Run IR primitives with no claim: `Checker.measure`/`ameasure`, `fl.measure`, `Measurement` | §9.3, §10 | DuckDB: each primitive measured returns the same payload a claim's derive receives; fused batch == unfused; failure → `error` set, no raise |
+| R2 | `ValueMembership(declared=())` allowed → exact top-k observed values; `report_limit` ≤ 1000 | §8.1 | DuckDB: top-k equals `GROUP BY … ORDER BY count DESC, value ASC` reference; NULL excluded; `VALUES t.c IN []` claim behaviour unchanged |
+| R3 | Composite join keys: `KeyOverlap` key tuples; `JOIN … WITH [..] TO [..]` | §6.3, §8.1 | parser/analyser: FL304 when one of WITH/TO missing, FL309 on length mismatch; DuckDB: a 2-part key with a NULL part excluded; examples ≥3 valid/≥3 invalid |
+| R4 | Reverse & row facts: `coverage`, `row_match_rate`, `fan_in`, `distinct_right`, `left_non_null`, `matched_left_rows`; `COVERAGE` attribute; IR-only `right_filter` | §6.3, §8.1 | DuckDB fixture: asymmetric join (forward 1.0, coverage < 0.01) gives exact numbers; `None` (not 0) on an empty right side |
+| R5 | Price without executing: `Checker.estimate` → `CostEstimate` via the connector's optional dry-run | §9.3 | fake dry-run connector returns bytes; non-dry-run connector → `bytes=None, method="unknown"`; nothing executed (connector call log) |
+| R6 | Public `fl.parse_filter`, `fl.sql.render_filter`, `fl.sql.render_join`, `RenderedFragment` | §10 | every native profile renders; hostile literal only in params; DuckDB executes `SELECT COUNT(*) FROM <render_join>` and matches a hand-written join |
+| R7 | Native `trino` profile, tier `verified` (Trino service container in integration CI) | §4.3, §8.3, §8.5, §11 | conformance suite parametrised over profiles includes trino; Task-20 verb matrix runs on Trino |
+| R8 | `fl.connectors.run_metadata` for catalog metadata SQL through any connector, guarded (`FL703`) | §9.1 | guard rejects DML/DDL/multi-statement; DuckDB `SELECT … FROM information_schema.tables` works; `SHOW TABLES` allowed |
+| R9 | Bare boolean filter atom (`deleted`, `NOT deleted`) | §4.5 | grammar conformance blocks; hash(`deleted`) == hash(`deleted = TRUE`); FL305 on a non-boolean column when catalog knows |
+| R10 | Public-API stability promise for the items above | §11 | API docs list them; `tests/unit/test_api.py` asserts exports |
+
+New diagnostic: **FL703** metadata SQL refused by guard (execution range). Add it to §12's
+table and `docs/reference/diagnostics.md`.
+
+**Ordering.** These ship in 0.1.0. Items touching already-completed tasks (R9: parser)
+are a new plan task executed immediately; the rest are folded into the not-yet-started
+plan tasks (see the plan's "Amendment A" notes). SchemaGuru pins `factlang>=0.1,<0.2` and
+develops against FactLang `main` until 0.1.0 is on PyPI.

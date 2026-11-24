@@ -35,3 +35,16 @@ formatter consistent with this rule.
 Why: one dialect can have drivers with different parameter styles.
 How to apply: probes render with neutral placeholders; `probe.bind(paramstyle)` produces
 the driver form and each connector declares its own paramstyle. `compile` needs no connector.
+
+## 2026-11-24 — Amendment A: downstream requirements from SchemaGuru ship in 0.1.0 (owner-directed, URGENT)
+Why: SchemaGuru (rupakc/schemaguru) depends on FactLang for all measurement SQL, dialects,
+connectors and verdicts. A cold builder check found ten capabilities FactLang v1 lacked
+(raw primitive measurement, empty-declared top-k, composite join keys, reverse/row join
+facts, cost estimate without executing, public filter/join rendering, native Trino,
+guarded metadata SQL, bare boolean filter atom, a stability promise). The owner directed
+that they be added to FactLang 0.1.0 with immediate effect, so SchemaGuru never renders
+SQL itself or leans on FactLang internals.
+How to apply: spec §18 is the index and acceptance list (R1–R10); each item is specified
+inline in the section it names. Plan: Task 26 (parser/formatter bare boolean atom) runs
+NOW in parallel with Task 5; every not-yet-started task carries an "Amendment A" note that
+is part of its scope; Task 27 is the acceptance sweep before release. New code FL703.

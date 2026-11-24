@@ -21,7 +21,7 @@ from factlang.connectors import (
     run_metadata,
 )
 from factlang.connectors.base import AsyncConnector, Connector
-from factlang.contract import Contract, ContractPack, Example
+from factlang.contract import Contract, ContractPack, Example, check_pack
 from factlang.diagnostics import DiagnosticBag
 from factlang.engine import Checker, CostEstimate, Measurement, Report
 from factlang.ir import Metric, ProbePlan
@@ -41,7 +41,7 @@ from factlang.semantics import types
 from factlang.semantics.analyzer import analyze, analyze_filter
 from factlang.semantics.catalog import CachedCatalog, Catalog, NullCatalog, StaticCatalog
 from factlang.semantics.filters import FilterExpr
-from factlang.semantics.refs import TableRef
+from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 from factlang.semantics.signature import AttrSpec as Attr
 from factlang.semantics.signature import Operand
 from factlang.sql import RenderedFragment, RenderedProbe
@@ -159,14 +159,18 @@ __all__ = [
     "BigQueryConnector",
     "CachedCatalog",
     "CallableConnector",
+    "Catalog",
     "Checker",
+    "ColumnRef",
     "Compare",
     "CompareUsingClaimOp",
     "Contract",
     "ContractPack",
     "CostEstimate",
     "DBAPIConnector",
+    "EdgeRef",
     "Example",
+    "Ident",
     "Measurement",
     "Metric",
     "Not",
@@ -178,12 +182,14 @@ __all__ = [
     "Report",
     "SQLAlchemyConnector",
     "StaticCatalog",
+    "TableRef",
     "Verdict",
     "WarehouseCatalog",
     "WhenClaimHas",
     "Within",
     "__version__",
     "check",
+    "check_pack",
     "compile",
     "connect",
     "connectors",

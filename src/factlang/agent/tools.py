@@ -15,7 +15,8 @@ native dialects as ``examples``.
 
 ``handle_tool_call(name, arguments, checker)`` never raises: a bad call returns
 ``{"error": {"code", "message", "tool"}}`` with one of the stable codes in
-:data:`ERROR_CODES`; ``factlang_check`` returns :meth:`Report.to_dict`.
+:data:`ERROR_CODES`; ``factlang_check`` returns :meth:`Report.to_dict`, whose first key is
+``verified``.
 """
 
 from __future__ import annotations
@@ -55,8 +56,9 @@ _CHECK = (
     "Check factual claims against the data warehouse. Each claim is measured exactly with "
     "one read-only query and judged pass, fail, no_data, error, unprobeable or invalid; the "
     "result lists one outcome per claim, in order, with the measured facts and the SQL "
-    "evidence. Write claims in FactLang using the verbs below; run factlang_lint first "
-    "when unsure about syntax."
+    "evidence. Read `verified` first: it is true only when every measurable claim passed "
+    "(`ok` also tolerates no_data and an empty input). Write claims in FactLang using the "
+    "verbs below; run factlang_lint first when unsure about syntax."
 )
 _LINT = (
     "Validate FactLang claims without touching the warehouse (syntax, verbs, attributes, "

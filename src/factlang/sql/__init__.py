@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from factlang.semantics.filters import Param
 from factlang.sql import ast
 from factlang.sql.fragment import JoinEdge, RenderedFragment, lower_filter, lower_join
 from factlang.sql.lower import lower
@@ -23,6 +24,7 @@ __all__ = [
     "SQLGLOT_NAMES",
     "DialectProfile",
     "JoinEdge",
+    "Param",
     "RenderError",
     "RenderedFragment",
     "RenderedProbe",

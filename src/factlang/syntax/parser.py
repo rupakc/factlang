@@ -7,16 +7,14 @@ from dataclasses import dataclass
 from factlang.diagnostics import DiagnosticBag, Span
 from factlang.syntax import ast
 from factlang.syntax.lexer import tokenize
-from factlang.syntax.tokens import Token, TokenKind
+from factlang.syntax.tokens import FILTER_KEYWORDS, Token, TokenKind
 
 K = TokenKind
 LK = ast.LiteralKind
 
 MAX_NESTING = 64
 
-_FILTER_KEYWORDS = frozenset(
-    {"AND", "OR", "NOT", "IN", "IS", "NULL", "BETWEEN", "TRUE", "FALSE", "DATE", "TIMESTAMP"}
-)
+_FILTER_KEYWORDS = FILTER_KEYWORDS
 _SCALAR_VALUE_KINDS = {
     K.NUMBER: LK.NUMBER,
     K.PERCENT: LK.PERCENT,

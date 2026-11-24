@@ -184,6 +184,7 @@ def test_check_pass_exits_0(
     f = write(tmp_path, "a.fl", "UNIQUE orders.id\nNULLS orders.id RATE == 0\n")
     code, out, _ = run(["check", f, "--connector", f"{connector_module}:connector"], capsys)
     assert code == 0 and "PASS" in out
+    assert out.splitlines()[-1] == "verified: 2 PASS"
 
 
 def test_check_fail_exits_1_and_json_is_the_report(
@@ -221,6 +222,22 @@ def test_check_no_data_is_undecidable_exit_3(
     f = write(tmp_path, "a.fl", "UNIQUE orders.id WHERE id > 100\n")
     code, out, _ = run(["check", f, "--connector", f"{connector_module}:connector"], capsys)
     assert code == 3 and "NO_DATA" in out
+    assert out.splitlines()[-1] == "not verified: 1 NO_DATA"
+
+
+def test_check_summary_line_follows_the_exit_code(
+    tmp_path: Path, connector_module: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = f"{connector_module}:connector"
+    f = write(tmp_path, "a.fl", "UNIQUE orders.id\nUNIQUE orders.customer_id\n")
+    code, out, _ = run(["check", f, "--connector", target], capsys)
+    assert code == 1 and out.splitlines()[-1] == "not verified: 1 PASS, 1 FAIL"
+    f = write(tmp_path, "b.fl", "NOTE orders.id IS x BECAUSE 'y'\n")
+    code, out, _ = run(["check", f, "--connector", target], capsys)
+    assert code == 0 and out.splitlines()[-1] == "ok, nothing verified: 1 UNPROBEABLE"
+    f = write(tmp_path, "c.fl", "")
+    code, out, _ = run(["check", f, "--connector", target], capsys)
+    assert code == 0 and out.splitlines()[-1] == "ok, nothing verified: no claims"
 
 
 def test_check_fail_outranks_error(
@@ -517,8 +534,16 @@ def test_mcp_subcommand_is_wired(
     monkeypatch.setattr(agent_mcp, "serve", lambda checker, **kw: served.append((checker, kw)))
     code, _, _ = run(["mcp", "--dialect", "postgres", "--name", "shop"], capsys)
     assert code == 0 and served[0][0].dialect == "postgres" and served[0][1] == {"name": "shop"}
+    monkeypatch.delenv("FACTLANG_DSN", raising=False)
     code, _, err = run(["mcp"], capsys)
     assert code == 2 and "--dsn" in err
+    from factlang.connectors import CallableConnector
+
+    fake = CallableConnector(lambda sql, params: [], "postgres")
+    monkeypatch.setattr(agent_mcp, "connect", lambda dsn: fake)
+    monkeypatch.setenv("FACTLANG_DSN", "postgresql://reader@warehouse/shop")
+    code, _, _ = run(["mcp"], capsys)
+    assert code == 0 and len(served) == 2 and served[1][0].connector is fake
 
 
 def test_output_is_utf8_whatever_the_console(

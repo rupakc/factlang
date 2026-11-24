@@ -322,7 +322,17 @@ def _render_report(report: Report, fmt: str, out: TextIO) -> None:
             printed.add(key)
             out.write(f"{d.severity.value}[{d.code}]: {d.message}\n")
     counts = ", ".join(f"{n} {v.name}" for v, n in report.summary().items() if n)
-    out.write(f"{'ok' if report.ok else 'not ok'}: {counts or 'no claims'}\n")
+    out.write(f"{_status(report)}: {counts or 'no claims'}\n")
+
+
+def _status(report: Report) -> str:
+    """``verified`` (exit 0), ``ok, nothing verified`` (exit 0: nothing was measurable) or
+    ``not verified`` (a non-zero exit: FAIL, ERROR, NO_DATA, INVALID or a front-end error)."""
+    if report.verified:
+        return "verified"
+    if report.ok and not any(o.verdict is Verdict.NO_DATA for o in report.outcomes):
+        return "ok, nothing verified"
+    return "not verified"
 
 
 def cmd_check(args: argparse.Namespace, out: TextIO) -> int:

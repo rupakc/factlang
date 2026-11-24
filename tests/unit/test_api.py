@@ -67,6 +67,13 @@ EXPORTS = {
     "run_metadata",
     # review round 1: R10 names fl.connectors.run_metadata
     "connectors",
+    # final review: names a caller needs to build plans, packs and catalogs
+    "Ident",
+    "TableRef",
+    "ColumnRef",
+    "EdgeRef",
+    "check_pack",
+    "Catalog",
 }
 
 
@@ -99,6 +106,29 @@ def test_exported_objects_are_the_real_ones() -> None:
     assert fl.connectors.run_metadata is connectors.run_metadata
     assert fl.types.register is types_mod.register_type
     assert fl.__version__ == "0.1.0" and fl.LANGUAGE_VERSION == "1.0"
+
+
+def test_usability_names_are_reachable_from_public_paths() -> None:
+    from factlang import contract, syntax
+    from factlang.connectors import base
+    from factlang.semantics import catalog, filters, refs
+    from factlang.syntax import ast
+
+    for name in ("Ident", "TableRef", "ColumnRef", "EdgeRef"):
+        assert getattr(fl, name) is getattr(refs, name)
+        assert getattr(fl.ir, name) is getattr(refs, name)
+        assert name in fl.ir.__all__
+    assert fl.check_pack is contract.check_pack
+    assert fl.Catalog is catalog.Catalog
+    assert fl.types.LiteralKind is ast.LiteralKind and "LiteralKind" in fl.types.__all__
+    assert fl.sql.Param is filters.Param and "Param" in fl.sql.__all__
+    for name in ("Connector", "AsyncConnector", "QueryResult", "ExecutionError"):
+        assert getattr(fl.connectors, name) is getattr(base, name)
+        assert name in fl.connectors.__all__
+    # every name a public package lists in __all__ really exists there
+    for mod in (fl.ir, fl.sql, fl.connectors, fl.types, syntax):
+        for name in mod.__all__:
+            assert hasattr(mod, name), (mod.__name__, name)
 
 
 def test_facade_import_is_idempotent() -> None:

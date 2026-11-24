@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from decimal import Decimal
 
 import pytest
@@ -278,3 +279,12 @@ def test_range_pair_mixed_and_inverted() -> None:
         "RANGE_PAIR",
         lst(lit(LK.TIMESTAMP, "2025-01-01T00:00:00Z"), lit(LK.TIMESTAMP, "2025-01-01T00:00:01Z")),
     )
+
+
+def test_temporal_literals_accept_ascii_digits_only() -> None:
+    arabic = "\u0662\u0660\u0662\u0664-\u0660\u0661-\u0660\u0661"  # 2024-01-01, Arabic-Indic
+    assert T._DATE_RE.fullmatch(arabic) is None and T._TS_RE.fullmatch(arabic) is None
+    assert T._DATE_RE.flags & re.ASCII and T._TS_RE.flags & re.ASCII
+    assert isinstance(T._parse_date(arabic), T.Invalid)
+    assert isinstance(T._parse_timestamp(arabic + "T10:00"), T.Invalid)
+    assert T._DATE_RE.fullmatch("2024-01-01") is not None

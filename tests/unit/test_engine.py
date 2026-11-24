@@ -388,6 +388,42 @@ def test_report_ok_only_without_fail_error_invalid() -> None:
     assert c.check("").ok and c.check("").outcomes == ()
 
 
+def _outcome(verdict: Verdict) -> Outcome:
+    return Outcome("c", "c", "h", "ROWS", verdict, "", {}, None, ())
+
+
+def _report(*verdicts: Verdict) -> Report:
+    from factlang.diagnostics import DiagnosticBag
+
+    return Report(tuple(_outcome(v) for v in verdicts), DiagnosticBag())
+
+
+def test_report_verified_needs_every_judged_outcome_to_pass() -> None:
+    V = Verdict
+    assert _report(V.PASS).verified and _report(V.PASS, V.UNPROBEABLE).verified
+    assert not _report().verified  # nothing was checked
+    assert not _report(V.UNPROBEABLE).verified  # nothing was measured
+    for bad in (V.FAIL, V.ERROR, V.INVALID, V.NO_DATA):
+        assert not _report(V.PASS, bad).verified, bad
+    # ok is unchanged: NO_DATA and an empty report are ok, but not verified
+    assert _report(V.PASS, V.NO_DATA).ok and _report().ok
+    # an error diagnostic without an outcome (a broken USE) is never verified
+    fn = rows_fn([{"row_count": 7}])
+    c = Checker(CallableConnector(fn, "duckdb"), catalog=NullCatalog())
+    broken = c.check("USE\nROWS orders VALUE >= 1")
+    assert broken.diagnostics.has_errors and not broken.verified
+
+
+def test_report_serialisations_carry_verified_first() -> None:
+    V = Verdict
+    d = _report(V.PASS, V.NO_DATA).to_dict()
+    assert next(iter(d)) == "verified" and d["verified"] is False and d["ok"] is True
+    assert json.loads(_report(V.PASS).to_json())["verified"] is True
+    md = _report(V.PASS, V.NO_DATA).to_markdown()
+    assert "**verified:** no" in md and "**ok:** yes" in md
+    assert "**verified:** yes" in _report(V.PASS).to_markdown()
+
+
 def test_evidence_inlines_with_the_dialect_string_quoter() -> None:
     fn = rows_fn([{"row_count": 0}])
     (o,) = (

@@ -21,6 +21,7 @@ from factlang.ir.primitives import (
     is_sampled,
     register_primitive,
 )
+from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 
 __all__ = [
     "ALIASES",
@@ -32,7 +33,10 @@ __all__ = [
     "TABLE_METRICS",
     "Arity",
     "ColumnAggregate",
+    "ColumnRef",
     "CompositeKeyAggregate",
+    "EdgeRef",
+    "Ident",
     "KeyOverlap",
     "MetadataQuery",
     "Metric",
@@ -40,6 +44,7 @@ __all__ = [
     "ProbePlan",
     "SampleMethod",
     "SampleSpec",
+    "TableRef",
     "ValueMembership",
     "canonical_key",
     "is_sampled",

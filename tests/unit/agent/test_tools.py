@@ -180,6 +180,7 @@ def test_check_round_trip(checker: Checker) -> None:
     verdicts = [o["verdict"] for o in result["outcomes"]]
     assert verdicts == ["pass", "pass", "fail", "pass", "pass", "invalid"]
     assert result["ok"] is False
+    assert next(iter(result)) == "verified" and result["verified"] is False
     assert result["summary"]["pass"] == 4
     invalid = result["outcomes"][5]
     assert any(d["code"] == "FL300" and d["suggestion"] == "ROWS" for d in invalid["diagnostics"])

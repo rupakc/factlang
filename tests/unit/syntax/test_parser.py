@@ -451,3 +451,17 @@ def test_bare_atom_malformed_fl206() -> None:
 def test_not_before_bare_name_counts_toward_depth() -> None:
     assert codes("ROWS t WHERE " + "NOT " * 70 + "a") == ["FL207"]
     assert codes("ROWS t WHERE " + "NOT " * 10 + "a") == []
+
+
+def test_filter_keywords_are_public_and_the_parsers_own() -> None:
+    from factlang import syntax
+    from factlang.syntax import parser, tokens
+
+    assert syntax.FILTER_KEYWORDS is tokens.FILTER_KEYWORDS
+    assert "FILTER_KEYWORDS" in syntax.__all__
+    assert parser._FILTER_KEYWORDS is tokens.FILTER_KEYWORDS
+    assert isinstance(tokens.FILTER_KEYWORDS, frozenset)
+    keywords = tokens.FILTER_KEYWORDS
+    assert sorted(keywords) == sorted(
+        ["AND", "OR", "NOT", "IN", "IS", "NULL", "BETWEEN", "TRUE", "FALSE", "DATE", "TIMESTAMP"]
+    )

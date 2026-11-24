@@ -75,10 +75,43 @@ def test_serve_without_the_extra_names_it(monkeypatch: pytest.MonkeyPatch) -> No
         fl_mcp.serve(Checker(dialect="duckdb"))
 
 
-def test_run_needs_a_dsn_or_a_dialect(capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_needs_a_dsn_or_a_dialect(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("FACTLANG_DSN", raising=False)
     args = fl_mcp.configure_parser(argparse.ArgumentParser()).parse_args([])
     assert fl_mcp.run(args) == 2
-    assert "--dsn" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "--dsn" in err and "FACTLANG_DSN" in err
+    monkeypatch.setenv("FACTLANG_DSN", "")  # empty counts as absent
+    assert fl_mcp.run(args) == 2
+
+
+def test_dsn_comes_from_the_environment_when_no_option_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from factlang import cli
+
+    assert fl_mcp.DSN_ENV == cli.DSN_ENV == "FACTLANG_DSN"
+    served: list[Checker] = []
+    connected: list[str] = []
+    monkeypatch.setattr(fl_mcp, "serve", lambda checker, **kw: served.append(checker))
+    from factlang.connectors import CallableConnector
+
+    def fake_connect(dsn: str) -> CallableConnector:
+        connected.append(dsn)
+        return CallableConnector(lambda sql, params: [], "postgres")
+
+    monkeypatch.setattr(fl_mcp, "connect", fake_connect)
+    monkeypatch.setenv("FACTLANG_DSN", "postgresql://reader@warehouse/shop")
+    assert fl_mcp.main([]) == 0
+    assert connected == ["postgresql://reader@warehouse/shop"]
+    # an explicit option wins over the environment
+    assert fl_mcp.main(["--dialect", "postgres"]) == 0
+    assert connected == ["postgresql://reader@warehouse/shop"]
+    assert served[1].dialect == "postgres"
+    assert fl_mcp.main(["--dsn", "duckdb:///:memory:", "--dialect", "duckdb"]) == 0
+    assert connected[-1] == "duckdb:///:memory:"
 
 
 class _FakeTypes:
@@ -155,7 +188,10 @@ def test_v2_server_returns_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(listed["tools"]) == 3
 
 
-def test_main_needs_a_dsn_or_a_dialect(capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_needs_a_dsn_or_a_dialect(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("FACTLANG_DSN", raising=False)
     with pytest.raises(SystemExit) as exc:
         fl_mcp.main([])
     assert exc.value.code == 2

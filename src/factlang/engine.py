@@ -124,6 +124,17 @@ class Report:
             return False
         return not any(o.verdict in _NOT_OK for o in self.outcomes)
 
+    @property
+    def verified(self) -> bool:
+        """Every claim that can be measured was measured and PASSed: no ``FAIL``, ``ERROR``,
+        ``INVALID`` or ``NO_DATA`` outcome, no error diagnostic, and at least one outcome
+        that is not ``UNPROBEABLE``. Stricter than :attr:`ok`, which tolerates ``NO_DATA``
+        and a report with nothing measured (e.g. an empty document)."""
+        if self.diagnostics.has_errors:
+            return False
+        judged = [o.verdict for o in self.outcomes if o.verdict is not Verdict.UNPROBEABLE]
+        return bool(judged) and all(v is Verdict.PASS for v in judged)
+
     def summary(self) -> dict[Verdict, int]:
         counts = dict.fromkeys(Verdict, 0)
         for o in self.outcomes:
@@ -132,6 +143,7 @@ class Report:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "verified": self.verified,
             "ok": self.ok,
             "summary": {v.value: n for v, n in self.summary().items()},
             "outcomes": [o.to_dict() for o in self.outcomes],
@@ -149,7 +161,9 @@ class Report:
         lines = [
             "# FactLang report",
             "",
-            f"**ok:** {'yes' if self.ok else 'no'}" + (f" · {counts}" if counts else ""),
+            f"**verified:** {'yes' if self.verified else 'no'}"
+            + f" · **ok:** {'yes' if self.ok else 'no'}"
+            + (f" · {counts}" if counts else ""),
             "",
             "| # | verdict | claim | explanation |",
             "|---|---|---|---|",

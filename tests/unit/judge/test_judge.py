@@ -167,3 +167,12 @@ def test_evidence_sample_and_method() -> None:
     back = json.loads(json.dumps(o.to_dict()))["evidence"]
     assert back["method"] == "sampled:keyhash:0.01:7"
     assert back["sample"]["fraction"] == "0.01" and back["sample"]["seed"] == 7
+
+
+def test_verdict_str_and_format_are_its_value() -> None:
+    from factlang.judge import Verdict
+
+    for v in Verdict:
+        assert str(v) == v.value and f"{v}" == v.value and format(v, "") == v.value
+    assert f"{Verdict.NO_DATA:>8}" == " no_data"
+    assert Verdict("pass") is Verdict.PASS and Verdict.PASS == "pass"

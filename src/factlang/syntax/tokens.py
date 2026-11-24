@@ -7,6 +7,13 @@ from enum import Enum
 
 from factlang.diagnostics import Span
 
+FILTER_KEYWORDS: frozenset[str] = frozenset(
+    {"AND", "OR", "NOT", "IN", "IS", "NULL", "BETWEEN", "TRUE", "FALSE", "DATE", "TIMESTAMP"}
+)
+"""The words reserved inside a ``WHERE`` filter (spec 4.5): a bare column name may not be one
+of them (FL206; quote it instead). This is the filter-keyword set only, not every word the
+language treats specially (verbs and clause keywords are not in it)."""
+
 
 class TokenKind(Enum):
     IDENT = "IDENT"

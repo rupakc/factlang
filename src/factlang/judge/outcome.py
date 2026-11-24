@@ -22,6 +22,14 @@ class Verdict(str, Enum):
     UNPROBEABLE = "unprobeable"  # semantic by design
     INVALID = "invalid"  # did not pass the front end (diagnostics attached)
 
+    def __str__(self) -> str:
+        """The wire value (``"pass"``), not ``"Verdict.PASS"``; ``format`` and f-strings
+        agree on every supported Python version."""
+        return self.value
+
+    def __format__(self, spec: str) -> str:
+        return format(self.value, spec)
+
 
 @dataclass(frozen=True)
 class Evidence:

@@ -20,6 +20,19 @@ from factlang.syntax.formatter import format_number
 
 LK = LiteralKind
 
+__all__ = [
+    "MAX_EXPONENT",
+    "SEPARATOR_CHARS",
+    "TYPE_FAMILIES",
+    "Invalid",
+    "Literal",
+    "LiteralKind",
+    "ValueType",
+    "get_type",
+    "register",
+    "register_type",
+]
+
 TYPE_FAMILIES: tuple[str, ...] = (
     "integer",
     "decimal",
@@ -115,9 +128,10 @@ def _ratio_validate(value: object) -> str | None:
 
 # --- temporal -----------------------------------------------------------------------
 
-_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)
 _TS_RE = re.compile(
-    r"(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(:\d{2})?(?:\.(\d{1,6}))?)?(Z|[+-]\d{2}:\d{2})?"
+    r"(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(:\d{2})?(?:\.(\d{1,6}))?)?(Z|[+-]\d{2}:\d{2})?",
+    re.ASCII,
 )
 
 

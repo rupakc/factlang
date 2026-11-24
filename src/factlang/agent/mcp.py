@@ -6,6 +6,7 @@ The registration data (:func:`tool_registrations`) and the dispatcher (:func:`ca
 plain functions, so they are testable without the package.
 
 Command line: ``factlang mcp --dsn URL`` (or ``python -m factlang.agent.mcp --dsn URL``);
+with neither ``--dsn`` nor ``--dialect`` the URL comes from ``$FACTLANG_DSN``;
 ``--dialect D`` alone serves without a warehouse (``factlang_check`` then returns a
 ``no_connector`` error, ``factlang_lint`` and ``factlang_explain`` work).
 """
@@ -16,6 +17,7 @@ import argparse
 import asyncio
 import importlib
 import json
+import os
 import sys
 from collections.abc import Sequence
 from types import ModuleType
@@ -25,6 +27,8 @@ from factlang.agent.tools import handle_tool_call, tool_definitions
 from factlang.connectors import connect
 from factlang.contract import ContractPack
 from factlang.engine import Checker
+
+DSN_ENV = "FACTLANG_DSN"  # the same variable ``factlang check`` reads (factlang.cli.DSN_ENV)
 
 INSTALL_HINT = "the MCP server needs the mcp package: pip install 'factlang[mcp]'"
 SERVER_NAME = "factlang"
@@ -125,7 +129,13 @@ def serve(checker: Checker, *, name: str = SERVER_NAME) -> None:
 
 def configure_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """Add the ``mcp`` options to ``parser`` (used by ``factlang mcp`` and :func:`main`)."""
-    parser.add_argument("--dsn", help="SQLAlchemy URL of the warehouse to check against")
+    parser.add_argument(
+        "--dsn",
+        help=(
+            f"SQLAlchemy URL of the warehouse to check against; default ${DSN_ENV} when "
+            "neither --dsn nor --dialect is given (prefer it: --dsn shows in the process list)"
+        ),
+    )
     parser.add_argument("--dialect", help="SQL dialect (default: the connection's)")
     parser.add_argument(
         "--timeout", type=float, default=60.0, help="per-probe timeout in seconds (default 60)"
@@ -137,13 +147,21 @@ def configure_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
     return parser
 
 
+def _dsn(args: argparse.Namespace) -> str | None:
+    """``--dsn``, else ``$FACTLANG_DSN`` when neither ``--dsn`` nor ``--dialect`` is given."""
+    if args.dsn is not None or args.dialect is not None:
+        return args.dsn  # type: ignore[no-any-return]
+    return os.environ.get(DSN_ENV) or None
+
+
 def run(args: argparse.Namespace) -> int:
     """Build the Checker from parsed options and serve; 2 on a configuration error."""
-    if args.dsn is None and args.dialect is None:
-        print("factlang mcp: give --dsn URL or --dialect D", file=sys.stderr)
+    dsn = _dsn(args)
+    if dsn is None and args.dialect is None:
+        print(f"factlang mcp: give --dsn URL, --dialect D or ${DSN_ENV}", file=sys.stderr)
         return 2
     try:
-        connector = connect(args.dsn) if args.dsn is not None else None
+        connector = connect(dsn) if dsn is not None else None
         checker = Checker(
             connector, dialect=args.dialect, timeout_s=args.timeout, max_bytes=args.max_bytes
         )
@@ -165,8 +183,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
     args = parser.parse_args(argv)
-    if args.dsn is None and args.dialect is None:
-        parser.error("give --dsn URL or --dialect D")
+    if _dsn(args) is None and args.dialect is None:
+        parser.error(f"give --dsn URL, --dialect D or ${DSN_ENV}")
     return run(args)
 
 
@@ -175,6 +193,7 @@ if __name__ == "__main__":  # pragma: no cover
 
 
 __all__ = [
+    "DSN_ENV",
     "INSTALL_HINT",
     "ToolCallFailed",
     "build_server",

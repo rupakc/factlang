@@ -315,7 +315,7 @@ import factlang as fl
 doc = fl.parse("JOIN a.x -> b.y MATCH >=99%")        # Document + diagnostics
 print(fl.lint(text).render())                          # caret diagnostics
 print(fl.format(text))                                 # canonical form
-probe = fl.compile("UNIQUE orders.id", dialect="snowflake")   # sql + params
+(probe,) = fl.compile("UNIQUE orders.id", dialect="snowflake") # list[RenderedProbe]; sql + params
 
 # 2. One call
 outcome = fl.check("UNIQUE orders.id", connector=fl.DBAPIConnector(conn, "duckdb"))
@@ -375,7 +375,7 @@ def test_spec_section_10_example_runs(tmp_path: Path, monkeypatch: pytest.Monkey
     assert ns["fl"] is fl
     doc, probe, outcome, report = ns["doc"], ns["probe"], ns["outcome"], ns["report"]
     assert isinstance(doc, ParseResult) and not doc.diagnostics.has_errors
-    assert len(probe) == 1 and probe[0].dialect == "snowflake"
+    assert isinstance(probe, fl.sql.RenderedProbe) and probe.dialect == "snowflake"
     assert isinstance(outcome, fl.Outcome) and outcome.verdict is fl.Verdict.PASS
     assert report.ok and [o.verdict for o in report.outcomes] == [fl.Verdict.PASS] * 2
     pack = ns["pack"]

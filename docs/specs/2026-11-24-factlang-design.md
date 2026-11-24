@@ -606,7 +606,8 @@ Tier is reported on every `Outcome`.
 ```python
 class Connector(Protocol):
     dialect: str                       # profile name
-    def execute(self, sql: str, params, *, timeout_s: float | None) -> QueryResult: ...
+    paramstyle: str                    # driver paramstyle; the connector binds the probe itself
+    def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult: ...
 class QueryResult: rows: list[dict[str, Any]]; bytes_processed: int | None
 ```
 Optional async: `AsyncConnector.aexecute`. Adapters (each an extra, imported lazily):
@@ -650,7 +651,9 @@ and an `FL313` info when it could not check.
   `fuse=False` disables.
 - `Checker(connector, *, pack=standard, catalog=None, concurrency=4,
   timeout_s=60, max_bytes=None, fuse=True)`; `check(text) -> Report`;
-  `acheck(text)` async; `Report` = ordered `Outcome`s + summary counts + `ok` bool +
+  `acheck(text)` async; `Report` = ordered `Outcome`s + summary counts + `ok` bool (no
+  FAIL/ERROR/INVALID and no ERROR diagnostic) + `verified` bool (every non-UNPROBEABLE outcome
+  is PASS; an empty report is not verified — agents should read `verified`) +
   `to_dict()/to_json()/to_markdown()`.
 - Cost guard: when the connector supports dry-run (BigQuery) and `max_bytes` is set,
   a probe over budget is `ERROR` with `FL701 over cost budget`, never executed.
@@ -681,7 +684,7 @@ import factlang as fl
 doc = fl.parse("JOIN a.x -> b.y MATCH >=99%")        # Document + diagnostics
 print(fl.lint(text).render())                          # caret diagnostics
 print(fl.format(text))                                 # canonical form
-probe = fl.compile("UNIQUE orders.id", dialect="snowflake")   # sql + params
+(probe,) = fl.compile("UNIQUE orders.id", dialect="snowflake") # list[RenderedProbe]; sql + params
 
 # 2. One call
 outcome = fl.check("UNIQUE orders.id", connector=fl.DBAPIConnector(conn, "duckdb"))
@@ -773,14 +776,14 @@ renderable as caret text and as JSON. The authoritative table lives in
 source emits. Initial set (builder extends as needed, keeping ranges):
 FL101 unterminated string/quoted identifier · FL102 unexpected character ·
 FL201 expected a value · FL202 unclosed list · FL203 unexpected token ·
-FL204 duplicate attribute · FL205 dangling continuation · FL206 malformed filter ·
+FL204 duplicate attribute · FL205 dangling continuation · FL206 malformed filter · FL207 nesting too deep (limit 64) ·
 FL300 unknown verb (suggestion) · FL301 wrong operand count · FL302 wrong operand
 kind / ref depth · FL303 unknown attribute (suggestion) · FL304 missing required
 attribute · FL305 wrong value type · FL306 operator not allowed · FL307 unusable
 column list · FL308 filter not allowed for verb · FL309 invalid value (range, e.g.
 ratio > 1) · FL311 no such table/column · FL312 cross-type join without CAST
 (warning) · FL313 could not verify names (info) · FL500 primitive not renderable ·
-FL501 metric not renderable · FL502 identifier not representable · FL503 cast not
+FL501 metric not renderable (reserved; not emitted in 0.1.0) · FL502 identifier not representable · FL503 cast not
 expressible · FL504 unknown dialect · FL505 too many table-name parts for dialect · FL600 decide reads a fact derive never
 produces · FL601 decide reads an undeclared attribute · FL602 contract has fewer than 3 valid + 3 invalid
 examples · FL603 an example does not behave as declared (or its plan/catalog function raises) · FL604 incomplete contract (decorator builder missing a part) · FL605 a filterable verb's plan drops the claim's WHERE filter · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL405 sample method needs a single read; use keyhash (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
@@ -829,8 +832,9 @@ factlang/
 
 ### 14.2 CI (GitHub Actions)
 - `ci.yml` (push + PR): ruff check, ruff format --check, mypy --strict, unit +
-  property + conformance on Python 3.10–3.13 × ubuntu/macos/windows (core only),
-  integration job with service containers (postgres, mysql, clickhouse, mssql) +
+  property + conformance on Python 3.10–3.13 × ubuntu plus Windows 3.13 per push (the full
+  3.10–3.13 × ubuntu/macos/windows matrix runs nightly, on dispatch and on tags),
+  integration job with service containers (postgres, mysql, clickhouse, mssql, trino; pinned tags) +
   duckdb, coverage gate, `python -m build`, `twine check`, upload sdist+wheel as
   workflow artifacts (downloadable from every run).
 - `release.yml` (tag `v*`): build, attach wheel+sdist to a GitHub Release with

@@ -652,8 +652,9 @@ and an `FL313` info when it could not check.
 - `Checker(connector, *, pack=standard, catalog=None, concurrency=4,
   timeout_s=60, max_bytes=None, fuse=True)`; `check(text) -> Report`;
   `acheck(text)` async; `Report` = ordered `Outcome`s + summary counts + `ok` bool (no
-  FAIL/ERROR/INVALID and no ERROR diagnostic) + `verified` bool (every non-UNPROBEABLE outcome
-  is PASS; an empty report is not verified — agents should read `verified`) +
+  FAIL/ERROR/INVALID and no ERROR diagnostic) + `verified` bool (at least one outcome is not
+  UNPROBEABLE and every such outcome is PASS — an empty or all-UNPROBEABLE report is not
+  verified; agents should read `verified`) +
   `to_dict()/to_json()/to_markdown()`.
 - Cost guard: when the connector supports dry-run (BigQuery) and `max_bytes` is set,
   a probe over budget is `ERROR` with `FL701 over cost budget`, never executed.

@@ -32,17 +32,29 @@ def _lit(kind: ast.LiteralKind, value: object) -> ast.Literal:
     return ast.Literal(kind, value, SP)
 
 
-def _decimals(negative: bool) -> st.SearchStrategy[Decimal]:
-    lo = -(10**9) if negative else 0
-    return st.builds(lambda n, s: Decimal(n).scaleb(-s), st.integers(lo, 10**9), st.integers(0, 6))
+def _shift_ratio(d: Decimal) -> Decimal:
+    sign, digits, exp = d.as_tuple()
+    assert isinstance(exp, int)
+    return Decimal((sign, digits, exp - 2))
 
 
-# The lexer reads '-' as a sign only after a non-operand token, so a negative number
-# may follow an operator, '[' or ',' but not an identifier (or BETWEEN / AND).
-nonneg_numbers = _decimals(True).map(lambda d: _lit(LK.NUMBER, d))
-any_numbers = _decimals(True).map(lambda d: _lit(LK.NUMBER, d))
-percents = _decimals(True).map(lambda d: _lit(LK.PERCENT, d.scaleb(-2)))
-nonneg_percents = _decimals(True).map(lambda d: _lit(LK.PERCENT, d.scaleb(-2)))
+def _shift(n: int, places: int) -> Decimal:
+    """``n * 10**-places`` exactly (never rounded by a context)."""
+    sign, digits, _ = Decimal(n).as_tuple()
+    return Decimal((sign, digits, -places))
+
+
+_WIDE = 10**70
+decimals: st.SearchStrategy[Decimal] = st.one_of(
+    st.builds(_shift, st.integers(-(10**9), 10**9), st.integers(0, 6)),
+    st.builds(_shift, st.integers(-_WIDE, _WIDE), st.just(0)),
+    st.builds(_shift, st.integers(-_WIDE, _WIDE), st.integers(0, 40)),
+)
+
+
+# Since the lexer fix a '-' before a digit is always a sign: negatives go anywhere.
+any_numbers = decimals.map(lambda d: _lit(LK.NUMBER, d))
+any_percents = decimals.map(lambda d: _lit(LK.PERCENT, _shift_ratio(d)))
 durations = st.integers(0, 10**7).map(lambda s: _lit(LK.DURATION, s))
 strings = _text.map(lambda s: _lit(LK.STRING, s))
 idents = _ident.map(lambda s: _lit(LK.IDENT, s))
@@ -52,17 +64,17 @@ dates = _text.map(lambda s: _lit(LK.DATE, s))
 timestamps = _text.map(lambda s: _lit(LK.TIMESTAMP, s))
 
 _list_scalars = st.one_of(
-    any_numbers, percents, durations, strings, idents, qidents, cards, dates, timestamps
+    any_numbers, any_percents, durations, strings, idents, qidents, cards, dates, timestamps
 )
 lists = st.lists(_list_scalars, max_size=4).map(lambda xs: _lit(LK.LIST, tuple(xs)))
 _attr_scalars = st.one_of(
-    nonneg_numbers, nonneg_percents, durations, strings, idents, qidents, cards, dates, timestamps
+    any_numbers, any_percents, durations, strings, idents, qidents, cards, dates, timestamps
 )
 
 operands = st.one_of(
     refs,
     st.tuples(refs, refs).map(lambda t: ast.Edge(t[0], t[1], SP)),
-    st.one_of(nonneg_numbers, nonneg_percents, durations, strings),
+    st.one_of(any_numbers, any_percents, durations, strings),
 )
 
 _ATTR_NAMES = ["MIN", "MAX", "VALUE", "WITH", "BY", "IN", "IS", "NOT", "BETWEEN", "CARD", "EQ"]
@@ -89,7 +101,7 @@ _filter_scalars = st.one_of(
     timestamps,
 )
 _between_scalars = st.one_of(
-    nonneg_numbers,
+    any_numbers,
     strings,
     st.booleans().map(lambda b: _lit(LK.BOOL, b)),
     dates,

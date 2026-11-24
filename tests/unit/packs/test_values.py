@@ -70,13 +70,26 @@ def test_facts_normal() -> None:
     v, _, f = judge(CONTRACT, SRC, rows(100, 97, [("void", 2), ("Paid", 1)]))
     assert v is Verdict.FAIL
     assert f["undeclared_rows"] == 3 and f["undeclared_distinct"] == 2
-    assert f["coverage"] == Decimal("0.97")
+    assert f["coverage"] == Decimal("0.97") and f["undeclared_share"] == Decimal("0.03")
     assert f["top_undeclared"] == ({"value": "void", "count": 2}, {"value": "Paid", "count": 1})
+
+
+def test_top_undeclared_is_reranked_freq_desc_value_asc() -> None:
+    und = [("a", 1), ("zeta", 5), ("beta", 5), ("x", Decimal(7))]
+    _, _, f = judge(CONTRACT, SRC, rows(100, 82, list(reversed(und))))
+    assert f["top_undeclared"] == (
+        {"value": "x", "count": 7},
+        {"value": "beta", "count": 5},
+        {"value": "zeta", "count": 5},
+        {"value": "a", "count": 1},
+    )
+    assert all(type(d["count"]) is int for d in f["top_undeclared"])  # type: ignore[index]
 
 
 def test_all_declared_passes() -> None:
     v, _, f = judge(CONTRACT, SRC, rows(Decimal(50), Decimal(50), []))
     assert v is Verdict.PASS and f["undeclared_rows"] == 0 and f["coverage"] == 1
+    assert type(f["undeclared_rows"]) is int and type(f["undeclared_distinct"]) is int
     assert f["top_undeclared"] == ()
 
 
@@ -93,11 +106,13 @@ def test_no_non_null_values_is_no_data(extra: str) -> None:
     v, _, f = judge(CONTRACT, SRC + extra, rows(0, 0, []))
     assert v is Verdict.NO_DATA
     assert f["coverage"] is None and f["undeclared_rows"] is None
+    assert f["undeclared_share"] is None
 
 
 def test_empty_declared_list_every_row_undeclared() -> None:
     v, _, f = judge(CONTRACT, "VALUES orders.status IN []", rows(4, 0, [("a", 3), ("b", 1)]))
     assert v is Verdict.FAIL and f["undeclared_rows"] == 4 and f["coverage"] == 0
+    assert f["undeclared_share"] == 1
 
 
 def test_missing_summary_is_error() -> None:

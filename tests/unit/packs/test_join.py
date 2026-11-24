@@ -108,6 +108,7 @@ def test_decimal_payload() -> None:
         payload(distinct_left=Decimal(100), matched=Decimal(99), left_non_null=Decimal(400)),
     )
     assert v is Verdict.PASS and f["match_rate"] == Decimal("0.99")
+    assert type(f["distinct_left"]) is int and type(f["matched"]) is int
 
 
 def test_zero_rows_every_ratio_is_none() -> None:
@@ -193,6 +194,20 @@ def test_card_none_when_no_keys_matched() -> None:
         payload(matched=0, matched_left_rows=0, max_left_per_key=None, max_right_per_key=None),
     )
     assert f["card_ok"] is None and v is Verdict.NO_DATA
+
+
+def test_card_n_m_holds_even_without_matches() -> None:
+    v, _, f = judge(
+        CONTRACT,
+        "JOIN order_items.order_id -> orders.id MATCH >= 0% CARD N:M",
+        payload(matched=0, matched_left_rows=0, max_left_per_key=None, max_right_per_key=None),
+    )
+    assert f["card_ok"] is True and v is Verdict.PASS
+
+
+def test_explanation_names_numbers_only() -> None:
+    _, why, _ = judge(CONTRACT, BASE, payload())
+    assert why == "match_rate 0.99 >= 0.99"
 
 
 def test_card_ignored_when_absent() -> None:

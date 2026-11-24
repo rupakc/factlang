@@ -355,6 +355,19 @@ def test_always() -> None:
     assert ev(And(Always(), NONE)) is None
 
 
+def test_and_or_explanations_omit_always_parts() -> None:
+    facts = {"t": 1, "f": 2}
+    opt = WhenClaimHas("COVERAGE", FALSE, Always())
+    assert And(TRUE, Always(), opt).evaluate(facts, NOCLAIM) == (True, "t 1 == 1")
+    assert Or(FALSE, Always()).evaluate(facts, NOCLAIM) == (True, "always")
+    assert Or(FALSE, opt).evaluate(facts, NOCLAIM)[0] is True
+    assert And(Always(), opt).evaluate(facts, NOCLAIM) == (True, "always")  # nothing else to say
+    assert Or(FALSE, Not(Always())).evaluate(facts, NOCLAIM) == (
+        False,
+        "f 2 != 1; not (always)",
+    )
+
+
 def test_predicates_are_frozen_and_hashable() -> None:
     p = And(Compare("a", "==", value=1), Not(Within("v", "VALUE")))
     assert p == And(Compare("a", "==", value=1), Not(Within("v", "VALUE")))

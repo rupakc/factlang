@@ -45,6 +45,14 @@ def ratio(numerator: object, denominator: object) -> Decimal | None:
     return n / d
 
 
+def count(value: object) -> int | Decimal | None:
+    """A measured count as ``int`` (a whole ``Decimal``/float too); ``None`` for NULL."""
+    n = number(value)
+    if n is None:
+        return None
+    return int(n) if n == n.to_integral_value() else n
+
+
 def null_rate(payload: Mapping[str, object]) -> Decimal | None:
     """``(row_count - non_null) / row_count``; ``None`` when there are no rows."""
     rows, non_null = number(payload["row_count"]), number(payload["non_null"])

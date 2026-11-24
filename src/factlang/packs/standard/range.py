@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
-from dataclasses import dataclass
 from decimal import Decimal
 
 from factlang import ir
 from factlang.contract import Contract, Example
 from factlang.ir import ColumnAggregate, Metric
-from factlang.judge.predicate import Facts, Result, compare, fmt
+from factlang.judge import Compare
 from factlang.packs.standard._common import as_utc, number
 from factlang.semantics.checked import CheckedClaim
 from factlang.semantics.signature import AttrSpec, Operand, VerbSpec
@@ -23,6 +22,8 @@ SPEC = VerbSpec(
     filterable=True,
 )
 
+_ONE_DAY = dt.timedelta(days=1)
+
 
 def plan(claim: CheckedClaim) -> ir.ProbePlan:
     return ColumnAggregate(
@@ -33,57 +34,57 @@ def plan(claim: CheckedClaim) -> ir.ProbePlan:
     )
 
 
-def _measured(value: object, timestamp_bounds: bool) -> object:
-    """Numbers as exact ``Decimal``; timestamps in UTC (naive = UTC); a DATE against
-    TIMESTAMP bounds is its midnight UTC. Anything else is returned unchanged."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
-        return number(value)
-    if isinstance(value, dt.datetime):
-        return as_utc(value)
-    if isinstance(value, dt.date) and timestamp_bounds:
-        return as_utc(value)
-    return value
+def _incompatible(value: object, bounds: str) -> TypeError:
+    return TypeError(f"cannot compare a measured {value!r} with {bounds} bounds")
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
+
+
+def _in_range(lo_v: object, hi_v: object, lo: object, hi: object) -> bool:
+    """``lo <= min`` and ``max <= hi`` under the kind rules of the bounds.
+
+    Number bounds take numbers (exact ``Decimal``). DATE bounds take DATE values as is and
+    TIMESTAMP values against the half-open ``[lo 00:00Z, hi+1d 00:00Z)``. TIMESTAMP bounds
+    take timestamps in UTC (naive = UTC) and a DATE value as its midnight UTC. Any other
+    pairing raises ``TypeError`` (judged ``ERROR``: a contract or claim defect)."""
+    if isinstance(lo, Decimal) and isinstance(hi, Decimal):
+        if not (_is_number(lo_v) and _is_number(hi_v)):
+            raise _incompatible(lo_v if not _is_number(lo_v) else hi_v, "number")
+        lmin, lmax = number(lo_v), number(hi_v)
+        assert lmin is not None and lmax is not None
+        return lo <= lmin and lmax <= hi
+    if isinstance(lo, dt.datetime) and isinstance(hi, dt.datetime):
+        for v in (lo_v, hi_v):
+            if not isinstance(v, dt.date):
+                raise _incompatible(v, "timestamp")
+        assert isinstance(lo_v, dt.date) and isinstance(hi_v, dt.date)
+        return lo <= as_utc(lo_v) and as_utc(hi_v) <= hi
+    if isinstance(lo, dt.date) and isinstance(hi, dt.date):
+        for v in (lo_v, hi_v):
+            if not isinstance(v, dt.date):
+                raise _incompatible(v, "date")
+        assert isinstance(lo_v, dt.date) and isinstance(hi_v, dt.date)
+        if isinstance(lo_v, dt.datetime) or isinstance(hi_v, dt.datetime):
+            start, stop = as_utc(lo), as_utc(hi) + _ONE_DAY
+            return start <= as_utc(lo_v) and as_utc(hi_v) < stop
+        return lo <= lo_v and hi_v <= hi
+    raise TypeError(f"unsupported range bounds {lo!r}, {hi!r}")
 
 
 def derive(payload: Mapping[str, object], claim: CheckedClaim) -> dict[str, object]:
+    lo_v, hi_v = payload["min_value"], payload["max_value"]
     bounds = claim.value("BETWEEN")
     assert isinstance(bounds, tuple) and len(bounds) == 2
-    ts = isinstance(bounds[0], dt.datetime)
-    return {
-        "min_value": _measured(payload["min_value"], ts),
-        "max_value": _measured(payload["max_value"], ts),
-    }
-
-
-@dataclass(frozen=True)
-class WithinBounds:
-    """``min_value >= low`` and ``max_value <= high`` of the claim's ``BETWEEN`` pair."""
-
-    attr: str = "BETWEEN"
-
-    def evaluate(self, facts: Facts, claim: CheckedClaim) -> Result:
-        lo_v, hi_v = facts.get("min_value"), facts.get("max_value")
-        if lo_v is None or hi_v is None:
-            return None, "min_value/max_value were not measured (no non-NULL values)"
-        bounds = claim.value(self.attr)
-        assert isinstance(bounds, tuple)
-        lo, hi = bounds
-        if not compare(lo_v, ">=", lo):
-            return False, f"min_value {fmt(lo_v)} < {fmt(lo)}"
-        if not compare(hi_v, "<=", hi):
-            return False, f"max_value {fmt(hi_v)} > {fmt(hi)}"
-        return True, f"[{fmt(lo_v)}, {fmt(hi_v)}] within [{fmt(lo)}, {fmt(hi)}]"
-
-    def reads(self) -> tuple[set[str], set[str]]:
-        return {"min_value", "max_value"}, {self.attr}
+    in_range = None if lo_v is None or hi_v is None else _in_range(lo_v, hi_v, *bounds)
+    return {"min_value": lo_v, "max_value": hi_v, "in_range": in_range}
 
 
 CONTRACT = Contract(
     spec=SPEC,
     derive=derive,
-    decide=WithinBounds(),
+    decide=Compare("in_range", "==", value=True),
     examples=(
         Example("RANGE order_items.quantity BETWEEN [0, 100]"),
         Example("RANGE products.price BETWEEN [0.01, 9999.99] WHERE active = TRUE"),
@@ -95,5 +96,5 @@ CONTRACT = Contract(
         Example("RANGE orders BETWEEN [0, 1]", valid=False, expect="FL302"),
     ),
     plan=plan,
-    fact_names=("min_value", "max_value"),
+    fact_names=("min_value", "max_value", "in_range"),
 )

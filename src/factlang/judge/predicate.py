@@ -237,12 +237,18 @@ class Within:
         return {self.fact}, {self.attr, self.tolerance_attr, self.abs_attr}
 
 
+ALWAYS_WHY = "always"
+
+
 @dataclass(frozen=True)
 class Always:
-    """Always true; reads nothing (e.g. the ``otherwise`` of an optional check)."""
+    """Always true; reads nothing (e.g. the ``otherwise`` of an optional check).
+
+    ``And``/``Or`` leave its explanation out when joining, so an absent optional check
+    does not dilute the explanation that names the numbers."""
 
     def evaluate(self, facts: Facts, claim: CheckedClaim) -> Result:
-        return True, "always"
+        return True, ALWAYS_WHY
 
     def reads(self) -> tuple[set[str], set[str]]:
         return set(), set()
@@ -256,6 +262,11 @@ def _union(items: tuple[Predicate, ...]) -> tuple[set[str], set[str]]:
         facts |= f
         attrs |= a
     return facts, attrs
+
+
+def _joined(whys: list[str]) -> str:
+    """``"; "``-joined explanations without the ``Always`` parts (``"always"`` if only those)."""
+    return "; ".join(w for w in whys if w != ALWAYS_WHY) or ALWAYS_WHY
 
 
 def _items_init(obj: object, items: tuple[Predicate, ...]) -> None:
@@ -279,7 +290,7 @@ class And:
         nones = [why for ok, why in results if ok is None]
         if nones:
             return None, "; ".join(nones)
-        return True, "; ".join(why for _, why in results)
+        return True, _joined([why for _, why in results])
 
     def reads(self) -> tuple[set[str], set[str]]:
         return _union(self.items)
@@ -300,7 +311,7 @@ class Or:
         nones = [why for ok, why in results if ok is None]
         if nones:
             return None, "; ".join(nones)
-        return False, "; ".join(why for _, why in results)
+        return False, _joined([why for _, why in results])
 
     def reads(self) -> tuple[set[str], set[str]]:
         return _union(self.items)

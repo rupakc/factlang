@@ -44,7 +44,8 @@ def run(
 
 def test_aware_timestamp() -> None:
     v, _, f = run(dt.datetime(2026, 1, 2, 0, 0, tzinfo=UTC))
-    assert v is Verdict.PASS and f["age_seconds"] == Decimal(43200)
+    assert v is Verdict.PASS and f["age_seconds"] == Decimal(43200) and f["note"] is None
+    assert set(f) == {"age_seconds", "note"}
 
 
 def test_stale_fails() -> None:
@@ -73,17 +74,19 @@ def test_date_is_midnight_utc() -> None:
 
 
 def test_empty_table_no_data() -> None:
-    v, why, f = run(None)
-    assert v is Verdict.NO_DATA and f["age_seconds"] is None and "no" in why
+    v, _, f = run(None)
+    assert v is Verdict.NO_DATA and f["age_seconds"] is None
+    assert "no non-NULL values" in str(f["note"])
 
 
 @pytest.mark.parametrize("value", ["2026-01-02", 17, Decimal("1.5")])
 def test_not_temporal_is_no_data(value: object) -> None:
-    v, why, f = run(value)
+    v, _, f = run(value)
     assert v is Verdict.NO_DATA and f["age_seconds"] is None
-    assert "not a temporal value" in why
+    assert "not a temporal value" in str(f["note"])
 
 
 def test_missing_server_now_is_no_data() -> None:
     v, _, f = run(dt.datetime(2026, 1, 2, tzinfo=UTC), now=None)
     assert v is Verdict.NO_DATA and f["age_seconds"] is None
+    assert "server_now" in str(f["note"])

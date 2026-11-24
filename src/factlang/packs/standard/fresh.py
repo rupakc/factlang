@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
-from dataclasses import dataclass
 from decimal import Decimal
 
 from factlang import ir
 from factlang.contract import Contract, Example
 from factlang.ir import ColumnAggregate, Metric
-from factlang.judge.predicate import Facts, Result, compare, fmt
+from factlang.judge import Compare
+from factlang.judge.predicate import fmt
 from factlang.packs.standard._common import as_utc
 from factlang.semantics.checked import CheckedClaim
 from factlang.semantics.signature import AttrSpec, Operand, VerbSpec
@@ -30,49 +30,29 @@ def plan(claim: CheckedClaim) -> ir.ProbePlan:
     )
 
 
-def _age_seconds(max_value: object, server_now: object) -> Decimal | None:
-    """``server_now - max_value`` in exact seconds; ``None`` if either is not temporal."""
-    if not isinstance(max_value, dt.date) or not isinstance(server_now, dt.date):
-        return None
+def _age(max_value: object, server_now: object) -> tuple[Decimal | None, str | None]:
+    """``(server_now - max_value in exact seconds, None)`` or ``(None, why not)``."""
+    if max_value is None:
+        return None, "no non-NULL values: max_value was not measured"
+    if not isinstance(max_value, dt.date):
+        return None, f"max_value {fmt(max_value)} is not a temporal value"
+    if not isinstance(server_now, dt.date):
+        return None, "server_now was not measured as a temporal value"
     delta = as_utc(server_now) - as_utc(max_value)
-    return Decimal(delta.days * 86400 + delta.seconds) + Decimal(delta.microseconds) / 10**6
+    seconds = Decimal(delta.days * 86400 + delta.seconds) + Decimal(delta.microseconds) / 10**6
+    return seconds, None
 
 
 def derive(payload: Mapping[str, object], claim: CheckedClaim) -> dict[str, object]:
     # ``now`` comes only from the warehouse (the ``server_now`` column), never from Python
-    max_value = payload["max_value"]
-    return {
-        "age_seconds": _age_seconds(max_value, payload["server_now"]),
-        "max_value": max_value,
-    }
-
-
-@dataclass(frozen=True)
-class AgeWithin:
-    """``age_seconds <= WITHIN``; says why when the age cannot be computed."""
-
-    attr: str = "WITHIN"
-
-    def evaluate(self, facts: Facts, claim: CheckedClaim) -> Result:
-        age, newest = facts.get("age_seconds"), facts.get("max_value")
-        if age is None:
-            if newest is None:
-                return None, "no non-NULL values: max_value was not measured"
-            if not isinstance(newest, dt.date):
-                return None, f"max_value {fmt(newest)} is not a temporal value"
-            return None, "server_now was not measured"
-        limit = claim.value(self.attr)
-        ok = compare(age, "<=", limit)
-        return ok, f"age_seconds {fmt(age)} {'<=' if ok else '>'} {fmt(limit)}"
-
-    def reads(self) -> tuple[set[str], set[str]]:
-        return {"age_seconds", "max_value"}, {self.attr}
+    age, note = _age(payload["max_value"], payload["server_now"])
+    return {"age_seconds": age, "note": note}
 
 
 CONTRACT = Contract(
     spec=SPEC,
     derive=derive,
-    decide=AgeWithin(),
+    decide=Compare("age_seconds", "<=", attr="WITHIN"),
     examples=(
         Example("FRESH orders.created_at WITHIN 24h"),
         Example("FRESH events.occurred_at WITHIN 15m WHERE kind = 'checkout'"),
@@ -83,5 +63,5 @@ CONTRACT = Contract(
         Example("FRESH orders WITHIN 24h", valid=False, expect="FL302"),
     ),
     plan=plan,
-    fact_names=("age_seconds", "max_value"),
+    fact_names=("age_seconds", "note"),
 )

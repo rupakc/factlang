@@ -9,7 +9,7 @@ from factlang import ir
 from factlang.contract import Contract, Example
 from factlang.ir import KeyOverlap
 from factlang.judge import Always, And, Compare, CompareUsingClaimOp, WhenClaimHas
-from factlang.packs.standard._common import number, ratio
+from factlang.packs.standard._common import count, number, ratio
 from factlang.semantics.checked import CheckedClaim
 from factlang.semantics.refs import ColumnRef, Ident
 from factlang.semantics.signature import AttrSpec, Operand, VerbSpec
@@ -84,13 +84,16 @@ def plan(claim: CheckedClaim) -> ir.ProbePlan:
 def _card_ok(
     claim: CheckedClaim, matched: object, max_left: object, max_right: object
 ) -> bool | None:
-    """CARD consistent with the measured multiplicities; ``None`` when no key matched."""
+    """CARD consistent with the measured multiplicities; ``None`` when no key matched
+    (``N:M`` constrains nothing, so it holds regardless)."""
     if not claim.has("CARD"):
         return None
+    left_bound, right_bound = _CARD_BOUNDS[str(claim.value("CARD"))]
+    if left_bound is None and right_bound is None:
+        return True
     m = number(matched)
     if m is None or m == 0:
         return None
-    left_bound, right_bound = _CARD_BOUNDS[str(claim.value("CARD"))]
     ok = True
     for bound, measured in ((left_bound, max_left), (right_bound, max_right)):
         if bound is None:
@@ -103,13 +106,13 @@ def _card_ok(
 
 
 def derive(payload: Mapping[str, object], claim: CheckedClaim) -> dict[str, object]:
-    distinct_left = number(payload["distinct_left"])
-    matched = number(payload["matched"])
-    distinct_right = number(payload["distinct_right"])
-    left_non_null = number(payload["left_non_null"])
-    matched_left_rows = number(payload["matched_left_rows"])
-    max_left = number(payload.get("max_left_per_key"))
-    max_right = number(payload.get("max_right_per_key"))
+    distinct_left = count(payload["distinct_left"])
+    matched = count(payload["matched"])
+    distinct_right = count(payload["distinct_right"])
+    left_non_null = count(payload["left_non_null"])
+    matched_left_rows = count(payload["matched_left_rows"])
+    max_left = count(payload.get("max_left_per_key"))
+    max_right = count(payload.get("max_right_per_key"))
     return {
         "match_rate": ratio(matched, distinct_left),
         "coverage": ratio(matched, distinct_right),

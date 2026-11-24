@@ -95,8 +95,12 @@ def test_column_aggregate_every_metric(con: Any) -> None:
         "avg_value": 2.8,
         "duplicate_keys": 1,
     }
-    now = one(con, ColumnAggregate(ORDERS, None, (Metric.NOW, Metric.ROW_COUNT)))
-    assert now["server_now"] is not None and now["row_count"] == 6
+    # server_now is a TIMESTAMP WITH TIME ZONE: fetching it into Python needs pytz/tzdata,
+    # which the test environment need not have, so the probe runs inside a wrapper
+    probe = render(ColumnAggregate(ORDERS, None, (Metric.NOW, Metric.ROW_COUNT)), DUCK)
+    sql, values = probe.bind("qmark")
+    wrapped = f"SELECT server_now IS NOT NULL, row_count FROM ({sql}) q"
+    assert con.execute(wrapped, list(values)).fetchone() == (True, 6)
 
 
 def test_quoted_identifier_with_a_space(con: Any) -> None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+
+from factlang.diagnostics import Span
 from factlang.judge import (
     And,
     Compare,
@@ -13,8 +15,6 @@ from factlang.judge import (
     WhenClaimHas,
     Within,
 )
-
-from factlang.diagnostics import Span
 from factlang.semantics.checked import CheckedAttr, CheckedClaim
 from factlang.semantics.refs import Ident, TableRef
 

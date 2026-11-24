@@ -12,7 +12,7 @@ These capabilities were added in Amendment A and B (see [[Design-Decisions]]) so
 
 ```python
 import factlang as fl
-from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
+from factlang import ColumnRef, EdgeRef, Ident, TableRef
 
 orders = TableRef(None, None, Ident("orders"))        # catalog, schema, table
 connector = fl.DBAPIConnector(conn, "duckdb")

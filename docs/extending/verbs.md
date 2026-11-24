@@ -67,11 +67,11 @@ assert [o.verdict.value for o in report.outcomes] == ["fail", "pass"]
 
 ### Rules the tests enforce
 
-Run `factlang.contract.check_pack(pack)` in your own test suite; it returns a list of
+Run `fl.check_pack(pack)` in your own test suite; it returns a list of
 problems, empty when the pack is complete:
 
 ```python
-from factlang.contract import check_pack
+from factlang import check_pack
 
 assert check_pack(pack) == []
 ```

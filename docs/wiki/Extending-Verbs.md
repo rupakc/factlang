@@ -61,7 +61,7 @@ On a `ContractPack`: `register(c)` (error on duplicate), `override(c)` (replace,
 ## New value types
 
 ```python
-from factlang.syntax.ast import LiteralKind
+LiteralKind = fl.types.LiteralKind
 
 def only_lowercase(value):
     return None if str(value) == str(value).lower() else "must be lower case"

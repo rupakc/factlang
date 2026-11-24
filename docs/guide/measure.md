@@ -11,7 +11,7 @@ Every code block on this page runs against DuckDB in the test suite.
 import duckdb
 import factlang as fl
 from decimal import Decimal
-from factlang.semantics.refs import ColumnRef, Ident, TableRef
+from factlang import ColumnRef, Ident, TableRef
 
 conn = duckdb.connect()
 conn.execute("""
@@ -193,6 +193,10 @@ estimate is the host's to make. Evidence records the `sample` and
 - **`keyhash` is consistent within one dialect only.** Each dialect hashes with its own
   function, so the same seed keeps the same keys on every table of one warehouse, which is
   all a join needs, but not across warehouses.
+- **With `cast_to`, sample on exactly the join columns.** A `KeyOverlap` hashes the key as
+  compared (after `cast_to`) only when a side's `keyhash` key equals that side's join
+  columns, in order; any other key is hashed raw, and the two sides' raw values (of
+  different types) then keep different keys.
 
 ### Support by dialect
 

@@ -55,11 +55,17 @@ outcome for its own claim; one broken contract cannot sink a batch.
 `Checker.check(text)` returns a `Report`: the ordered outcomes, every diagnostic raised while
 checking, and
 
+- `report.verified`: every claim that can be measured was measured and passed. It is `True`
+  only when there is no `fail`, `error`, `invalid` or `no_data` outcome, no error diagnostic,
+  and at least one outcome that is not `unprobeable`; an empty report is not verified. Use
+  it when "the facts hold" is what you need to know.
 - `report.ok`: no `fail`, `error` or `invalid` outcome and no error diagnostic (a broken `USE`
-  line, which has no outcome of its own, still makes the report not ok). `no_data` and
-  `unprobeable` do not make a report fail; decide in your host whether they should.
+  line, which has no outcome of its own, still makes the report not ok). It is the weaker
+  flag: `no_data` and `unprobeable` outcomes, and an empty report, are still ok, so `ok`
+  means "nothing was contradicted", not "everything was confirmed".
 - `report.summary()`: a count per verdict.
-- `report.to_dict()`, `report.to_json()`, `report.to_markdown()`.
+- `report.to_dict()`, `report.to_json()`, `report.to_markdown()`; each carries both flags, and
+  `verified` is the first key of the dict.
 
 `fl.check(text, connector=…)` is the one-call form. It returns the `Outcome` when the text
 holds exactly one claim and the `Report` otherwise, so code that checks a document should use
@@ -68,7 +74,9 @@ holds exactly one claim and the `Report` otherwise, so code that checks a docume
 ## The command line
 
 `factlang check` turns verdicts into exit codes: `0` everything passed, `1` a claim failed,
-`2` invalid input, `3` errors or undecidable claims. See [Command line](../cli.md).
+`2` invalid input, `3` errors or undecidable claims. Its last line says `verified`, `ok,
+nothing verified` (exit `0` with nothing measurable) or `not verified` (any non-zero exit),
+followed by the counts. See [Command line](../cli.md).
 
 ## See also
 

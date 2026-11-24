@@ -15,13 +15,13 @@
 | `factlang check FILE --connector module:attr [--dialect D]` | uses a connector (or a factory, or a DB-API connection with `--dialect`) from your code |
 | `factlang check FILE` (no `--dsn`) | reads the URL from the `FACTLANG_DSN` environment variable |
 | `factlang verbs [--json]` | lists the standard verbs |
-| `factlang mcp [--dsn URL \| --dialect D] [--timeout S] [--max-bytes N] [--name N]` | serves the FactLang tools over MCP on stdio (needs `factlang[mcp]`); exits 2 without `--dsn` or `--dialect` |
+| `factlang mcp [--dsn URL \| --dialect D] [--timeout S] [--max-bytes N] [--name N]` | serves the FactLang tools over MCP on stdio (needs `factlang[mcp]`); without `--dsn` or `--dialect` it reads `FACTLANG_DSN`, and exits 2 if that is unset too |
 | `factlang --version` | prints the version |
 
 ## Standard input and credentials
 
 - A `FILE` of `-` means standard input (`factlang lint -`, `factlang explain - --dialect duckdb`); with `fmt` it prints the canonical form.
-- `check` uses `FACTLANG_DSN` when neither `--dsn` nor `--connector` is given. Prefer it: `--dsn` puts the password in the process list, the environment variable does not.
+- `check` uses `FACTLANG_DSN` when neither `--dsn` nor `--connector` is given; `mcp` uses it when neither `--dsn` nor `--dialect` is given. Prefer it: `--dsn` puts the password in the process list, the environment variable does not.
 
 ## Examples
 

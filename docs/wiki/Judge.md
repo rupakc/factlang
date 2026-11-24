@@ -21,7 +21,7 @@ Predicates can compare, combine and negate, nothing more. That keeps them serial
 
 ## Outcome
 
-`Outcome` is a frozen dataclass with `to_dict()`: claim text, canonical text, semantic hash, verb, verdict, explanation, facts, evidence (SQL, params, dialect, tier, duration, bytes processed, fused-with hashes) and diagnostics. `Report` groups outcomes with summary counts, an `ok` flag, and `to_dict()`, `to_json()`, `to_markdown()`.
+`Outcome` is a frozen dataclass with `to_dict()`: claim text, canonical text, semantic hash, verb, verdict, explanation, facts, evidence (SQL, params, dialect, tier, duration, bytes processed, fused-with hashes) and diagnostics. `Report` groups outcomes with summary counts, a `verified` flag (every outcome that is not `unprobeable` passed, and there is at least one), the weaker `ok` flag (no `fail`, `error` or `invalid`; `no_data` and an empty report are still ok), and `to_dict()`, `to_json()`, `to_markdown()`.
 
 ## Verdict mapping
 

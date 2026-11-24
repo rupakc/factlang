@@ -19,7 +19,7 @@ A `ValueType` has four parts:
 
 ```python
 import factlang as fl
-from factlang.syntax.ast import LiteralKind
+LiteralKind = fl.types.LiteralKind
 
 def domain(literal):
     text = str(literal.value).lower()

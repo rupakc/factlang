@@ -89,7 +89,7 @@ for o in report.outcomes:
 assert [o.verdict.value for o in report.outcomes] == [
     "fail", "pass", "fail", "pass", "pass", "pass",
 ]
-assert not report.ok
+assert not report.ok and not report.verified
 ```
 
 The output reads:
@@ -145,7 +145,7 @@ in every claim, which is why a claim cannot inject SQL.
 ```python
 print(report.to_markdown())
 data = report.to_dict()             # JSON-ready; report.to_json() gives the text
-assert data["ok"] is False
+assert data["verified"] is False and data["ok"] is False
 assert data["summary"]["pass"] == 4 and data["summary"]["fail"] == 2
 ```
 

@@ -16,7 +16,10 @@ Every code block on this page runs in the test suite.
 
 `DBAPIConnector` reads the driver's `paramstyle`, opens a fresh cursor per probe, cancels a
 statement that exceeds `timeout_s` where the driver allows it, and serialises statements on
-one connection unless the driver declares PEP 249 `threadsafety >= 2`.
+one connection unless the driver declares PEP 249 `threadsafety >= 2`. The lock is kept per
+connection object in a weak map; a connection that cannot be weakly referenced falls back to
+a map keyed by `id()`, which holds a strong reference to it, so such a connection stays alive
+for the life of the process once a `DBAPIConnector` has wrapped it.
 
 ## Writing a connector
 

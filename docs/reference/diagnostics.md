@@ -10,7 +10,7 @@ stage that found it:
 | `FL3xx` | analyser | a diagnostic; the claim is `invalid` (warnings and info do not invalidate) |
 | `FL4xx` | planning | an `error` outcome, or a `ValueError` from `plan_for` / `check_pack` |
 | `FL5xx` | rendering | `RenderError`; an `error` outcome in a report, a `ValueError` from `fl.compile` |
-| `FL6xx` | contract completeness | reported by `factlang.contract.check_pack` in your tests |
+| `FL6xx` | contract completeness | reported by `fl.check_pack` in your tests |
 | `FL7xx` | execution | `ExecutionError`; an `error` outcome, or `Measurement.error` |
 
 A diagnostic has a `code`, a `severity` (`error`, `warning`, `info`), a `message`, a `span`

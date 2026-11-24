@@ -85,3 +85,9 @@ def test_front_end_example_reports_its_code(row: tuple[str, str, str, str, str])
     bag = fl.lint(claim, catalog=CATALOG)
     assert code in bag.codes(), f"{claim!r} -> {bag.codes()}"
     assert any(d.code == code and d.severity.value == severity for d in bag), code
+
+
+def test_wiki_diagnostics_page_lists_the_same_codes() -> None:
+    wiki = (ROOT / "docs" / "wiki" / "Diagnostics.md").read_text(encoding="utf-8")
+    listed = set(re.findall(r"^\| (FL\d{3}) \|", wiki, re.M))
+    assert listed == {m.group(1) for m in ROW.finditer(DOC.read_text(encoding="utf-8"))}

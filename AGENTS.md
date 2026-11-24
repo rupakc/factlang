@@ -17,7 +17,7 @@ full text is in `CLAUDE.md`; the design is in `docs/specs/2026-11-24-factlang-de
 - No mention anywhere of the company, product, datasets or table names of the project FactLang originated in (generic shop domain only: orders, customers, order_items, products, events, opportunities).
 - Commits: conventional-commit style, each commit leaves pytest green, each commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Stage explicit paths only (never `git add -A`). Never commit `.superpowers/`.
-- Use `python3`. Use a venv at /Users/rupak/factlang/.venv (create if absent; it is gitignored).
+- Use `python3`. Use a gitignored `.venv` at the repository root (create it if absent).
 
 ## Commands
 

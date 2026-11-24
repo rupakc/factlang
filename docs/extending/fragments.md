@@ -10,7 +10,7 @@ against DuckDB in the test suite.
 ```python
 import duckdb
 import factlang as fl
-from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
+from factlang import ColumnRef, EdgeRef, Ident, TableRef
 
 orders = TableRef(None, None, Ident("orders"))
 items = TableRef(None, None, Ident("order_items"))

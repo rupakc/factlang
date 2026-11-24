@@ -16,7 +16,7 @@ class MyConnector:
         return QueryResult(rows=[dict(r) for r in rows], bytes_processed=None)
 ```
 
-`QueryResult` comes from `factlang.connectors.base`. Rows must be plain dicts keyed by column name; the wire-format metric aliases come back exactly as the SQL names them.
+`QueryResult` comes from `factlang.connectors`. Rows must be plain dicts keyed by column name; the wire-format metric aliases come back exactly as the SQL names them.
 
 ## Optional features
 

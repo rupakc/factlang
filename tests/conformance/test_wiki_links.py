@@ -166,6 +166,21 @@ def test_no_originating_names() -> None:
     assert bad == []
 
 
+_HOME = re.compile("/" + r"(?:Users|home)/[A-Za-z0-9._-]+/")  # split: this file is scanned too
+
+
+def test_no_local_absolute_paths() -> None:
+    bad = []
+    for path in _scanned_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if _HOME.search(text):
+            bad.append(str(path.relative_to(ROOT)))
+    assert bad == []
+
+
 # -- negative controls -----------------------------------------------------------------------
 
 
@@ -198,3 +213,8 @@ def test_control_forbidden_name_is_found_by_digest() -> None:
     digests = frozenset({(6, hashlib.sha256(b"foobar").hexdigest())})
     assert forbidden_hits("A FooBar here, x_foobarbaz there; foo bar no.", digests) == 2
     assert forbidden_hits("nothing to see", digests) == 0
+
+
+def test_control_local_absolute_path_is_found() -> None:
+    assert _HOME.search("venv at " + "/" + "Users/someone/project/.venv")
+    assert not _HOME.search("a gitignored .venv at the repository root")

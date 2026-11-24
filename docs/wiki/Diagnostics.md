@@ -57,7 +57,6 @@
 | Code | Meaning |
 |---|---|
 | FL500 | primitive not renderable |
-| FL501 | metric not renderable |
 | FL502 | identifier not representable |
 | FL503 | cast not expressible |
 | FL504 | unknown dialect |

@@ -40,7 +40,9 @@ print(result["diagnostics"][0]["suggestion"])  # UNIQUE
 
 A typical loop: the model drafts claims, calls `factlang_lint` until they are clean, then
 `factlang_check`; your host keeps the sentences whose claims passed and rewrites or drops the
-rest. Outcomes carry a semantic hash, so a host can cache verdicts per fact.
+rest. The `factlang_check` result is `Report.to_dict()`, and its first key is `verified`:
+`true` only when every measurable claim was measured and passed. `ok` is weaker (it is still
+`true` with `no_data` outcomes or nothing measured), so gate on `verified`. Outcomes carry a semantic hash, so a host can cache verdicts per fact.
 
 ## The verb reference for prompts
 
@@ -60,7 +62,8 @@ With the extra `factlang[mcp]`, the same three tools are served over MCP on stdi
 
 ```bash
 pip install "factlang[mcp,sqlalchemy]"
-factlang mcp --dsn "postgresql+psycopg://reader@warehouse/shop"
+export FACTLANG_DSN="postgresql+psycopg://reader@warehouse/shop"
+factlang mcp                          # the URL comes from FACTLANG_DSN
 factlang mcp --dialect snowflake      # no warehouse: lint and explain only
 ```
 
@@ -68,16 +71,16 @@ Options: `--timeout` (per-probe seconds, default 60), `--max-bytes` (refuse prob
 above this by a dry run), `--name` (the server name). Without a DSN, `factlang_check`
 answers with a `no_connector` error. `python -m factlang.agent.mcp` is the same server.
 
-Register it with your MCP client as a stdio command, e.g. `factlang mcp --dsn …`. Use a
+Register it with your MCP client as a stdio command, e.g. `factlang mcp` with
+`FACTLANG_DSN` in the server's environment. Use a
 database role that can only read: FactLang's probes are `SELECT`-only, and the credentials
 are what guarantee the rest.
 
 !!! warning "Credentials on the command line"
     A DSN with a password on the command line is visible to other users of the machine in
-    the process list. `factlang check` reads `FACTLANG_DSN` from the environment when no
-    `--dsn` is given; prefer that. `factlang mcp` takes `--dsn` only, so give it a URL
-    without a password (rely on the driver's own credential file or environment, e.g.
-    `PGPASSWORD` or `.pgpass`) where you can.
+    the process list. `factlang check` and `factlang mcp` both read `FACTLANG_DSN` from the
+    environment when neither `--dsn` nor (`check`) `--connector` / (`mcp`) `--dialect` is
+    given; prefer that.
 
 ## Grounding evaluations
 

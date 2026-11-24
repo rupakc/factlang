@@ -9,7 +9,7 @@ factlang fmt [--check] FILE...             rewrite files in canonical form
 factlang explain --dialect D FILE          print each claim's SQL
 factlang check [--dsn URL | --connector MODULE:ATTR] [--dialect D] FILE
 factlang verbs [--json]                    list the verbs of the standard pack
-factlang mcp [--dsn URL] [--dialect D]     serve the tools over MCP on stdio
+factlang mcp [--dsn URL | --dialect D]     serve the tools over MCP on stdio
 ```
 
 `--format text|json|markdown` chooses the output and may come before or after the
@@ -65,12 +65,20 @@ The warehouse comes from one of:
 - `FACTLANG_DSN`: the same URL from the environment, used when neither `--dsn` nor
   `--connector` is given;
 - `--connector module:attr`: a `Connector`, a factory returning one, or a DB-API connection
-  (then give `--dialect`).
+  (then give `--dialect`). This imports and runs `module` as ordinary Python code, with the
+  current working directory added to `sys.path`, so only name a module you trust and run the
+  command from a directory you trust.
 
 !!! warning "Keep credentials off the command line"
     A URL with a password passed as `--dsn` is visible to other users of the machine in the
     process list. Put it in `FACTLANG_DSN`, or use `--connector` with code that reads your
     secret store.
+
+The last line of the text output sums the report up and agrees with the exit code:
+`verified: 6 PASS` (exit `0`), `ok, nothing verified: no claims` (exit `0`, nothing was
+measurable: an empty file or only `unprobeable` claims) or `not verified: 1 NO_DATA` (any
+non-zero exit). The JSON and Markdown reports carry `verified` and `ok`; see
+[Verdicts](guide/verdicts.md#reports).
 
 ## verbs
 
@@ -82,7 +90,8 @@ factlang verbs --json    # machine-readable signatures
 ## mcp
 
 Serves `factlang_check`, `factlang_lint` and `factlang_explain` over MCP on stdio; needs
-`factlang[mcp]`. See [Agents and LLMs](agents.md#mcp-server).
+`factlang[mcp]`. The warehouse URL comes from `--dsn` or, when neither `--dsn` nor
+`--dialect` is given, from `FACTLANG_DSN`; with none of the three it exits `2`. See [Agents and LLMs](agents.md#mcp-server).
 
 ## Exit codes
 

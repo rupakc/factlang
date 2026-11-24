@@ -57,7 +57,7 @@ calling a factory loads it.
 ## Testing a pack
 
 ```python
-from factlang.contract import check_pack
+from factlang import check_pack
 
 assert check_pack(strict) == []
 ```

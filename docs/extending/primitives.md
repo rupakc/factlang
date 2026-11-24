@@ -52,7 +52,7 @@ exact aggregation.
 
 ```python
 import factlang as fl
-from factlang.semantics.refs import Ident, TableRef
+from factlang import Ident, TableRef
 
 orders = TableRef(None, None, Ident("orders"))
 plan = fl.ir.ColumnAggregate(orders, Ident("amount"), (fl.Metric.SUM, fl.Metric.NON_NULL))
@@ -75,7 +75,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import ClassVar
 
-from factlang.semantics.filters import Param
+from factlang.sql import Param
 from factlang.sql import ast as A
 
 @dataclass(frozen=True)

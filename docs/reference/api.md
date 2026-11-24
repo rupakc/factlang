@@ -4,8 +4,12 @@
 import factlang as fl
 ```
 
-Everything in `fl.__all__` is public API. The package follows SemVer from `0.1.0`; the
-language itself is versioned separately (`fl.LANGUAGE_VERSION == "1.0"`).
+Everything in `fl.__all__` is public API, and so is the `__all__` of each public package:
+`fl.ir`, `fl.sql`, `fl.connectors`, `fl.types`, `fl.syntax` (`factlang.syntax`) and
+`factlang.agent`. Import from those paths; any other module path (`factlang.semantics.…`,
+`factlang.ir.primitives`, `factlang.connectors.base`, …) is internal and may move. The
+package follows SemVer from `0.1.0`; the language itself is versioned separately
+(`fl.LANGUAGE_VERSION == "1.0"`).
 
 ## Stable API
 
@@ -18,6 +22,13 @@ series**. Libraries built on FactLang, schema profilers in particular, may depen
 | `Checker.measure`, `Checker.ameasure`, `Checker.estimate`, `fl.measure`, `Measurement`, `CostEstimate` | [Raw measurement](../guide/measure.md) |
 | `fl.parse_filter`, `fl.sql.render_filter`, `fl.sql.render_join`, `RenderedFragment` | [Fragments](../extending/fragments.md) |
 | `fl.connectors.run_metadata` (also `fl.run_metadata`) | [Metadata SQL](../guide/measure.md#metadata-sql) |
+| `fl.Ident`, `fl.TableRef`, `fl.ColumnRef`, `fl.EdgeRef` (also in `fl.ir`) | [IR primitives](../extending/primitives.md) |
+| `fl.check_pack`, `fl.Catalog` (the catalog protocol) | [Packs](../extending/packs.md), [Catalogs](../extending/catalogs.md) |
+| `fl.types.LiteralKind`, `fl.types.ValueType`, `fl.types.register_type` | [Value types](../extending/types.md) |
+| `fl.sql.Param` (a typed bind parameter) | [Fragments](../extending/fragments.md) |
+| `fl.connectors.Connector`, `AsyncConnector`, `QueryResult`, `ExecutionError` | [Connectors](../extending/connectors.md) |
+| `factlang.syntax.FILTER_KEYWORDS`: the words reserved inside a `WHERE` filter (the filter-keyword set only, not every keyword of the language) | [Filters](../guide/filters.md) |
+| `Report.verified` and `Report.ok` | [Verdicts](../guide/verdicts.md#reports) |
 
 The metric aliases (`row_count non_null distinct_keys max_rows_per_key min_value max_value
 sum_value avg_value duplicate_keys server_now`) are a wire format and do not change at all.
@@ -41,6 +52,11 @@ sum_value avg_value duplicate_keys server_now`) are a wire format and do not cha
 `fl.check` with a single claim returns an `Outcome`; with any other number it returns a
 `Report`. To get document-level diagnostics (a broken `USE` line, for instance) always use
 `Checker.check`, which returns a `Report`.
+
+`Report.verified` is the flag to gate on: every outcome that is not `UNPROBEABLE` is `PASS`,
+there is at least one such outcome, and no error diagnostic was raised. `Report.ok` is
+weaker: it only rules out `FAIL`, `ERROR` and `INVALID`, so a report with `NO_DATA`
+outcomes, or with nothing measured at all, is ok but not verified.
 
 ## Checking
 

@@ -8,7 +8,7 @@
 
 1. The agent answers a question and writes the facts behind the answer as claims.
 2. It calls `factlang_lint` to fix syntax mistakes, then `factlang_check` to verify.
-3. Each outcome comes back with a verdict, the numbers and the SQL.
+3. Each outcome comes back with a verdict, the numbers and the SQL; the result's first key, `verified`, is `true` only when every measurable claim passed (`ok` also tolerates `no_data` and an empty input).
 4. On `fail` or `no_data` the agent revises its answer instead of stating an unchecked fact.
 
 ## Tool definitions
@@ -49,7 +49,7 @@ With the extra `factlang[mcp]`:
 factlang mcp [--dsn URL | --dialect D] [--timeout S] [--max-bytes N] [--name N]
 ```
 
-serves the same three tools over stdio. Give `--dsn` or `--dialect`; with neither the command exits 2. With `--dialect D` and no `--dsn`, `factlang_lint` and `factlang_explain` work and `factlang_check` reports that there is no connector. Without the extra it prints an install hint. `python -m factlang.agent.mcp` is the same server. Note that `--dsn` puts the password in the process list; only `factlang check` reads `FACTLANG_DSN` (see [[CLI]]), so give the MCP server a low-privilege read-only account.
+serves the same three tools over stdio. Give `--dsn` or `--dialect`; with neither it reads the URL from `FACTLANG_DSN`, and exits 2 if that is unset too. With `--dialect D` and no `--dsn`, `factlang_lint` and `factlang_explain` work and `factlang_check` reports that there is no connector. Without the extra it prints an install hint. `python -m factlang.agent.mcp` is the same server. Note that `--dsn` puts the password in the process list; prefer `FACTLANG_DSN` (see [[CLI]]), and give the MCP server a low-privilege read-only account.
 
 ## Safety for agents
 

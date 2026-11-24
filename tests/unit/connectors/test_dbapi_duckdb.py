@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 import sys
 import time
@@ -95,19 +96,17 @@ def test_row_set_probe(con: Any) -> None:
     assert rows and all(isinstance(r, dict) for r in rows)
 
 
-def test_server_now_fetch(con: Any) -> None:
-    """The connector itself needs no pytz. The duckdb profile's ``now_sql`` is a TIMESTAMPTZ,
-    and DuckDB's Python client needs pytz (Python 3.10) or tzdata (Windows) to fetch one; that
-    failure is reported as FL700, never swallowed (a profile concern, not a connector one)."""
+def test_server_now_is_naive_utc_without_pytz_or_tzdata(con: Any) -> None:
+    """server_now is a naive UTC TIMESTAMP, so fetching it needs neither pytz (3.10) nor
+    tzdata (Windows), whatever the session time zone."""
+    con.execute("SET TimeZone = 'America/New_York'")
     plan = ColumnAggregate(ORDERS, None, (Metric.NOW,))
-    try:
-        rows = DBAPIConnector(con, "duckdb").execute(render(plan, DUCK), timeout_s=None).rows
-    except ExecutionError as exc:
-        assert exc.code == "FL700"
-        if "pytz" in str(exc) or "tzdata" in str(exc):
-            pytest.xfail("duckdb cannot fetch TIMESTAMPTZ here without pytz/tzdata")
-        raise
-    assert rows[0]["server_now"] is not None
+    before = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    rows = DBAPIConnector(con, "duckdb").execute(render(plan, DUCK), timeout_s=None).rows
+    after = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    now = rows[0]["server_now"]
+    assert isinstance(now, dt.datetime) and now.tzinfo is None
+    assert before - dt.timedelta(seconds=5) <= now <= after + dt.timedelta(seconds=5)
 
 
 def test_sql_error_is_fl700_and_chained(con: Any) -> None:
@@ -173,7 +172,7 @@ def test_run_metadata_refuses_dml_and_leaves_data_alone(con: Any) -> None:
 class FakeCursor:
     def __init__(self, conn: FakeConn) -> None:
         self.conn = conn
-        self.description: Any = [("n",), ("pct",)]
+        self.description: Any = [(label,) for label in conn.labels]
         self.closed = False
 
     def execute(self, sql: str, params: Any) -> None:
@@ -196,6 +195,7 @@ class FakeConn:
         self.raise_exc: BaseException | None = None
         self.no_description = False
         self.cursors: list[FakeCursor] = []
+        self.labels: tuple[str, ...] = ("n", "pct")
 
     def cursor(self) -> FakeCursor:
         cur = FakeCursor(self)
@@ -262,6 +262,43 @@ def test_driver_timeouts_are_fl702(exc: BaseException) -> None:
     assert info.value.code == "FL702"
     assert info.value.__cause__ is exc
     assert conn.cursors[0].closed
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        RuntimeError('invalid value for parameter "statement_timeout": "abc"'),
+        RuntimeError('unrecognized configuration parameter "statement_timeout"'),
+        TimeoutError("connection timed out"),
+        type("ConnectTimeout", (Exception,), {})("timed out after 10s"),
+        RuntimeError("could not connect to server: Connection timed out"),
+        RuntimeError("login timeout expired"),
+        RuntimeError("interrupted system call"),
+        RuntimeError("time out of range"),
+        RuntimeError("column timeout does not exist"),
+    ],
+)
+def test_non_query_timeouts_are_fl700(exc: BaseException) -> None:
+    """Negative control: only a query running out of time is FL702."""
+    conn = FakeConn()
+    conn.raise_exc = exc
+    with pytest.raises(ExecutionError) as info:
+        DBAPIConnector(conn, "duckdb").execute(count_where("x"), timeout_s=None)
+    assert info.value.code == "FL700", exc
+
+
+def test_probe_labels_are_lower_cased() -> None:
+    conn = FakeConn()
+    conn.labels = ("ROW_COUNT", "SERVER_NOW")
+    rows = DBAPIConnector(conn, "snowflake").execute(count_where("x"), timeout_s=None).rows
+    assert rows == [{"row_count": 1, "server_now": "50.0"}]
+
+
+def test_metadata_labels_are_kept_as_returned() -> None:
+    conn = FakeConn()
+    conn.labels = ("TABLE_NAME", "Kind")
+    rows = run_metadata(DBAPIConnector(conn, "snowflake"), "SHOW TABLES").rows
+    assert rows == [{"TABLE_NAME": 1, "Kind": "50.0"}]
 
 
 def test_other_driver_errors_are_fl700() -> None:

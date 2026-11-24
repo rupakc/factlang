@@ -149,12 +149,16 @@ def inline_template(
 
 @dataclass(frozen=True)
 class RenderedProbe:
-    """One executable ``SELECT`` for one plan: neutral template + typed parameters."""
+    """One executable ``SELECT`` for one plan: neutral template + typed parameters.
+
+    ``plan`` is ``None`` only for host-authored metadata SQL (``connectors.run_metadata``);
+    every probe rendered by FactLang carries the plan it was rendered from.
+    """
 
     sql_template: str
     params: tuple[Param, ...]
     arity: Arity
-    plan: ProbePlan
+    plan: ProbePlan | None
     dialect: str
     tier: str
 

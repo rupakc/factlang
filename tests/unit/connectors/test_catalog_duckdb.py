@@ -162,3 +162,53 @@ def test_malformed_rows_are_unknown() -> None:
     cat = WarehouseCatalog(CallableConnector(lambda s, p: [{"x": 1}], "duckdb"))
     assert cat.columns(ref("orders")) is None
     assert cat.errors
+
+
+def test_exists_then_columns_costs_one_query(con: Any) -> None:
+    counting = Counting(DBAPIConnector(con, "duckdb"))
+    cat = WarehouseCatalog(counting)
+    assert cat.table_exists(ref("orders")) is True
+    assert cat.columns(ref("orders")) is not None
+    assert len(counting.probes) == 1
+    # the memo serves each method once: asking again re-queries
+    assert cat.table_exists(ref("orders")) is True
+    assert len(counting.probes) == 2
+
+
+def test_through_cached_catalog_one_query_per_table(con: Any) -> None:
+    counting = Counting(DBAPIConnector(con, "duckdb"))
+    cat = CachedCatalog(WarehouseCatalog(counting))
+    for _ in range(3):
+        cat.table_exists(ref("orders"))
+        cat.columns(ref("orders"))
+        cat.table_exists(ref("nope"))
+        cat.columns(ref("nope"))
+    assert len(counting.probes) == 2
+
+
+def test_memo_expires(con: Any) -> None:
+    counting = Counting(DBAPIConnector(con, "duckdb"))
+    now = [0.0]
+    cat = WarehouseCatalog(counting, memo_s=10, clock=lambda: now[0])
+    cat.table_exists(ref("orders"))
+    now[0] = 11.0
+    cat.columns(ref("orders"))
+    assert len(counting.probes) == 2
+
+
+def test_timeout_is_raised_not_cached_as_unknown() -> None:
+    calls: list[str] = []
+
+    def fn(sql: str, params: object) -> list[dict[str, Any]]:
+        calls.append(sql)
+        if len(calls) == 1:
+            raise TimeoutError("statement timeout")
+        return [{"column_name": "id", "data_type": "INTEGER"}]
+
+    cat = CachedCatalog(WarehouseCatalog(CallableConnector(fn, "duckdb")))  # type: ignore[arg-type]
+    with pytest.raises(ExecutionError) as info:
+        cat.table_exists(ref("orders"))
+    assert info.value.code == "FL702"
+    # nothing was cached: the next call asks again and gets the real answer
+    assert cat.table_exists(ref("orders")) is True
+    assert len(calls) == 2

@@ -5,7 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from factlang.connectors.base import ExecutionError, QueryResult, check_paramstyle, map_error
+from factlang.connectors.base import (
+    ExecutionError,
+    QueryResult,
+    check_paramstyle,
+    map_error,
+    normalise_rows,
+)
 from factlang.sql import RenderedProbe
 
 HostFn = Callable[[str, "tuple[object, ...] | dict[str, object]"], "list[dict[str, Any]]"]
@@ -36,7 +42,7 @@ class CallableConnector:
             raise map_error(
                 TypeError(f"host function must return a list of mappings, got {rows!r:.80}")
             )
-        return QueryResult([dict(r) for r in rows])
+        return QueryResult(normalise_rows(probe, [dict(r) for r in rows]))
 
 
 __all__ = ["CallableConnector", "HostFn"]

@@ -10,8 +10,15 @@ from collections.abc import Mapping
 from types import MappingProxyType, ModuleType
 from typing import Any
 
-from factlang.connectors.base import ExecutionError, QueryResult, deadline, map_error
+from factlang.connectors.base import (
+    ExecutionError,
+    QueryResult,
+    deadline,
+    map_error,
+    normalise_rows,
+)
 from factlang.sql import RenderedProbe
+from factlang.sql.probe import bind_template
 
 # SQLAlchemy dialect name -> FactLang profile name (others map to themselves)
 DIALECT_NAMES: Mapping[str, str] = MappingProxyType(
@@ -26,6 +33,13 @@ def _sqlalchemy() -> ModuleType:
         raise ImportError(
             "SQLAlchemy is required for this connector: pip install factlang[sqlalchemy]"
         ) from exc
+
+
+def escape_colons(template: str) -> str:
+    """Escape every ``:`` for ``text()``, which would read ``:word`` as a bind parameter even
+    inside a string literal; ``text()`` turns ``\\:`` back into ``:``. Neutral ``{{name}}``
+    tokens contain no colon, so the ``:name`` placeholders bound afterwards stay live."""
+    return template.replace(":", "\\:")
 
 
 def _raw_connection(conn: Any) -> object | None:
@@ -47,7 +61,9 @@ class SQLAlchemyConnector:
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
         sa = _sqlalchemy()
-        sql, params = probe.bind(self.paramstyle)
+        sql, params = bind_template(
+            escape_colons(probe.sql_template), probe.params, self.paramstyle
+        )
         try:
             with self.engine.connect() as conn:
                 raw = _raw_connection(conn)
@@ -63,7 +79,7 @@ class SQLAlchemyConnector:
             raise
         except Exception as exc:
             raise map_error(exc, timeout_s=timeout_s) from exc
-        return QueryResult(rows)
+        return QueryResult(normalise_rows(probe, rows))
 
 
 def connect(dsn: str) -> SQLAlchemyConnector:
@@ -72,4 +88,4 @@ def connect(dsn: str) -> SQLAlchemyConnector:
     return SQLAlchemyConnector(sa.create_engine(dsn))
 
 
-__all__ = ["DIALECT_NAMES", "SQLAlchemyConnector", "connect"]
+__all__ = ["DIALECT_NAMES", "SQLAlchemyConnector", "connect", "escape_colons"]

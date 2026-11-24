@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol, cast, runtime_checkable
 
-from factlang.ir import Arity, ProbePlan
+from factlang.ir import Arity
 from factlang.semantics.filters import Param
 from factlang.sql import PARAMSTYLES, RenderedProbe, RenderError, get_profile
 
@@ -112,24 +112,32 @@ def check_paramstyle(paramstyle: str) -> str:
 
 # -- error mapping -------------------------------------------------------------------------
 
-_TIMEOUT_NAMES = re.compile(r"timeout|timedout|querycancel|cancelled|canceled", re.IGNORECASE)
-_TIMEOUT_TEXT = re.compile(
-    r"time(d)?[ -]?out|statement timeout|canceling statement|query (was )?cancel+ed"
-    r"|deadline exceeded|interrupted",
+# A query that ran out of time. Deliberately narrow: a bare "time out"/"interrupted", a
+# ``statement_timeout`` parameter error or a *connect* timeout is FL700, not FL702.
+_TIMEOUT_NAMES = re.compile(
+    r"^(Query|Statement|Execution)?Time(d)?out(Error|Exception)?$|"
+    r"^QueryCancel(l)?ed(Error)?$",
     re.IGNORECASE,
 )
+_TIMEOUT_TEXT = re.compile(
+    r"\bstatement timeout\b|\bquery timeout\b|\bquery (has |was )?timed out\b"
+    r"|\bcanceling statement due to\b|\bquery (was )?cancel+ed\b|\bdeadline exceeded\b"
+    r"|\bexecution (time|timeout) (limit )?exceeded\b|\btimed out after\b",
+    re.IGNORECASE,
+)
+_CONNECT = re.compile(r"\bconnect(ion|ing)?\b|\bhandshake\b|\blogin\b", re.IGNORECASE)
 
 
 def looks_like_timeout(exc: BaseException) -> bool:
-    """Whether a driver exception reports a timeout or cancellation."""
-    if isinstance(exc, TimeoutError):
+    """Whether a driver exception reports that the *query* ran out of time (or was
+    cancelled). Connection/login timeouts and ``statement_timeout`` setting errors are not."""
+    text = str(exc)
+    names = [k.__name__ for k in type(exc).__mro__ if k not in (Exception, BaseException, object)]
+    if _CONNECT.search(text) or any("connect" in n.lower() for n in names):
+        return False
+    if isinstance(exc, TimeoutError) or any(_TIMEOUT_NAMES.match(n) for n in names):
         return True
-    for klass in type(exc).__mro__:
-        if klass in (Exception, BaseException, object):
-            break
-        if _TIMEOUT_NAMES.search(klass.__name__):
-            return True
-    return bool(_TIMEOUT_TEXT.search(str(exc)))
+    return bool(_TIMEOUT_TEXT.search(text))
 
 
 def map_error(
@@ -143,6 +151,19 @@ def map_error(
         limit = f" after {timeout_s:g}s" if timeout_s is not None else ""
         return ExecutionError(f"query timed out{limit} ({detail})", code="FL702")
     return ExecutionError(f"query failed ({detail})", code="FL700")
+
+
+def normalise_rows(probe: RenderedProbe, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows as the judge reads them.
+
+    For a FactLang probe (``probe.plan`` set, ``MetadataQuery`` included) every result label
+    is lower-cased: FactLang aliases are a lower-case wire format, and Snowflake/Oracle return
+    unquoted labels upper-cased (``ROW_COUNT``). Host metadata SQL (``plan is None``) keeps
+    its labels as the warehouse returned them.
+    """
+    if probe.plan is None:
+        return [dict(r) for r in rows]
+    return [{(k.lower() if isinstance(k, str) else k): v for k, v in r.items()} for r in rows]
 
 
 def _canceller(handles: Sequence[object]) -> Callable[[], None] | None:
@@ -187,7 +208,7 @@ def deadline(timeout_s: float | None, handles: Sequence[object]) -> Iterator[thr
 # -- the metadata-SQL guard (R8, FL703) ------------------------------------------------------
 
 METADATA_KEYWORDS: tuple[str, ...] = ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")
-# keywords that write or run code; refused anywhere in a SELECT/WITH/EXPLAIN statement
+# keywords that write or run code; refused anywhere in the statement (``SHOW CREATE …`` aside)
 _WRITE_WORDS = frozenset(
     (
         *("INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "INTO", "COPY", "UNLOAD"),
@@ -255,6 +276,8 @@ def _code_text(sql: str, mode: _Lexing) -> str:
             out.append(" ")
             i = n if j < 0 else j
         elif sql.startswith("/*", i):
+            if sql.startswith(("/*!", "/*M!"), i):
+                raise _refuse("MySQL/MariaDB executable comment (/*! … */)")
             depth, j = 1, i + 2
             while depth:
                 if j >= n:
@@ -287,16 +310,18 @@ def _code_text(sql: str, mode: _Lexing) -> str:
 def _check_reading(code: str) -> None:
     if ";" in code:
         raise _refuse("more than one statement (';' outside a string literal)")
+    if "->>" in code:
+        raise _refuse("'->>' outside a string literal (Snowflake statement chaining)")
     words = [w.upper() for w in _WORD.findall(code)]
     if not words or not code.lstrip() or not _WORD.match(code.lstrip()):
         raise _refuse(f"the statement must start with one of {', '.join(METADATA_KEYWORDS)}")
     first = words[0]
     if first not in METADATA_KEYWORDS:
         raise _refuse(f"{first} is not a metadata statement")
-    if first in ("SELECT", "WITH", "EXPLAIN"):
-        bad = sorted(set(words) & _WRITE_WORDS)
-        if bad:
-            raise _refuse(f"{first} statement contains {', '.join(bad)}")
+    body = words[2:] if words[:2] == ["SHOW", "CREATE"] else words[1:]
+    bad = sorted(set(body) & _WRITE_WORDS)
+    if bad:
+        raise _refuse(f"{first} statement contains {', '.join(bad)}")
     if first == "EXPLAIN" and ({"ANALYZE", "ANALYSE"} & set(words)):
         raise _refuse("EXPLAIN ANALYZE executes the statement")
 
@@ -306,11 +331,20 @@ def check_metadata_sql(sql: str) -> None:
 
     Accepted: one statement whose first keyword (after comments/whitespace) is one of
     :data:`METADATA_KEYWORDS`. Refused: any ``;`` outside string literals (also inside
-    comments), unterminated quotes or comments, and, in ``SELECT``/``WITH``/``EXPLAIN``
-    statements, any write keyword (data-modifying CTEs, ``SELECT … INTO``, ``FOR UPDATE``,
-    ``EXPLAIN ANALYZE``). The text is read under every combination of dialect lexing quirks
-    (backslash escapes, ``#`` comments, nested comments, dollar quotes, bracket identifiers)
-    and must pass under all of them.
+    comments); Snowflake's ``->>`` chain operator outside literals; MySQL/MariaDB executable
+    comments (``/*! … */``, ``/*M! … */``), which are code; unterminated quotes or comments;
+    ``EXPLAIN ANALYZE``; and any write keyword anywhere in the statement body (data-modifying
+    CTEs, ``SELECT … INTO``, ``FOR UPDATE``, ``EXPLAIN DELETE …``), except the ``CREATE`` of
+    ``SHOW CREATE …``.
+
+    The text is read under every combination of dialect lexing quirks (backslash escapes,
+    ``#`` comments, nested comments, dollar quotes, bracket identifiers) and must pass under
+    all of them. So a MySQL backslash-escaped quote (``'it\\'s'``), which leaves the ANSI
+    reading unterminated, is refused: the safe direction.
+
+    This is a keyword guard, not a sandbox. Side-effecting functions called from a
+    ``SELECT`` (``dblink_exec``, ``pg_terminate_backend``, …) are not detected; the
+    connection's credentials are the real security boundary.
     """
     if not isinstance(sql, str):
         raise TypeError(f"metadata SQL must be a string, got {type(sql).__name__}")
@@ -355,7 +389,13 @@ def run_metadata(
     never spliced. The guard (:func:`check_metadata_sql`) runs first and raises
     ``ExecutionError`` ``FL703`` before anything executes. Execution, timeouts and error
     mapping are the connector's own (``FL700``/``FL702``). This is not a claim: it yields
-    rows, never an ``Outcome``. The probe passed to the connector has ``plan=None``.
+    rows, never an ``Outcome``. The probe passed to the connector has ``plan=None``, and the
+    rows keep the labels the warehouse returned (no lower-casing).
+
+    Through :class:`~factlang.connectors.SQLAlchemyConnector`, whose ``text()`` would read
+    ``:word`` as a bind parameter even inside a string literal, every ``:`` in ``sql`` is
+    escaped before binding, so literals such as ``'a:b'`` and casts such as ``x::text``
+    reach the driver unchanged.
     """
     check_metadata_sql(sql)
     if isinstance(params, Mapping):
@@ -365,9 +405,7 @@ def run_metadata(
     profile = get_profile(connector.dialect)
     tier = profile.tier if profile is not None else "best_effort"
     try:
-        probe = RenderedProbe(
-            sql, bound, Arity.ROW_SET, cast(ProbePlan, None), connector.dialect, tier
-        )
+        probe = RenderedProbe(sql, bound, Arity.ROW_SET, None, connector.dialect, tier)
     except RenderError as exc:
         raise _refuse(str(exc)) from exc
     return connector.execute(probe, timeout_s=timeout_s)
@@ -395,6 +433,7 @@ __all__ = [
     "dry_run_bytes",
     "looks_like_timeout",
     "map_error",
+    "normalise_rows",
     "rows_from_cursor",
     "run_metadata",
 ]

@@ -69,6 +69,11 @@ def test_rows_are_copied_to_dicts() -> None:
     assert type(result.rows[0]) is dict
 
 
+def test_probe_labels_are_lower_cased() -> None:
+    conn = CallableConnector(lambda s, p: [{"ROW_COUNT": 3}], "snowflake")
+    assert conn.execute(probe(), timeout_s=None).rows == [{"row_count": 3}]
+
+
 def test_bad_return_is_fl700() -> None:
     conn = CallableConnector(lambda s, p: "nope", "duckdb")  # type: ignore[arg-type,return-value]
     with pytest.raises(ExecutionError) as info:

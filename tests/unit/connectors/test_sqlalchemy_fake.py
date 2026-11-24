@@ -8,11 +8,11 @@ from typing import Any
 
 import pytest
 
-from factlang.connectors import ExecutionError, SQLAlchemyConnector, connect
+from factlang.connectors import ExecutionError, SQLAlchemyConnector, connect, run_metadata
 from factlang.ir import ColumnAggregate, Metric
 from factlang.semantics.filters import FCompare, Param
 from factlang.semantics.refs import Ident, TableRef
-from factlang.sql import get_profile, render
+from factlang.sql import RenderedProbe, get_profile, render
 
 DUCK = get_profile("duckdb")
 assert DUCK is not None
@@ -117,6 +117,34 @@ def test_executes_text_with_named_params(fake_sqlalchemy: types.ModuleType) -> N
     assert ":p1" in sql and "paid" not in sql
     assert params == {"p1": "paid"}
     assert engine.closed == 1
+
+
+def test_colons_are_escaped_for_text(fake_sqlalchemy: types.ModuleType) -> None:
+    engine = FakeEngine("postgresql")
+    p = RenderedProbe(
+        "SELECT 'a:b' AS x, y::text AS row_count FROM t WHERE z = {{p}}",
+        (Param("p", "v", "string"),),
+        probe().arity,
+        probe().plan,
+        "postgres",
+        "verified",
+    )
+    SQLAlchemyConnector(engine).execute(p, timeout_s=None)
+    sql, params = engine.log[0]
+    assert sql == "SELECT 'a\\:b' AS x, y\\:\\:text AS row_count FROM t WHERE z = :p"
+    assert params == {"p": "v"}
+
+
+def test_real_sqlalchemy_keeps_colons_in_literals() -> None:
+    sa = pytest.importorskip("sqlalchemy")
+    engine = sa.create_engine("sqlite://")
+    c = SQLAlchemyConnector(engine)
+    result = run_metadata(c, "SELECT 'a:b' AS x, {{p}} AS y", {"p": "q:r"})
+    assert result.rows == [{"x": "a:b", "y": "q:r"}]
+    upper = RenderedProbe(
+        "SELECT 'a:b' AS ROW_COUNT", (), probe().arity, probe().plan, "sqlite", "best_effort"
+    )
+    assert c.execute(upper, timeout_s=None).rows == [{"row_count": "a:b"}]
 
 
 def test_errors_are_mapped(fake_sqlalchemy: types.ModuleType) -> None:

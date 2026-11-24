@@ -59,7 +59,9 @@ DUCKDB = DialectProfile(
         "bytes": "BLOB",
         "json": "JSON",
     },
-    now_sql="CURRENT_TIMESTAMP",
+    # naive UTC TIMESTAMP: DuckDB's Python client needs pytz (3.10) or tzdata (Windows) to
+    # fetch a TIMESTAMPTZ, and a naive UTC value compares with TIMESTAMP columns directly
+    now_sql="CAST(timezone('UTC', current_timestamp) AS TIMESTAMP)",
     type_families=TYPE_FAMILIES,
     param_types={
         "integer": "BIGINT",

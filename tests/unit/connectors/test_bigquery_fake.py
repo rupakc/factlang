@@ -205,6 +205,34 @@ def test_timeout_is_fl702_and_cancels_the_job() -> None:
     assert client.jobs[0].cancelled
 
 
+def test_any_fl702_cancels_the_job() -> None:
+    client = FakeClient()
+    client.raise_exc = RuntimeError("Query timed out after 5s")
+    with pytest.raises(ExecutionError) as info:
+        BigQueryConnector(client).execute(probe(), timeout_s=5)
+    assert info.value.code == "FL702"
+    assert client.jobs[0].cancelled
+
+
+def test_fl700_does_not_cancel() -> None:
+    client = FakeClient()
+    client.raise_exc = RuntimeError("Syntax error")
+    with pytest.raises(ExecutionError):
+        BigQueryConnector(client).execute(probe(), timeout_s=5)
+    assert not client.jobs[0].cancelled
+
+
+def test_upper_case_labels_are_lower_cased() -> None:
+    client = FakeClient()
+
+    class Upper(FakeJob):
+        def result(self, timeout: float | None = None) -> list[Row]:
+            return [Row(ROW_COUNT=1)]
+
+    client.query = lambda sql, job_config, **kw: Upper(client, sql, job_config)  # type: ignore[method-assign]
+    assert BigQueryConnector(client).execute(probe(), timeout_s=None).rows == [{"row_count": 1}]
+
+
 def test_bytes_billed_limit_is_fl701() -> None:
     client = FakeClient()
     client.raise_exc = RuntimeError(

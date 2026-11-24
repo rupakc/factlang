@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from types import MappingProxyType, ModuleType
 from typing import Any
 
-from factlang.connectors.base import ExecutionError, QueryResult, map_error
+from factlang.connectors.base import ExecutionError, QueryResult, map_error, normalise_rows
 from factlang.semantics.filters import Param
 from factlang.sql import RenderedProbe, get_profile
 
@@ -97,21 +97,26 @@ class BigQueryConnector:
         try:
             job = self.client.query(sql, job_config=config)
             rows = [dict(row.items()) for row in job.result(timeout=timeout_s)]
-        except concurrent.futures.TimeoutError as exc:
-            if job is not None:
-                with contextlib.suppress(Exception):  # best effort
-                    job.cancel()
-            raise map_error(exc, timed_out=True, timeout_s=timeout_s) from exc
-        except ExecutionError:
-            raise
         except Exception as exc:
-            if _BYTES_LIMIT.search(str(exc)):
-                raise ExecutionError(
+            if isinstance(exc, ExecutionError):
+                error = exc
+            elif _BYTES_LIMIT.search(str(exc)):
+                error = ExecutionError(
                     f"over maximum_bytes_billed ({type(exc).__name__}: {exc})", code="FL701"
-                ) from exc
-            raise map_error(exc, timeout_s=timeout_s) from exc
+                )
+            else:
+                timed_out = isinstance(exc, concurrent.futures.TimeoutError)
+                error = map_error(exc, timed_out=timed_out, timeout_s=timeout_s)
+            if error.code == "FL702" and job is not None:
+                with contextlib.suppress(Exception):  # best effort: stop paying for it
+                    job.cancel()
+            if error is exc:
+                raise
+            raise error from exc
         processed = getattr(job, "total_bytes_processed", None)
-        return QueryResult(rows, None if processed is None else int(processed))
+        return QueryResult(
+            normalise_rows(probe, rows), None if processed is None else int(processed)
+        )
 
     def dry_run_bytes(self, probe: RenderedProbe) -> int | None:
         """Bytes BigQuery would process for ``probe`` (a dry-run job; nothing executes)."""

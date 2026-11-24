@@ -95,8 +95,8 @@ def test_guard_accepts(sql: str) -> None:
     check_metadata_sql(sql)  # no raise
 
 
-def test_metadata_keywords_are_the_spec_list() -> None:
-    assert set(METADATA_KEYWORDS) >= {"SELECT", "WITH", "SHOW", "DESCRIBE", "DESC"}
+def test_metadata_keywords_are_exactly_the_spec_list() -> None:
+    assert METADATA_KEYWORDS == ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")
 
 
 # -- the guard: each refusal class ------------------------------------------------------------
@@ -189,6 +189,47 @@ def test_guard_refuses_other_first_tokens_and_unterminated(sql: str) -> None:
 )
 def test_guard_refuses_writes_inside_a_query(sql: str) -> None:
     _refused(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # Snowflake statement chaining
+        "SHOW TABLES ->> SELECT * FROM $1",
+        "SELECT 1 ->> DROP TABLE x",
+        # MySQL / MariaDB executable comments are code, not comments
+        "SELECT 1 /*! , (SELECT 1) */",
+        "SELECT 1 /*!50000 UNION SELECT 2 */",
+        "SELECT 1 /*M! UNION SELECT 2 */",
+    ],
+)
+def test_guard_refuses_chains_and_executable_comments(sql: str) -> None:
+    _refused(sql)
+
+
+def test_arrow_and_executable_comment_text_inside_literals_is_fine() -> None:
+    check_metadata_sql("SELECT '->>' AS a, '/*! x */' AS b")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SHOW TABLES IN x INTO OUTFILE '/tmp/t'",
+        "DESCRIBE DELETE FROM orders",
+        "DESC INSERT INTO orders VALUES (1)",
+        "EXPLAIN INSERT INTO orders VALUES (1)",
+        "EXPLAIN ANALYSE SELECT 1",
+        "SHOW CREATE TABLE orders DROP",
+        "SHOW GRANTS; DROP TABLE x",
+    ],
+)
+def test_guard_scans_show_describe_and_explain_bodies(sql: str) -> None:
+    _refused(sql)
+
+
+def test_mysql_backslash_escaped_literal_is_refused() -> None:
+    # the ANSI reading leaves it unterminated: refused, the safe direction
+    _refused("SELECT 'it\\'s' AS s")
 
 
 def test_guard_rejects_non_string() -> None:

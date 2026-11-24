@@ -16,6 +16,7 @@ from factlang.connectors.base import (
     check_paramstyle,
     deadline,
     map_error,
+    normalise_rows,
     rows_from_cursor,
 )
 from factlang.sql import PARAMSTYLES, RenderedProbe
@@ -77,7 +78,7 @@ class DBAPIConnector:
             if close is not None:
                 with contextlib.suppress(Exception):  # must not mask the result
                     close()
-        return QueryResult(rows)
+        return QueryResult(normalise_rows(probe, rows))
 
 
 __all__ = ["DBAPIConnector", "driver_paramstyle"]

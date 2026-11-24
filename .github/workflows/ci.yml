@@ -156,8 +156,37 @@ jobs:
             sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
           fi
           odbcinst -q -d -n "ODBC Driver 18 for SQL Server"
-      - run: pip install -e ".[dev,postgres,mysql,clickhouse,mssql,trino]"
+      - run: pip install -e ".[dev,postgres,mysql,clickhouse,mssql,trino,mcp,sqlalchemy]"
       - run: pytest -m integration -rs tests/integration
+      # The tests that need the optional extras (the real MCP round-trip, real SQLAlchemy)
+      # skip in the matrix jobs; here the extras are installed, so a skip is a failure.
+      - name: Tests that need the mcp and sqlalchemy extras
+        run: |
+          pytest -m "not integration and not live" -rs -p no:cacheprovider \
+            tests/unit/agent/test_mcp.py tests/unit/connectors/test_sqlalchemy_fake.py \
+            | tee extras.log
+          ! grep -q SKIPPED extras.log
+      # The command line end to end through a SQLAlchemy URL: --dsn and FACTLANG_DSN.
+      - name: factlang check --dsn (SQLAlchemy URL, postgres)
+        env:
+          FL_URL: postgresql+psycopg://factlang:factlang@localhost:5432/factlang
+        run: |
+          python - <<'PY'
+          import psycopg
+          url = "postgresql://factlang:factlang@localhost:5432/factlang"
+          with psycopg.connect(url, autocommit=True) as conn:
+              conn.execute("DROP TABLE IF EXISTS cli_orders")
+              conn.execute("CREATE TABLE cli_orders (id INTEGER, status TEXT)")
+              conn.execute("INSERT INTO cli_orders VALUES (1, 'paid'), (2, 'open'), (3, 'paid')")
+          PY
+          printf '%s\n' "ROWS cli_orders VALUE == 3" "UNIQUE cli_orders.id" \
+            "VALUES cli_orders.status IN ['paid', 'open']" > cli.fl
+          factlang check --dsn "$FL_URL" cli.fl
+          FACTLANG_DSN="$FL_URL" factlang --format json check cli.fl > cli.json
+          python -c "import json; d = json.load(open('cli.json')); assert d['verified'], d"
+          printf '%s\n' "ROWS cli_orders VALUE == 4" > cli-fail.fl
+          set +e; factlang check --dsn "$FL_URL" cli-fail.fl; code=$?; set -e
+          test "$code" -eq 1
 
   build:
     # Exactly one of test / test-full runs; the other is skipped. Build proceeds only when

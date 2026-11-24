@@ -383,3 +383,22 @@ def test_empty_and_whitespace_documents() -> None:
 def test_never_raises_on_garbage() -> None:
     for s in ["]]]", "->", "WHERE", "A B C", "'", "((", "ROWS t WHERE (", "1 2 3", "\\"]:
         parse(s)
+
+
+def test_deep_nesting_is_fl207_not_recursion_error() -> None:
+    for src in [
+        "ROWS o WHERE " + "(" * 3000,
+        "ROWS o WHERE " + "NOT " * 3000 + "a = 1",
+        "ROWS o X " + "[" * 3000,
+        "ROWS o WHERE " + "(" * 65 + "a = 1" + ")" * 65,
+    ]:
+        res = parse(src)
+        assert res.diagnostics.codes() == ["FL207"], src[:30]
+        assert res.document.items == ()
+
+
+def test_nesting_depth_ten_still_parses() -> None:
+    assert not parse("ROWS o WHERE " + "(" * 10 + "a = 1" + ")" * 10).diagnostics.has_errors
+    assert not parse("ROWS o WHERE " + "NOT " * 10 + "a = 1").diagnostics.has_errors
+    assert not parse("ROWS o X " + "[" * 10 + "]" * 10).diagnostics.has_errors
+    assert not parse("ROWS o WHERE " + "(" * 64 + "a = 1" + ")" * 64).diagnostics.has_errors

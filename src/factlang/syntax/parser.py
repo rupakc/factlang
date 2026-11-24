@@ -12,6 +12,8 @@ from factlang.syntax.tokens import Token, TokenKind
 K = TokenKind
 LK = ast.LiteralKind
 
+MAX_NESTING = 64
+
 _FILTER_KEYWORDS = frozenset(
     {"AND", "OR", "NOT", "IN", "IS", "NULL", "BETWEEN", "TRUE", "FALSE", "DATE", "TIMESTAMP"}
 )
@@ -71,6 +73,18 @@ class _Line:
         self.toks = toks
         self.pos = 0
         self.bag = bag
+        self.depth = 0
+
+    def enter(self, span: Span) -> None:
+        """Count one level of parens / NOT / list nesting; refuse past ``MAX_NESTING``."""
+        self.depth += 1
+        if self.depth > MAX_NESTING:
+            raise self.fail(
+                "FL207",
+                "nesting too deep",
+                span,
+                hint=f"parentheses, NOT and lists may nest at most {MAX_NESTING} levels",
+            )
 
     # -- primitives -------------------------------------------------------
     def peek(self, offset: int = 0) -> Token | None:
@@ -154,6 +168,7 @@ class _Line:
 
     def list_value(self) -> ast.Literal:
         open_tok = self.next()
+        self.enter(open_tok.span)
         items: list[ast.Literal] = []
         while True:
             tok = self.peek()
@@ -161,6 +176,7 @@ class _Line:
                 raise self.fail("FL202", "unclosed list", open_tok.span, hint="add a closing ']'")
             if tok.kind is K.RBRACKET:
                 self.next()
+                self.depth -= 1
                 return ast.Literal(LK.LIST, tuple(items), _join(open_tok.span, tok.span))
             items.append(self.value())
             sep = self.peek()
@@ -297,11 +313,15 @@ class _Line:
             raise self.fail("FL206", "expected a condition", self.end_span())
         if self.kw("NOT"):
             self.next()
+            self.enter(tok.span)
             item = self.atom()
+            self.depth -= 1
             return ast.Not(item, _join(tok.span, _span_of(item)))
         if tok.kind is K.LPAREN:
             self.next()
+            self.enter(tok.span)
             inner = self.condition()
+            self.depth -= 1
             close = self.peek()
             if close is None or close.kind is not K.RPAREN:
                 raise self.fail("FL206", "expected ')'", self.here())

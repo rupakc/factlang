@@ -81,6 +81,8 @@ Rules enforced by the parser:
   ordinary attribute name.
 - Comments are kept on the claim or directive they trail. Comment-only and blank
   lines produce no item.
+- Parentheses, `NOT` chains and lists share one nesting budget of 64 levels; deeper is
+  `FL207`.
 - A line with any error produces diagnostics and no item; parsing resumes on the next
   line.
 
@@ -577,4 +579,10 @@ Unknown verb: reported by the analyser, not the parser.
 
 ```factlang-invalid FL300
 FROBNICATE orders
+```
+
+Nesting is bounded.
+
+```factlang-invalid FL207
+ROWS orders WHERE (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((a = 1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
 ```

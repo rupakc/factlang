@@ -192,7 +192,7 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
 .md-typeset .fl-button--solid:hover,
 .fl-button--solid:hover { background: var(--fl-accent); border-color: var(--fl-accent); color: #fff; }
 [data-md-color-scheme="slate"] .md-typeset .fl-button--solid:hover,
-.fl-button--solid:hover { color: #0f1528; }
+[data-md-color-scheme="slate"] .fl-button--solid:hover { color: #0f1528; }
 
 .fl-install {
   margin-top: 1.1rem;

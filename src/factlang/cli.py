@@ -42,6 +42,8 @@ from factlang.syntax.parser import parse
 from factlang.syntax.tokens import TokenKind
 
 EXIT_OK, EXIT_FAILED, EXIT_INVALID, EXIT_ERROR = 0, 1, 2, 3
+# stage digits of front-end codes: FL1xx lexer, FL2xx parser, FL3xx analyser (spec 12)
+FRONT_END_STAGES = frozenset("123")
 FORMATS = ("text", "json", "markdown")
 
 
@@ -344,7 +346,9 @@ def cmd_check(args: argparse.Namespace, out: TextIO) -> int:
         raise UsageError(str(exc)) from exc
     report = checker.check(text)
     _render_report(report, args.format, out)
-    front_end = any(d.severity.value == "error" and d.code < "FL400" for d in report.diagnostics)
+    front_end = any(
+        d.severity.value == "error" and d.code[2:3] in FRONT_END_STAGES for d in report.diagnostics
+    )
     return _verdict_exit([o.verdict for o in report.outcomes], front_end)
 
 

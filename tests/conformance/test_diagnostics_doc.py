@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DOC = ROOT / "docs" / "reference" / "diagnostics.md"
 SRC = ROOT / "src"
 CODE = re.compile(r"FL\d{3}")
-ROW = re.compile(r"^\| (FL\d{3}) \| ([^|]+) \| ([^|]+) \| (.+) \| (.+) \|$", re.M)
+ROW = re.compile(
+    r"^\| <a id=\"fl\d{3}\"></a>(FL\d{3}) \| ([^|]+) \| ([^|]+) \| (.+) \| (.+) \|$", re.M
+)
 STAGES = {
     "1": {"lexer"},
     "2": {"parser", "lexer"},  # FL205 (dangling continuation) is found by the lexer
@@ -62,8 +64,9 @@ def test_codes_mentioned_anywhere_in_the_doc_are_real() -> None:
 @pytest.mark.parametrize("row", _rows(), ids=lambda r: r[0])
 def test_row_is_complete(row: tuple[str, str, str, str, str]) -> None:
     code, stage, severity, meaning, example = row
+    assert f'<a id="fl{code[2:]}"></a>{code}' in DOC.read_text(encoding="utf-8"), code
     assert stage in STAGES[code[2]], f"{code}: stage {stage!r}"
-    assert severity in {"error", "warning", "info", "none"}, code
+    assert severity in {"error", "warning", "info"}, code
     assert meaning and example, code
 
 

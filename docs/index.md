@@ -33,7 +33,7 @@ measure.</p>
 
 ```factlang
 COUNT orders VALUE ==1400 WHERE status = 'paid'
-JOIN orders.customer_id -> customers.id MATCH >=99%
+JOIN orders.customer_id -> customers.id MATCH ==100%
 VALUES orders.status IN ['paid', 'open', 'shipped']
 ```
 
@@ -44,7 +44,7 @@ VALUES orders.status IN ['paid', 'open', 'shipped']
 
 <ul>
 <li><span class="fl-verdict fl-verdict--pass">pass</span> value 1400 == 1400</li>
-<li><span class="fl-verdict fl-verdict--fail">fail</span> match_rate 0.9765625 &lt; 0.99</li>
+<li><span class="fl-verdict fl-verdict--fail">fail</span> match_rate 0.9765625 != 1</li>
 <li><span class="fl-verdict fl-verdict--fail">fail</span> undeclared_rows 200 != 0, the
 most common being <code>refunded</code></li>
 </ul>

@@ -55,56 +55,7 @@
     }
   ];
 
-  var PY_GLUE = [
-    "import json",
-    "import factlang as fl",
-    "from factlang.engine import Checker",
-    "from factlang.judge import Outcome",
-    "",
-    "def _logical_lines(text):",
-    "    out, buf = [], []",
-    "    for line in text.split('\\n'):",
-    "        buf.append(line)",
-    "        if line.rstrip().endswith('\\\\'):",
-    "            continue",
-    "        out.append('\\n'.join(buf)); buf = []",
-    "    if buf:",
-    "        out.append('\\n'.join(buf))",
-    "    return out",
-    "",
-    "def fl_lint(text):",
-    "    bag = fl.lint(text)",
-    "    claims = sum(1 for i in fl.parse(text).document.items if type(i).__name__ == 'Claim')",
-    "    return json.dumps({'claims': claims, 'diagnostics': bag.to_list(), 'rendered': bag.render()})",
-    "",
-    "def fl_format(text):",
-    "    try:",
-    "        return json.dumps({'text': fl.format(text)})",
-    "    except ValueError as exc:",
-    "        return json.dumps({'error': str(exc)})",
-    "",
-    "def fl_explain(text, dialect):",
-    "    checker, use, out = Checker(dialect=dialect), '', []",
-    "    for line in _logical_lines(text):",
-    "        body = line.strip()",
-    "        if not body or body.startswith('#'):",
-    "            continue",
-    "        if body.startswith('USE ') or body == 'USE':",
-    "            use = line",
-    "            continue",
-    "        for item in checker.compile(use + '\\n' + line):",
-    "            if isinstance(item, Outcome):",
-    "                out.append({'claim': body, 'kind': 'outcome', 'verdict': item.verdict.value,",
-    "                            'explanation': item.explanation})",
-    "            else:",
-    "                out.append({'claim': body, 'kind': 'probe', 'sql': item.inline(),",
-    "                            'template': item.sql_template, 'tier': item.tier,",
-    "                            'params': [[p.name, repr(p.value), p.family] for p in item.params]})",
-    "    return json.dumps({'dialect': dialect, 'claims': out})",
-    "",
-    "FL_VERSION = fl.__version__",
-    "FL_DIALECTS = json.dumps(fl.sql.native_dialects())"
-  ].join("\n");
+  // The Python side lives in glue.py next to this file (docs.yml smoke-tests it).
 
   var SQL_KEYWORDS = /\b(SELECT|FROM|WHERE|GROUP BY|ORDER BY|HAVING|LEFT JOIN|INNER JOIN|CROSS JOIN|JOIN|ON|AS|AND|OR|NOT|IN|IS|NULL|CASE|WHEN|THEN|ELSE|END|UNION ALL|LIMIT|TOP|FETCH FIRST|ROWS ONLY|CAST|COALESCE|DISTINCT|COUNT|COUNT_BIG|COUNTIF|COUNT_IF|SUM|AVG|MIN|MAX|FILTER|LOWER|TRIM|LIKE|WITH)\b/g;
 
@@ -162,7 +113,14 @@
           })
           .then(function (buffer) {
             pyodide.unpackArchive(buffer, "wheel");
-            pyodide.runPython(PY_GLUE);
+            return fetch(base + "glue.py");
+          })
+          .then(function (r) {
+            if (!r.ok) throw new Error("could not download the playground glue (" + r.status + ")");
+            return r.text();
+          })
+          .then(function (glue) {
+            pyodide.runPython(glue);
             return pyodide;
           });
       });
@@ -186,7 +144,7 @@
       .replace(/^(did you mean: .*|help: .*)$/gm, '<span class="fl-pg__help">$1</span>');
     var docs = data.diagnostics.map(function (d) { return d.code; })
       .filter(function (c, i, a) { return a.indexOf(c) === i; })
-      .map(function (c) { return '<a href="../reference/diagnostics/">' + c + "</a>"; }).join(" ");
+      .map(function (c) { return '<a href="../reference/diagnostics/#' + c.toLowerCase() + '">' + c + "</a>"; }).join(" ");
     return '<p class="fl-pg__summary">' + esc(summary) + " · codes: " + docs + "</p>" +
       '<pre class="fl-pg__diag">' + rendered + "</pre>";
   }
@@ -334,8 +292,22 @@
       if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, done); else done();
     });
 
+    function fillDialects(names) {
+      // the static options in playground.md are the fallback; Python knows the real list
+      if (!names || !names.length) return;
+      var current = dialect.value;
+      dialect.innerHTML = "";
+      names.forEach(function (name) {
+        var opt = document.createElement("option");
+        opt.textContent = name;
+        dialect.appendChild(opt);
+      });
+      dialect.value = names.indexOf(current) >= 0 ? current : (names.indexOf("duckdb") >= 0 ? "duckdb" : names[0]);
+    }
+
     startPython(root, status).then(function (pyodide) {
       py = pyodide;
+      try { fillDialects(JSON.parse(py.globals.get("FL_DIALECTS"))); } catch (e) { /* keep the static list */ }
       status("");
       root.classList.add("fl-pg--ready");
       buttons.forEach(function (b) { b.disabled = false; });

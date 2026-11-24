@@ -1,13 +1,16 @@
 name: Docs
 
 # Build the documentation site and the in-browser playground, then publish them to the
-# gh-pages branch (the repository's Pages source).
+# gh-pages branch (the repository's Pages source). Runs only after CI has succeeded on a
+# push to main, and builds exactly the commit CI judged.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
-# One deploy at a time; a newer push supersedes a queued one.
+# One deploy at a time; a newer commit supersedes a queued one.
 concurrency:
   group: docs-pages
   cancel-in-progress: true
@@ -17,9 +20,16 @@ permissions:
 
 jobs:
   build-and-deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -27,6 +37,11 @@ jobs:
         run: pip install build -e ".[docs]"
       - name: Build the wheel the playground installs
         run: python -m build --wheel
+      - name: Smoke-test the wheel as the playground uses it (clean venv, no extras)
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/factlang-*-py3-none-any.whl
+          cd /tmp && /tmp/smoke/bin/python -I "$GITHUB_WORKSPACE/site-playground/glue.py"
       - name: Generate the verb reference
         run: python scripts/gen_reference.py
       - name: Build the site
@@ -40,4 +55,4 @@ jobs:
           publish_dir: ./site
           publish_branch: gh-pages
           force_orphan: true
-          commit_message: "docs: publish ${{ github.sha }}"
+          commit_message: "docs: publish ${{ github.event.workflow_run.head_sha || github.sha }}"

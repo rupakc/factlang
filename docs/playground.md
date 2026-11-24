@@ -8,7 +8,7 @@ hide:
 # Playground
 
 Write claims, then lint them, format them, or see the SQL they compile to for any of the
-eleven native dialects. This is the real FactLang library, the same wheel as on PyPI,
+eleven native dialects. This is the real FactLang library, the wheel built from this site's commit,
 running in your browser through [Pyodide](https://pyodide.org). Nothing is sent to a server,
 and no warehouse is needed: verdicts need data, so this page stops at the SQL.
 

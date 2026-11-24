@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import importlib.util
+import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -125,6 +126,17 @@ def test_landing_ledger_is_real(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         (outcome,) = checker.check(html.unescape(claim)).outcomes
         assert outcome.verdict.value == verdict, claim
         assert outcome.explanation == html.unescape(why), claim
+
+
+def test_playground_glue_smoke() -> None:
+    """The Python the playground runs in Pyodide works against this source tree."""
+    path = ROOT / "site-playground" / "glue.py"
+    ns: dict[str, Any] = {"__name__": "glue"}
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec", dont_inherit=True), ns)
+    assert ns["smoke"]().startswith("ok ")
+    lint = json.loads(ns["fl_lint"]("UNIQE orders.id\nNULLS t.c RATE <=2\n"))
+    lines = [d["span"]["line"] for d in lint["diagnostics"]]
+    assert lines == sorted(lines) and len(lines) == 2
 
 
 def _gen_reference() -> Any:

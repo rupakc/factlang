@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from factlang.semantics.refs import Ident
-from factlang.syntax.formatter import _number
+from factlang.syntax.formatter import format_number
 
 PARAM_FAMILIES: tuple[str, ...] = (
     "integer",
@@ -96,7 +96,7 @@ def _value_text(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, Decimal):
-        return _number(value)
+        return format_number(value)
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):

@@ -55,9 +55,6 @@ def format_number(value: Decimal) -> str:
     return ("-" if sign else "") + text
 
 
-_number = format_number  # alias kept for importers not yet migrated
-
-
 def _duration(seconds: int) -> str:
     if seconds == 0:
         return "0s"

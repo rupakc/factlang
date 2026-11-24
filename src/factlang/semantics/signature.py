@@ -58,7 +58,9 @@ class VerbSpec:
     ``exclusive`` holds ``(a, b)`` pairs that may not both appear (FL309). ``paired`` holds
     ``(a, b)`` pairs of COLUMN_LIST attributes (edge verbs) that must appear together and
     list the same number of columns. ``cast_attr`` names the attribute whose presence
-    suppresses the cross-family FL312 warning on an edge verb.
+    suppresses the cross-family FL312 warning on an edge verb. ``existence_subject`` marks a
+    verb whose table operand is the subject of an existence test (``EXISTS``): a catalog that
+    says the table is absent is that claim's answer (FAIL), not an FL311 name error.
     """
 
     name: str
@@ -70,6 +72,7 @@ class VerbSpec:
     exclusive: tuple[tuple[str, str], ...] = ()
     paired: tuple[tuple[str, str], ...] = ()
     cast_attr: str | None = None
+    existence_subject: bool = False
 
     def __post_init__(self) -> None:
         if not _UPPER.fullmatch(self.name):

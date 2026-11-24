@@ -662,3 +662,23 @@ def test_fl312_follows_the_spec_cast_attr() -> None:
     none = _edge_registry(None, (AttrSpec("CAST", "TYPE_FAMILY"),))
     bag = _link(none, "LINK a.i -> b.y CAST string")
     assert bag.codes() == ["FL312"] and next(iter(bag)).hint is None
+
+
+def test_existence_subject_table_is_not_fl311() -> None:
+    from factlang.packs.standard import standard_pack
+
+    reg = standard_pack().verb_registry()
+
+    def check(src: str) -> list[str]:
+        res = parse(src)
+        bag = DiagnosticBag()
+        bag.extend(res.diagnostics)
+        analyze(res.document, reg, catalog=SHOP, bag=bag)
+        return [d.code for d in bag if d.severity is Severity.ERROR]
+
+    # EXISTS's own table is its subject: absence is the answer (FAIL), not a name error
+    assert check("USE shop.public\nEXISTS nope") == []
+    assert check("USE shop.public\nEXISTS nope COLUMN id") == []
+    # every other verb still reports it, and TYPE on a missing column stays FL311
+    assert check("USE shop.public\nROWS nope VALUE >= 1") == ["FL311"]
+    assert check("USE shop.public\nTYPE orders.nope IS integer") == ["FL311"]

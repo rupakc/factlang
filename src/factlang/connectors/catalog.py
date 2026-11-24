@@ -10,6 +10,7 @@ caching across claims.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -37,6 +38,7 @@ class WarehouseCatalog:
     One query serves one ``table_exists`` *and* one ``columns`` call for the same ref: the
     result is memoised until the other method has used it, or for at most ``memo_s`` seconds,
     so ``table_exists`` followed by ``columns`` (as ``CachedCatalog`` asks) costs one query.
+    The memo is guarded by a lock, so one instance may serve several threads.
     """
 
     def __init__(
@@ -54,6 +56,7 @@ class WarehouseCatalog:
         self._clock = clock
         # ref -> (stored at, native columns or None, methods still entitled to reuse it)
         self._memo: dict[TableRef, tuple[float, dict[str, str] | None, set[str]]] = {}
+        self._lock = threading.Lock()  # guards _memo (the query itself runs unlocked)
 
     def _query(self, ref: TableRef) -> dict[str, str] | None:
         try:
@@ -81,19 +84,21 @@ class WarehouseCatalog:
         return out
 
     def _lookup(self, ref: TableRef, method: str) -> dict[str, str] | None:
-        now = self._clock()
-        entry = self._memo.get(ref)
-        if entry is not None and method in entry[2] and now - entry[0] < self._memo_s:
-            entry[2].discard(method)
-            if not entry[2]:
-                del self._memo[ref]
-            return entry[1]
+        with self._lock:
+            now = self._clock()
+            entry = self._memo.get(ref)
+            if entry is not None and method in entry[2] and now - entry[0] < self._memo_s:
+                entry[2].discard(method)
+                if not entry[2]:
+                    del self._memo[ref]
+                return entry[1]
         value = self._query(ref)
         other = _COLUMNS if method == _EXISTS else _EXISTS
-        self._memo[ref] = (now, value, {other})
-        # drop entries past their window so the memo cannot grow without bound
-        for key in [k for k, e in self._memo.items() if now - e[0] >= self._memo_s]:
-            del self._memo[key]
+        with self._lock:
+            self._memo[ref] = (now, value, {other})
+            # drop entries past their window so the memo cannot grow without bound
+            for key in [k for k, e in self._memo.items() if now - e[0] >= self._memo_s]:
+                del self._memo[key]
         return value
 
     def native_columns(self, ref: TableRef) -> dict[str, str] | None:

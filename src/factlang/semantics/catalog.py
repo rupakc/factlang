@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
@@ -80,7 +81,11 @@ class StaticCatalog:
 
 
 class CachedCatalog:
-    """TTL + LRU cache over another catalog; ``None`` answers are cached too."""
+    """TTL + LRU cache over another catalog; ``None`` answers are cached too.
+
+    Thread-safe: the cache is guarded by a lock, which is not held while the inner catalog
+    is asked (two threads missing the same entry may both ask; the later answer is kept).
+    """
 
     def __init__(
         self,
@@ -94,19 +99,22 @@ class CachedCatalog:
         self._max = max_tables
         self._clock = clock
         self._cache: OrderedDict[tuple[str, TableRef], tuple[float, object]] = OrderedDict()
+        self._lock = threading.Lock()
 
     def _get(self, kind: str, ref: TableRef, load: Callable[[TableRef], object]) -> object:
         key = (kind, ref)
-        now = self._clock()
-        entry = self._cache.get(key)
-        if entry is not None and now - entry[0] < self._ttl:
-            self._cache.move_to_end(key)
-            return entry[1]
+        with self._lock:
+            now = self._clock()
+            entry = self._cache.get(key)
+            if entry is not None and now - entry[0] < self._ttl:
+                self._cache.move_to_end(key)
+                return entry[1]
         value = load(ref)
-        self._cache[key] = (now, value)
-        self._cache.move_to_end(key)
-        while len(self._cache) > self._max:
-            self._cache.popitem(last=False)
+        with self._lock:
+            self._cache[key] = (now, value)
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._max:
+                self._cache.popitem(last=False)
         return value
 
     def table_exists(self, ref: TableRef) -> bool | None:

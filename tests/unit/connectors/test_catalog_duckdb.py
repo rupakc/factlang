@@ -212,3 +212,25 @@ def test_timeout_is_raised_not_cached_as_unknown() -> None:
     # nothing was cached: the next call asks again and gets the real answer
     assert cat.table_exists(ref("orders")) is True
     assert len(calls) == 2
+
+
+def test_shared_across_threads(con: Any) -> None:
+    import threading
+
+    cat = WarehouseCatalog(DBAPIConnector(con, "duckdb"))
+    errors: list[BaseException] = []
+
+    def hammer() -> None:
+        try:
+            for _ in range(20):
+                assert cat.table_exists(ref("orders")) is True
+                assert cat.columns(ref("orders"))
+        except BaseException as exc:  # pragma: no cover - only on a race
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and cat.errors == []

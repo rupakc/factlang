@@ -325,6 +325,8 @@ def test_measure_payload_equals_what_derive_receives(conn: DBAPIConnector) -> No
         assert m.plan == plan
         assert _norm(m.payload) == _norm(seen.get(claim.semantic_hash)), claim.canonical_text
         assert m.evidence is not None and m.evidence.method == "exact"
+        if m.payload is not None:
+            assert claim.semantic_hash in seen, claim.canonical_text
         kinds.add(type(plan))
     assert kinds == {
         ColumnAggregate,

@@ -144,3 +144,41 @@ def test_cached_ttl_exact_boundary() -> None:
     now[0] = 10.0  # age == ttl is expired
     c.table_exists(T("t"))
     assert len(inner.calls) == 2
+
+
+def test_cached_catalog_is_thread_safe() -> None:
+    import threading
+    import time as _time
+
+    from factlang.semantics.catalog import CachedCatalog as _Cached
+    from factlang.semantics.refs import Ident as _Ident
+    from factlang.semantics.refs import TableRef as _TableRef
+
+    class Slow:
+        def table_exists(self, ref: _TableRef) -> bool | None:
+            _time.sleep(0.0005)
+            return True
+
+        def columns(self, ref: _TableRef) -> dict[str, str] | None:
+            return {"id": "integer"}
+
+    cache = _Cached(Slow(), max_tables=5)
+    refs = [_TableRef(None, None, _Ident(f"t{i}")) for i in range(20)]
+    errors: list[BaseException] = []
+
+    def hammer() -> None:
+        try:
+            for _ in range(30):
+                for r in refs:
+                    assert cache.table_exists(r) is True
+                    assert cache.columns(r) == {"id": "integer"}
+        except BaseException as exc:  # pragma: no cover - only on a race
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(cache._cache) <= 5

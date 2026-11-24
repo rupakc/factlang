@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import Any
 
 import pytest
@@ -83,12 +84,51 @@ def test_info_diagnostics_reach_the_outcome() -> None:
 
 def test_use_directive_applies_and_bad_directive_is_reported() -> None:
     fn = rows_fn([{"row_count": 7}])
-    text = "USE shop\nROWS orders VALUE >= 1\nUSE a.b.c\nROWS orders VALUE == 7"
+    text = (
+        "USE shop\nROWS orders VALUE >= 1\n"
+        "USE a.b.c\nROWS orders VALUE == 7\nNOTE orders.a IS x BECAUSE 'y'\n"
+        "USE shop\nROWS orders VALUE == 7"
+    )
     report = Checker(CallableConnector(fn, "duckdb"), catalog=NullCatalog()).check(text)
-    assert [o.verdict for o in report.outcomes] == [Verdict.PASS, Verdict.PASS]
-    assert all("shop" in o.canonical_text for o in report.outcomes)
+    # the bad USE poisons the namespace until the next valid USE
+    assert [o.verdict for o in report.outcomes] == [
+        Verdict.PASS,
+        Verdict.INVALID,
+        Verdict.INVALID,
+        Verdict.PASS,
+    ]
+    for o in report.outcomes[1:3]:
+        assert o.explanation.startswith("FL302")
+        assert [d["code"] for d in o.diagnostics] == ["FL302"]
+    assert report.outcomes[1].claim_text == "ROWS orders VALUE == 7"
+    assert "shop" in report.outcomes[0].canonical_text
+    assert "shop" in report.outcomes[3].canonical_text
     assert "FL302" in report.diagnostics.codes()
+    assert not report.ok
     assert '"shop"' in fn.calls[0][0] or "shop." in fn.calls[0][0]
+
+
+def test_unparseable_use_poisons_and_fails_ok() -> None:
+    fn = rows_fn([{"row_count": 7}])
+    checker = Checker(CallableConnector(fn, "duckdb"), catalog=NullCatalog())
+    report = checker.check("USE 5\nROWS orders VALUE == 7")
+    assert [o.verdict for o in report.outcomes] == [Verdict.INVALID]
+    assert report.outcomes[0].explanation.startswith("FL203")
+    assert not report.ok
+    # an error diagnostic alone (no outcome of its own) makes the report not ok
+    alone = checker.check("USE a.b.c")
+    assert alone.outcomes == () and not alone.ok
+
+
+def test_invalid_multiline_claim_text_starts_at_its_first_line() -> None:
+    text = "COUNT orders \\\n  VALUE == 1 \\\n  WHERE (\nROWS orders VALUE == 7"
+    fn = rows_fn([{"row_count": 7}])
+    report = Checker(CallableConnector(fn, "duckdb"), catalog=NullCatalog()).check(text)
+    assert [o.verdict for o in report.outcomes] == [Verdict.INVALID, Verdict.PASS]
+    bad = report.outcomes[0]
+    assert bad.verb == "COUNT"
+    assert bad.claim_text == "COUNT orders \\\n  VALUE == 1 \\\n  WHERE ("
+    assert bad.explanation.startswith("FL206")
 
 
 def test_catalog_verbs_use_the_given_catalog() -> None:
@@ -148,10 +188,27 @@ def test_catalog_raising_other_errors_is_error() -> None:
 def test_default_catalog_is_warehouse_backed() -> None:
     fn = rows_fn([])
     checker = Checker(CallableConnector(fn, "duckdb"))
-    (o,) = checker.check("EXISTS orders").outcomes
-    # an empty information_schema answer: the table does not exist
-    assert o.verdict is Verdict.INVALID  # FL311 from the analyser, through the same catalog
+    report = checker.check("EXISTS orders\nTYPE orders.id IS integer")
+    # an empty information_schema answer: the table does not exist. For EXISTS that is the
+    # answer (FAIL); for TYPE it is a name error (FL311, INVALID)
+    assert [o.verdict for o in report.outcomes] == [Verdict.FAIL, Verdict.INVALID]
+    assert report.outcomes[0].facts == {"exists": False}
+    assert "FL311" in report.outcomes[1].explanation
     assert "information_schema" in fn.calls[0][0].lower()
+
+
+def test_async_only_connector_gets_a_null_catalog() -> None:
+    class AsyncOnly:
+        dialect = "duckdb"
+        paramstyle = "qmark"
+
+        async def aexecute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
+            return QueryResult([{"row_count": 3}])
+
+    checker = Checker(AsyncOnly())
+    assert isinstance(checker.catalog, NullCatalog)
+    report = asyncio.run(checker.acheck("ROWS orders VALUE == 3\nEXISTS orders"))
+    assert [o.verdict for o in report.outcomes] == [Verdict.PASS, Verdict.NO_DATA]
 
 
 def test_compile_returns_probes_and_outcomes() -> None:
@@ -190,6 +247,71 @@ def test_needs_a_dialect_or_connector() -> None:
         Checker(dialect="duckdb").measure([ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,))])
     with pytest.raises(ValueError, match="concurrency"):
         Checker(dialect="duckdb", concurrency=0)
+    # no probe to execute: no connector needed (render failures are ERROR outcomes)
+    (o,) = Checker(dialect="no_such_dialect").check("ROWS orders VALUE >= 1").outcomes
+    assert o.verdict is Verdict.ERROR and o.explanation.startswith("FL504")
+    (o,) = asyncio.run(Checker(dialect="no_such_dialect").acheck("ROWS t VALUE >= 1")).outcomes
+    assert o.verdict is Verdict.ERROR
+
+
+class Hanging:
+    """A connector that ignores ``timeout_s``."""
+
+    dialect = "duckdb"
+    paramstyle = "qmark"
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+
+    def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
+        time.sleep(self.delay)
+        return QueryResult([{"row_count": 1}])
+
+    async def aexecute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
+        await asyncio.sleep(self.delay)
+        return QueryResult([{"row_count": 1}])
+
+
+def test_engine_timeout_backstop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Checker, "TIMEOUT_GRACE_S", 0.05)
+    slow = Checker(Hanging(2.0), catalog=NullCatalog(), timeout_s=0.05)
+    start = time.monotonic()
+    (o,) = slow.check("ROWS orders VALUE >= 1").outcomes
+    assert time.monotonic() - start < 1.5
+    assert o.verdict is Verdict.ERROR and o.explanation.startswith("FL702")
+    (a,) = asyncio.run(slow.acheck("ROWS orders VALUE >= 1")).outcomes
+    assert a.verdict is Verdict.ERROR and a.explanation.startswith("FL702")
+    (m,) = slow.measure([ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,))])
+    assert m.error is not None and m.error.code == "FL702" and m.verdict_hint is Verdict.ERROR
+    # within the budget the answer is used
+    fast = Checker(Hanging(0.0), catalog=NullCatalog(), timeout_s=0.05, concurrency=1)
+    (ok,) = fast.check("ROWS orders VALUE >= 1").outcomes
+    assert ok.verdict is Verdict.PASS
+    none = Checker(Hanging(0.0), catalog=NullCatalog(), timeout_s=None)
+    assert none.check("ROWS orders VALUE >= 1").ok
+    assert asyncio.run(none.acheck("ROWS orders VALUE >= 1")).ok
+
+
+def test_public_result_field_order() -> None:
+    import dataclasses
+
+    assert [f.name for f in dataclasses.fields(Measurement)] == [
+        "plan",
+        "payload",
+        "verdict_hint",
+        "evidence",
+        "error",
+    ]
+    assert [f.name for f in dataclasses.fields(CostEstimate)] == [
+        "semantic_hash_or_plan_key",
+        "sql",
+        "bytes",
+        "method",
+    ]
+    est = CostEstimate("k", None, None, "unknown")
+    assert est.key == "k"
+    with pytest.raises(AttributeError):
+        est.key = "x"  # type: ignore[misc]
 
 
 def test_shape_error_is_error() -> None:
@@ -322,3 +444,20 @@ def test_acheck_cost_guard_and_errors() -> None:
     assert out.outcomes[0].explanation.startswith("FL701")
     out2 = asyncio.run(Checker(Guarded(), catalog=NullCatalog()).acheck("ROWS orders VALUE >= 1"))
     assert out2.outcomes[0].explanation.startswith("FL700")
+
+
+def test_estimate_never_consults_a_catalog() -> None:
+    asked: list[TableRef] = []
+
+    class Untouchable:
+        def table_exists(self, ref: TableRef) -> bool | None:
+            asked.append(ref)
+            return True
+
+        def columns(self, ref: TableRef) -> dict[str, str] | None:
+            asked.append(ref)
+            return {"id": "integer"}
+
+    (est,) = Checker(dialect="duckdb", catalog=Untouchable()).estimate("ROWS orders VALUE >= 1")
+    assert est.sql is not None and est.method == "unknown"
+    assert asked == []  # the analyser swallows catalog errors, so record instead of raising

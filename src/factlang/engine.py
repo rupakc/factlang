@@ -20,7 +20,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -88,23 +88,25 @@ class Measurement:
 
     plan: ProbePlan
     payload: dict[str, object] | None
+    verdict_hint: Verdict | None
     evidence: Evidence | None
-    error: Diagnostic | None = None
-    verdict_hint: Verdict | None = None
+    error: Diagnostic | None
 
 
 @dataclass(frozen=True)
 class CostEstimate:
-    """A dry-run price (R5). ``key`` is the claim's semantic hash or the plan's canonical key."""
+    """A dry-run price (R5): the claim's semantic hash or the plan's canonical key, the display
+    SQL (``None`` when the plan cannot be rendered), the bytes and how they were obtained."""
 
-    key: str
+    semantic_hash_or_plan_key: str
     sql: str | None
     bytes: int | None
     method: Literal["dry_run", "unknown"]
 
     @property
-    def semantic_hash_or_plan_key(self) -> str:
-        return self.key
+    def key(self) -> str:
+        """Read-only alias of :attr:`semantic_hash_or_plan_key`."""
+        return self.semantic_hash_or_plan_key
 
 
 @dataclass(frozen=True)
@@ -116,7 +118,10 @@ class Report:
 
     @property
     def ok(self) -> bool:
-        """No ``FAIL``, ``ERROR`` or ``INVALID`` outcome."""
+        """No ``FAIL``, ``ERROR`` or ``INVALID`` outcome and no error diagnostic (e.g. a
+        broken ``USE`` directive, which is not an outcome of its own)."""
+        if self.diagnostics.has_errors:
+            return False
         return not any(o.verdict in _NOT_OK for o in self.outcomes)
 
     def summary(self) -> dict[Verdict, int]:
@@ -194,6 +199,41 @@ def _push(bag: DiagnosticBag, d: Diagnostic) -> None:
     add[d.severity](d.code, d.message, d.span, hint=d.hint, suggestion=d.suggestion)
 
 
+def _continues(raw: str) -> bool:
+    return raw.rstrip(" \t").endswith("\\")
+
+
+def _first_line(src_lines: Sequence[str], line: int) -> int:
+    """The first physical line of the claim holding ``line`` (walks back over ``\\``)."""
+    while line > 1 and line - 2 < len(src_lines) and _continues(src_lines[line - 2]):
+        line -= 1
+    return line
+
+
+def _claim_text(src_lines: Sequence[str], first: int) -> tuple[str, str]:
+    """``(text, verb)`` of the claim starting on physical line ``first`` (continuations kept)."""
+    if not 1 <= first <= len(src_lines):
+        return "", ""
+    last = first
+    while last < len(src_lines) and _continues(src_lines[last - 1]):
+        last += 1
+    lead = _LEAD.match(src_lines[first - 1])
+    return "\n".join(src_lines[first - 1 : last]).strip(), lead.group(1) if lead else ""
+
+
+def _backstop(limit: float) -> ExecutionError:
+    return ExecutionError(
+        f"query timed out: no answer after {limit:g}s (engine backstop; the connector did "
+        "not enforce timeout_s)",
+        code="FL702",
+    )
+
+
+def _runs(jobs: Sequence[tuple[FusedProbe, RenderedProbe | Exception]]) -> bool:
+    """Whether any job has a probe to execute (render failures need no connector)."""
+    return any(isinstance(p, RenderedProbe) for _, p in jobs)
+
+
 def _code(message: str, default: str) -> str:
     m = _CODE.match(message)
     return m.group(1) if m else default
@@ -249,8 +289,12 @@ class Checker:
     ``dialect`` defaults to the connector's. With a connector and no ``catalog``, names are
     checked (and catalog verbs answered) through ``CachedCatalog(WarehouseCatalog(connector))``
     (spec 6.1). ``concurrency`` probes run at once (a thread pool; ``acheck`` an asyncio
-    semaphore). ``max_bytes`` enables the dry-run cost guard (``FL701``).
+    semaphore). ``max_bytes`` enables the dry-run cost guard (``FL701``). A connector that
+    does not enforce ``timeout_s`` is backstopped: no answer ``TIMEOUT_GRACE_S`` after the
+    timeout is ``FL702``.
     """
+
+    TIMEOUT_GRACE_S: float = 5.0
 
     def __init__(
         self,
@@ -281,24 +325,30 @@ class Checker:
         self.prefer: Prefer = prefer
         self._default_catalog: Catalog | None = None
         if catalog is None and connector is not None:
-            self._default_catalog = CachedCatalog(
-                WarehouseCatalog(connector, timeout_s=timeout_s)  # type: ignore[arg-type]
-            )
+            # a warehouse catalog needs a synchronous ``execute``; an async-only connector
+            # gets a catalog that knows nothing (names unverified, catalog verbs NO_DATA)
+            if isinstance(connector, Connector):
+                self._default_catalog = CachedCatalog(
+                    WarehouseCatalog(connector, timeout_s=timeout_s)
+                )
+            else:
+                self._default_catalog = NullCatalog()
         self.catalog: Catalog | None = catalog if catalog is not None else self._default_catalog
         self._quote = string_quoter(dialect)
 
     # -- public API ----------------------------------------------------------------------
 
     def check(self, text: str) -> Report:
-        """Check every claim of ``text``. Raises ``ValueError`` only when a claim needs a probe
-        and the Checker has no connector (a configuration error, not a claim outcome)."""
+        """Check every claim of ``text``. Raises ``ValueError`` only when a rendered probe
+        must run and the Checker has no connector (a configuration error, not a claim outcome)."""
         bag = DiagnosticBag()
         slots = self._front(text, self.catalog, bag)
         for slot in slots:
             if slot.outcome is None and slot.contract is not None and slot.plan is None:
                 slot.outcome = self._catalog_outcome(slot, bag)
         jobs = self._jobs([WorkItem(s.plan, s.claim) for s in slots if s.plan is not None])
-        runs = self._run_all(self._need_connector(), [p for _, p in jobs]) if jobs else []
+        probes = [p for _, p in jobs]
+        runs = self._run_all(self._need_connector(), probes) if _runs(jobs) else [None] * len(jobs)
         return self._finish(slots, self._results(jobs, runs), bag)
 
     async def acheck(self, text: str) -> Report:
@@ -308,7 +358,12 @@ class Checker:
             if slot.outcome is None and slot.contract is not None and slot.plan is None:
                 slot.outcome = await asyncio.to_thread(self._catalog_outcome, slot, bag)
         jobs = self._jobs([WorkItem(s.plan, s.claim) for s in slots if s.plan is not None])
-        runs = await self._arun_all(self._need_connector(), [p for _, p in jobs]) if jobs else []
+        probes = [p for _, p in jobs]
+        runs = (
+            await self._arun_all(self._need_connector(), probes)
+            if _runs(jobs)
+            else [None] * len(jobs)
+        )
         return self._finish(slots, self._results(jobs, runs), bag)
 
     def compile(self, text: str) -> list[RenderedProbe | Outcome]:
@@ -348,13 +403,14 @@ class Checker:
     def estimate(self, items: str | Sequence[ProbePlan]) -> list[CostEstimate]:
         """Dry-run prices of each probeable claim (text) or plan (R5). Never executes.
 
-        Claims are analysed against the explicit catalog only (a warehouse catalog would
-        execute metadata queries); invalid, unprobeable and catalog claims are skipped.
+        Claims are analysed without a catalog (any catalog may execute metadata queries);
+        invalid, unprobeable and catalog claims are skipped.
         """
         pairs: list[tuple[str, ProbePlan]] = []
         if isinstance(items, str):
             bag = DiagnosticBag()
-            for slot in self._front(items, self._offline_catalog(), bag):
+            # no catalog at all: a catalog may run metadata queries, and pricing runs nothing
+            for slot in self._front(items, None, bag):
                 if slot.plan is not None and slot.claim is not None:
                     pairs.append((slot.claim.semantic_hash, slot.plan))
         else:
@@ -396,7 +452,12 @@ class Checker:
         return renderer_for(self.dialect, prefer=self.prefer)
 
     def _front(self, text: str, catalog: Catalog | None, bag: DiagnosticBag) -> list[_Slot]:
-        """Parse and analyse ``text`` claim by claim; slots in source order."""
+        """Parse and analyse ``text`` claim by claim; slots in source order.
+
+        A ``USE`` directive with errors poisons the namespace: every claim after it, until the
+        next valid ``USE``, is ``INVALID`` and carries that directive's diagnostics (its
+        namespace is unknown, so resolving its names against the previous one would be wrong).
+        """
         parsed = parse(text)
         registry = self.pack.verb_registry()
         items = parsed.document.items
@@ -408,7 +469,7 @@ class Checker:
             ranges.append((start, start + extra))
 
         owned: dict[int, list[Diagnostic]] = {i: [] for i in range(len(items))}
-        loose: dict[int, list[Diagnostic]] = {}
+        loose: dict[int, list[Diagnostic]] = {}  # dropped claims, by their first physical line
         for d in parsed.diagnostics:
             line = d.span.line if d.span is not None else None
             idx = next(
@@ -418,30 +479,48 @@ class Checker:
             if idx is not None:
                 owned[idx].append(d)
             elif line is not None:
-                loose.setdefault(line, []).append(d)
+                loose.setdefault(_first_line(src_lines, line), []).append(d)
             else:
                 _push(bag, d)
 
+        events: list[tuple[int, int, int]] = [(line, 0, 0) for line in loose]
+        events += [(item.span.line, 1, i) for i, item in enumerate(items)]
+        events.sort()
         slots: list[_Slot] = []
-        for line, diags in loose.items():
-            for d in diags:
-                _push(bag, d)
-            if any(d.severity is Severity.ERROR for d in diags):
-                raw = src_lines[line - 1] if 1 <= line <= len(src_lines) else ""
-                lead = _LEAD.match(raw)
-                verb = lead.group(1) if lead else ""
-                slots.append(_Slot(line, outcome=_invalid(raw.strip(), verb, diags)))
-
         current: ast.Directive | None = None
-        for i, item in enumerate(items):
+        poison: tuple[Diagnostic, ...] | None = None
+        for line, kind, i in events:
+            if kind == 0:
+                diags = loose[line]
+                for d in diags:
+                    _push(bag, d)
+                errors = tuple(d for d in diags if d.severity is Severity.ERROR)
+                if not errors:
+                    continue
+                claim_text, verb = _claim_text(src_lines, line)
+                if verb == "USE":
+                    poison = errors
+                    continue
+                slots.append(_Slot(line, outcome=_invalid(claim_text, verb, diags)))
+                continue
+            item = items[i]
             if isinstance(item, ast.Directive):
                 dbag = DiagnosticBag()
                 for d in owned[i]:
                     _push(dbag, d)
                 analyze(ast.Document((item,), text), registry, catalog=None, bag=dbag)
                 bag.extend(dbag)
-                if len(item.namespace.parts) in (1, 2):
-                    current = item
+                errors = tuple(d for d in dbag if d.severity is Severity.ERROR)
+                if errors:
+                    poison = errors
+                else:
+                    current, poison = item, None
+                continue
+            if poison is not None:
+                for d in owned[i]:
+                    _push(bag, d)
+                outcome = _invalid(item.line_text, item.verb, (*poison, *owned[i]))
+                slots.append(_Slot(line, outcome=outcome))
                 continue
             cbag = DiagnosticBag()
             for d in owned[i]:
@@ -454,10 +533,9 @@ class Checker:
             claim_diags = tuple(cbag)
             if cbag.has_errors or len(claims) != 1:
                 outcome = _invalid(item.line_text, item.verb, claim_diags)
-                slots.append(_Slot(item.span.line, outcome=outcome))
+                slots.append(_Slot(line, outcome=outcome))
                 continue
-            slots.append(self._plan_slot(item.span.line, claims[0], claim_diags, bag))
-        slots.sort(key=lambda s: s.line)
+            slots.append(self._plan_slot(line, claims[0], claim_diags, bag))
         return slots
 
     def _plan_slot(
@@ -596,17 +674,41 @@ class Checker:
     def _run_all(
         self, conn: Connector | AsyncConnector, probes: Sequence[RenderedProbe | Exception]
     ) -> list[_Run | None]:
+        """Execute in a thread pool. Engine-side backstop: a probe still running
+        ``timeout_s + TIMEOUT_GRACE_S`` after it started is reported ``FL702`` and abandoned
+        (its worker thread is left to the driver; the pool does not wait for it)."""
         todo = [(i, p) for i, p in enumerate(probes) if isinstance(p, RenderedProbe)]
         runs: list[_Run | None] = [None] * len(probes)
-        sync: Any = conn
-        if len(todo) <= 1 or self.concurrency == 1:
-            for i, p in todo:
-                runs[i] = self._execute(sync, p)
+        if not todo:
             return runs
-        with ThreadPoolExecutor(max_workers=min(self.concurrency, len(todo))) as pool:
-            done = pool.map(lambda ip: self._execute(sync, ip[1]), todo)
-            for (i, _), run in zip(todo, done, strict=True):
-                runs[i] = run
+        sync: Any = conn
+        limit = None if self.timeout_s is None else self.timeout_s + self.TIMEOUT_GRACE_S
+        started: dict[int, float] = {}
+
+        def work(i: int, probe: RenderedProbe) -> _Run:
+            started[i] = time.monotonic()
+            return self._execute(sync, probe)
+
+        pool = ThreadPoolExecutor(max_workers=min(self.concurrency, len(todo)))
+        try:
+            futures: dict[Future[_Run], int] = {pool.submit(work, i, p): i for i, p in todo}
+            pending = set(futures)
+            while pending:
+                poll = None if limit is None else min(0.25, limit)
+                done, pending = wait(pending, timeout=poll, return_when=FIRST_COMPLETED)
+                for f in done:
+                    runs[futures[f]] = f.result()
+                if limit is None:
+                    continue
+                now = time.monotonic()
+                for f in list(pending):
+                    i = futures[f]
+                    began = started.get(i)
+                    if began is not None and now - began > limit:
+                        pending.discard(f)
+                        runs[i] = _Run(None, _backstop(limit), (now - began) * 1000, None)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         return runs
 
     async def _arun_all(
@@ -618,7 +720,13 @@ class Checker:
             if not isinstance(p, RenderedProbe):
                 return None
             async with gate:
-                return await self._aexecute(conn, p)
+                if self.timeout_s is None:
+                    return await self._aexecute(conn, p)
+                limit = self.timeout_s + self.TIMEOUT_GRACE_S
+                try:
+                    return await asyncio.wait_for(self._aexecute(conn, p), limit)
+                except asyncio.TimeoutError:
+                    return _Run(None, _backstop(limit), limit * 1000, None)
 
         return list(await asyncio.gather(*(one(p) for p in probes)))
 
@@ -723,17 +831,17 @@ class Checker:
             res = results[key]
             if res.rows is None:
                 err = Diagnostic(res.code or "FL700", Severity.ERROR, res.message or "", None)
-                out.append(Measurement(plan, None, res.evidence, err, Verdict.ERROR))
+                out.append(Measurement(plan, None, Verdict.ERROR, res.evidence, err))
                 continue
             try:
                 payload = payload_for(plan.arity, res.rows)
             except Exception as exc:
                 message = f"FL700 result shape: {type(exc).__name__}: {exc}"
                 err = Diagnostic("FL700", Severity.ERROR, message, None)
-                out.append(Measurement(plan, None, res.evidence, err, Verdict.ERROR))
+                out.append(Measurement(plan, None, Verdict.ERROR, res.evidence, err))
                 continue
             hint = Verdict.NO_DATA if payload is None else None
-            out.append(Measurement(plan, payload, res.evidence, None, hint))
+            out.append(Measurement(plan, payload, hint, res.evidence, None))
         return out
 
 

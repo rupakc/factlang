@@ -561,11 +561,14 @@ class _ClaimCheck:
         # table -> [(column, span)], in claim order; the first table is the filter's table
         wanted: dict[TableRef, list[tuple[Ident, Span]]] = {}
         table_span: dict[TableRef, Span] = {}
+        subjects: set[TableRef] = set()  # tables whose absence is the claim's answer
         edge: EdgeRef | None = None
         for node, o in zip(c.operands, operands, strict=True):
             if isinstance(o, TableRef):
                 wanted.setdefault(o, [])
                 table_span.setdefault(o, node.span)
+                if spec.existence_subject:
+                    subjects.add(o)
             elif isinstance(o, ColumnRef):
                 wanted.setdefault(o.table, []).append((o.column, node.span))
                 table_span.setdefault(o.table, node.span)
@@ -594,7 +597,8 @@ class _ClaimCheck:
                 probe = _unquoted(table)  # a case variant of a quoted name also counts
                 exists = _exists(catalog, probe)
             if exists is False:
-                self.error("FL311", f"no such table {_show(table)}", table_span[table])
+                if table not in subjects:
+                    self.error("FL311", f"no such table {_show(table)}", table_span[table])
                 continue
             known = _columns(catalog, probe)
             if exists is None or known is None:

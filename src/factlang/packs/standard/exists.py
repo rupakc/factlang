@@ -15,6 +15,7 @@ SPEC = VerbSpec(
     "The table, or the named column of it, exists in the catalog.",
     (Operand.table(),),
     attrs=(AttrSpec("COLUMN", "SYMBOL", doc="column that must exist in the table"),),
+    existence_subject=True,
 )
 
 

@@ -41,7 +41,7 @@ class Approx:
 @dataclass(frozen=True)
 class Case:
     verb: str
-    kind: Literal["pass", "fail", "no_data", "empty", "unprobeable"]
+    kind: Literal["pass", "fail", "fail_table", "no_data", "empty", "unprobeable"]
     claim: str
     verdict: Verdict
     facts: Mapping[str, object] = field(default_factory=dict)
@@ -100,6 +100,7 @@ CASES: tuple[Case, ...] = (
     # -- structure (catalog) ---------------------------------------------------------------
     Case("EXISTS", "pass", "EXISTS orders COLUMN shipped_at", P, {"exists": True}),
     Case("EXISTS", "fail", "EXISTS orders COLUMN nosuch", F, {"exists": False}),
+    Case("EXISTS", "fail_table", "EXISTS no_such_table", F, {"exists": False}),
     Case("EXISTS", "no_data", "EXISTS orders", N, {"exists": None}, catalog="null"),
     Case(
         "TYPE",

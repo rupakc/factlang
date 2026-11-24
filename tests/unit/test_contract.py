@@ -155,7 +155,8 @@ def test_alias_clones_spec_and_shares_parts() -> None:
     assert a is not None
     assert a.spec.name == "POS"
     assert a.spec.operands == c.spec.operands and a.spec.filterable == c.spec.filterable
-    assert (a.derive, a.decide, a.plan, a.examples) == (c.derive, c.decide, c.plan, c.examples)
+    assert (a.derive, a.decide, a.plan) == (c.derive, c.decide, c.plan)
+    assert a.examples == (Example("POS orders.amount"),)  # renamed to the alias verb
     assert pack.names() == ["POS", "POSITIVE"]
     assert pack.is_alias("POS") and not pack.is_alias("POSITIVE")
     # the alias is a verb the analyser accepts
@@ -523,3 +524,88 @@ def test_discover_packs_reads_the_entry_point_group(monkeypatch: pytest.MonkeyPa
 
 def test_discover_packs_real_environment() -> None:
     assert isinstance(contract_mod.discover_packs(), dict)
+
+
+# --- review round 1 ----------------------------------------------------------------------
+
+
+def _parent_with_builder() -> ContractPack:
+    parent = ContractPack("base", "1.0")
+
+    @parent.verb("POSITIVE", operands=[Operand.column()])
+    def positive(claim: CheckedClaim) -> ir.ProbePlan:
+        return _plan(claim)
+
+    positive.derive(_derive)
+    positive.decide(Compare("min", ">", value=0))
+    return parent
+
+
+def test_child_sees_parent_builder_names_first() -> None:
+    child = _parent_with_builder().extend("mine", "1.0")
+    assert child.names() == ["POSITIVE"]
+
+
+def test_child_sees_parent_builder_registry_first() -> None:
+    child = _parent_with_builder().extend("mine", "1.0")
+    assert child.verb_registry().names() == ["POSITIVE"]
+
+
+def test_child_can_remove_parent_builder_first() -> None:
+    parent = _parent_with_builder()
+    child = parent.extend("mine", "1.0")
+    child.remove("POSITIVE")
+    assert child.names() == [] and parent.names() == ["POSITIVE"]
+
+
+def test_child_cannot_register_over_a_pending_parent_builder() -> None:
+    child = _parent_with_builder().extend("mine", "1.0")
+    with pytest.raises(ValueError, match="POSITIVE"):
+        child.register(_contract())
+
+
+def test_child_read_raises_for_an_incomplete_parent_builder() -> None:
+    parent = ContractPack("base", "1.0")
+    parent.verb("HALF", operands=[Operand.column()])
+    child = parent.extend("mine", "1.0")
+    with pytest.raises(ValueError, match="HALF"):
+        child.names()
+
+
+def test_alias_examples_are_rewritten_and_cached() -> None:
+    pack = ContractPack("p", "1.0")
+    pack.register(
+        _contract(
+            examples=(
+                Example("POSITIVE orders.amount"),
+                Example("  POSITIVE orders", valid=False, expect="FL302"),
+                Example("POSITIVEX orders.amount", valid=False, expect="FL300"),
+            )
+        )
+    )
+    pack.alias("POS", "POSITIVE")
+    a = pack.get("POS")
+    assert a is not None
+    assert [e.source for e in a.examples] == [
+        "POS orders.amount",
+        "  POS orders",
+        "POSITIVEX orders.amount",  # a different leading word is left alone
+    ]
+    assert pack.get("POS") is a  # cached
+    pack.override(_contract(examples=(Example("POSITIVE orders.total"),)))
+    b = pack.get("POS")
+    assert b is not a and b is not None
+    assert [e.source for e in b.examples] == ["POS orders.total"]
+
+
+def test_inherited_alias_follows_a_child_override() -> None:
+    parent = ContractPack("base", "1.0")
+    parent.register(_contract())
+    parent.alias("POS", "POSITIVE")
+    child = parent.extend("mine", "1.0")
+    stricter = Compare("min", ">=", value=10)
+    child.override(_contract(decide=stricter))
+    pos = child.get("POS")
+    assert pos is not None and pos.decide is stricter
+    parent_pos = parent.get("POS")
+    assert parent_pos is not None and parent_pos.decide is not stricter

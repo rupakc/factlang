@@ -2,8 +2,9 @@
 
 ``assert_pack_complete`` is run over every pack: decide reads only declared facts (FL600)
 and declared attributes (FL601), each contract has >=3 valid and >=3 invalid examples that
-behave as declared through ``parse`` + ``analyze`` with ``NullCatalog`` (FL602), and no plan
-samples its input (FL404). Each check has a negative control below.
+(FL602) and behave as declared through ``parse`` + ``analyze`` with ``NullCatalog``, each
+starting with its own verb (FL603), every decorator-built contract is complete (FL604), and
+no plan samples its input (FL404). Each check has a negative control below.
 """
 
 from __future__ import annotations
@@ -110,14 +111,14 @@ def test_fl602_too_few_examples(keep: tuple[Example, ...]) -> None:
     assert _codes(problems) == ["FL602"]
 
 
-def test_fl602_valid_example_that_does_not_analyse() -> None:
+def test_fl603_valid_example_that_does_not_analyse() -> None:
     bad = replace(_good(), examples=(*EXAMPLES, Example("POSITIVE orders")))
     problems = check_pack(_pack(bad))
-    assert _codes(problems) == ["FL602"]
+    assert _codes(problems) == ["FL603"]
     assert "FL302" in problems[0]
 
 
-def test_fl602_valid_example_of_another_verb() -> None:
+def test_fl603_valid_example_of_another_verb() -> None:
     pack = _pack(replace(_good(), examples=(*EXAMPLES, Example("OTHER orders.amount"))))
     other = replace(
         _good(),
@@ -125,32 +126,32 @@ def test_fl602_valid_example_of_another_verb() -> None:
         examples=tuple(replace(e, source=e.source.replace("POSITIVE", "OTHER")) for e in EXAMPLES),
     )
     pack.register(other)
-    assert _codes(check_pack(pack)) == ["FL602"]
+    assert _codes(check_pack(pack)) == ["FL603"]
 
 
-def test_fl602_invalid_example_with_the_wrong_code() -> None:
+def test_fl603_invalid_example_with_the_wrong_code() -> None:
     bad = replace(
         _good(), examples=(*EXAMPLES, Example("POSITIVE orders", valid=False, expect="FL303"))
     )
     problems = check_pack(_pack(bad))
-    assert _codes(problems) == ["FL602"]
+    assert _codes(problems) == ["FL603"]
     assert "FL303" in problems[0] and "FL302" in problems[0]
 
 
-def test_fl602_invalid_example_that_is_valid() -> None:
+def test_fl603_invalid_example_that_is_valid() -> None:
     bad = replace(
         _good(),
         examples=(*EXAMPLES, Example("POSITIVE orders.amount", valid=False, expect="FL302")),
     )
-    assert _codes(check_pack(_pack(bad))) == ["FL602"]
+    assert _codes(check_pack(_pack(bad))) == ["FL603"]
 
 
-def test_fl602_plan_that_raises() -> None:
+def test_fl603_plan_that_raises() -> None:
     def broken(claim: CheckedClaim) -> ir.ProbePlan:
         raise RuntimeError("boom")
 
     problems = check_pack(_pack(replace(_good(), plan=broken)))
-    assert set(_codes(problems)) == {"FL602"}
+    assert set(_codes(problems)) == {"FL603"}
     assert "boom" in problems[0]
 
 
@@ -179,7 +180,7 @@ def test_catalog_and_unprobeable_contracts_are_checked_too() -> None:
         raise KeyError("x")
 
     assert set(_codes(check_pack(_pack(replace(_good(), plan=None, catalog_facts=raising))))) == {
-        "FL602"
+        "FL603"
     }
 
 
@@ -187,5 +188,40 @@ def test_incomplete_builder_is_reported_not_raised() -> None:
     pack = ContractPack("test", "1.0")
     pack.verb("HALF", operands=[Operand.column()])
     problems = check_pack(pack)
-    assert _codes(problems) == ["FL602"]
+    assert _codes(problems) == ["FL604"]
     assert "HALF" in problems[0] and "plan" in problems[0]
+
+
+def test_incomplete_builder_does_not_hide_the_other_contracts() -> None:
+    pack = _pack(replace(_good(), fact_names=()))
+    pack.verb("HALF", operands=[Operand.column()])
+    assert sorted(_codes(check_pack(pack))) == ["FL600", "FL604"]
+
+
+def test_child_reports_the_parents_incomplete_builder_on_first_access() -> None:
+    parent = ContractPack("base", "1.0")
+    parent.verb("HALF", operands=[Operand.column()])
+    child = parent.extend("mine", "1.0")
+    child.register(_good())
+    problems = check_pack(child)
+    assert _codes(problems) == ["FL604"] and "HALF" in problems[0]
+
+
+def test_fl603_example_must_start_with_its_own_verb() -> None:
+    pack = _pack(
+        replace(_good(), examples=(*EXAMPLES, Example("OTHER x", valid=False, expect="FL300")))
+    )
+    problems = check_pack(pack)
+    assert _codes(problems) == ["FL603"] and "own verb" in problems[0]
+    pack2 = _pack(replace(_good(), examples=(*EXAMPLES, Example("  -- POSITIVE orders.amount"))))
+    assert _codes(check_pack(pack2)) == ["FL603"]
+
+
+def test_alias_examples_pass_under_the_alias_name() -> None:
+    from factlang.contract import check_contract
+
+    pack = _pack(_good())
+    pack.alias("POS", "POSITIVE")
+    alias = pack.get("POS")
+    assert alias is not None
+    assert check_contract(alias, pack.verb_registry()) == []

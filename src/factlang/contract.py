@@ -31,6 +31,15 @@ PACK_ENTRY_POINT_GROUP = "factlang.packs"
 MIN_VALID_EXAMPLES = 3
 MIN_INVALID_EXAMPLES = 3
 _CODE = re.compile(r"FL\d{3}")
+_LEADING_WORD = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _rename_verb(source: str, old: str, new: str) -> str:
+    """``source`` with its leading verb ``old`` spelled ``new`` (unchanged otherwise)."""
+    m = _LEADING_WORD.match(source)
+    if m is None or m.group(1) != old:
+        return source
+    return source[: m.start(1)] + new + source[m.end(1) :]
 
 
 @dataclass(frozen=True)
@@ -236,16 +245,40 @@ class ContractPack:
         self._aliases: dict[str, str] = {}
         self._hidden: set[str] = set()  # parent names removed in this pack
         self._pending: dict[str, ContractBuilder] = {}
+        self._alias_cache: dict[str, tuple[Contract, Contract]] = {}
         self.overridden: dict[str, Contract] = {}
 
     # -- resolution ------------------------------------------------------------------------
 
-    def _flush(self) -> None:
+    def _flush_lenient(self) -> dict[str, str]:
+        """Register every complete pending builder, parent chain first.
+
+        Returns ``{verb: why}`` for the builders that are still incomplete (they stay pending).
+        """
+        errors = {} if self._parent is None else self._parent._flush_lenient()
         for name, builder in list(self._pending.items()):
-            contract = builder.build()  # raises naming the missing part; stays pending
+            try:
+                contract = builder.build()
+            except ValueError as exc:
+                errors[name] = str(exc)
+                continue
             del self._pending[name]
             builder._registered = True
             self._own[name] = contract
+        return errors
+
+    def _flush(self) -> None:
+        """Like ``_flush_lenient`` but raises ``ValueError`` naming the first missing part."""
+        errors = self._flush_lenient()
+        if errors:
+            raise ValueError(next(iter(errors.values())))
+
+    def _pending_visible(self, name: str) -> bool:
+        if name in self._pending:
+            return True
+        if name in self._own or name in self._aliases or name in self._hidden:
+            return False
+        return self._parent is not None and self._parent._pending_visible(name)
 
     def _alias_target(self, name: str) -> str | None:
         """Target name when ``name`` is an alias visible from this pack."""
@@ -255,24 +288,33 @@ class ContractPack:
             return None
         return self._parent._alias_target(name)
 
+    def _as_alias(self, name: str, target: Contract) -> Contract:
+        """``target`` under the alias ``name`` (spec and examples renamed), cached per target."""
+        hit = self._alias_cache.get(name)
+        if hit is not None and hit[0] is target:
+            return hit[1]
+        examples = tuple(
+            replace(e, source=_rename_verb(e.source, target.name, name)) for e in target.examples
+        )
+        clone = replace(target, spec=replace(target.spec, name=name), examples=examples)
+        self._alias_cache[name] = (target, clone)
+        return clone
+
     def _resolve(self, name: str, seen: frozenset[str] = frozenset()) -> Contract | None:
+        """Lookup without flushing pending builders."""
         if name in seen:
             return None
-        if name in self._aliases:
-            target = self._resolve(self._aliases[name], seen | {name})
-            return None if target is None else replace(target, spec=replace(target.spec, name=name))
+        # an alias (own or inherited) resolves its target from this pack, so it follows
+        # overrides made here
+        target_name = self._alias_target(name)
+        if target_name is not None:
+            target = self._resolve(target_name, seen | {name})
+            return None if target is None else self._as_alias(name, target)
         if name in self._own:
             return self._own[name]
         if name in self._hidden or self._parent is None:
             return None
-        parent = self._parent
-        parent._flush()
-        target_name = parent._alias_target(name)
-        if target_name is not None:
-            # a parent alias resolves its target from this pack, so it follows child overrides
-            target = self._resolve(target_name, seen | {name})
-            return None if target is None else replace(target, spec=replace(target.spec, name=name))
-        return parent._resolve(name, seen)
+        return self._parent._resolve(name, seen)
 
     def _all_names(self) -> set[str]:
         names = set(self._own) | set(self._aliases)
@@ -280,17 +322,29 @@ class ContractPack:
             names |= self._parent._all_names() - self._hidden
         return names
 
+    def _names(self) -> list[str]:
+        return sorted(n for n in self._all_names() if self._resolve(n) is not None)
+
+    def _registry(self) -> VerbRegistry:
+        registry = VerbRegistry()
+        for n in self._names():
+            c = self._resolve(n)
+            if c is not None:
+                registry.register(c.spec)
+        return registry
+
     def get(self, name: str) -> Contract | None:
         self._flush()
         return self._resolve(name)
 
     def names(self) -> list[str]:
         self._flush()
-        return sorted(n for n in self._all_names() if self._resolve(n) is not None)
+        return self._names()
 
     def contracts(self) -> list[Contract]:
+        self._flush()
         out: list[Contract] = []
-        for n in self.names():
+        for n in self._names():
             c = self._resolve(n)
             if c is not None:
                 out.append(c)
@@ -301,15 +355,13 @@ class ContractPack:
         return self._alias_target(name) is not None
 
     def verb_registry(self) -> VerbRegistry:
-        registry = VerbRegistry()
-        for c in self.contracts():
-            registry.register(c.spec)
-        return registry
+        self._flush()
+        return self._registry()
 
     # -- writes ----------------------------------------------------------------------------
 
     def _taken(self, name: str) -> bool:
-        return name in self._pending or self._resolve(name) is not None
+        return self._pending_visible(name) or self._resolve(name) is not None
 
     def _drop(self, name: str) -> None:
         self._own.pop(name, None)
@@ -431,6 +483,9 @@ def discover_packs() -> dict[str, Callable[[], ContractPack]]:
 
 def _check_example(contract: Contract, ex: Example, registry: VerbRegistry) -> list[str]:
     where = f"{contract.name}: example {ex.source!r}"
+    lead = _LEADING_WORD.match(ex.source)
+    if lead is None or lead.group(1) != contract.name:
+        return [f"FL603: {where} does not start with its own verb {contract.name}"]
     parsed = parse(ex.source)
     bag = DiagnosticBag()
     bag.extend(parsed.diagnostics)
@@ -438,19 +493,19 @@ def _check_example(contract: Contract, ex: Example, registry: VerbRegistry) -> l
     errors = [d.code for d in bag if d.severity is Severity.ERROR]
     if not ex.valid:
         if not errors:
-            return [f"FL602: {where} is declared invalid ({ex.expect}) but analyses cleanly"]
+            return [f"FL603: {where} is declared invalid ({ex.expect}) but analyses cleanly"]
         if ex.expect not in errors:
-            return [f"FL602: {where} expects {ex.expect} but raised {', '.join(errors)}"]
+            return [f"FL603: {where} expects {ex.expect} but raised {', '.join(errors)}"]
         return []
     if errors:
-        return [f"FL602: {where} is declared valid but raised {', '.join(errors)}"]
+        return [f"FL603: {where} is declared valid but raised {', '.join(errors)}"]
     if len(claims) != 1:
-        return [f"FL602: {where} must hold exactly one claim, got {len(claims)}"]
+        return [f"FL603: {where} must hold exactly one claim, got {len(claims)}"]
     claim = claims[0]
     if claim.verb != contract.name:
-        return [f"FL602: {where} is a {claim.verb} claim, not {contract.name}"]
+        return [f"FL603: {where} is a {claim.verb} claim, not {contract.name}"]
     if ex.expect is not None and ex.expect not in bag.codes():
-        return [f"FL602: {where} expects diagnostic {ex.expect}, got {bag.codes()}"]
+        return [f"FL603: {where} expects diagnostic {ex.expect}, got {bag.codes()}"]
     try:
         if contract.plan is not None:
             plan_for(contract, claim)
@@ -459,9 +514,9 @@ def _check_example(contract: Contract, ex: Example, registry: VerbRegistry) -> l
     except ValueError as exc:
         if str(exc).startswith("FL404"):
             return [f"FL404: {where}: {exc}"]
-        return [f"FL602: {where}: planning raised ValueError: {exc}"]
+        return [f"FL603: {where}: planning raised ValueError: {exc}"]
     except Exception as exc:
-        return [f"FL602: {where}: planning raised {type(exc).__name__}: {exc}"]
+        return [f"FL603: {where}: planning raised {type(exc).__name__}: {exc}"]
     return []
 
 
@@ -496,21 +551,21 @@ def check_contract(contract: Contract, registry: VerbRegistry) -> list[str]:
 
 
 def check_pack(pack: ContractPack) -> list[str]:
-    """Every completeness problem of ``pack`` as ``"FL6xx: …"``/``"FL404: …"``; ``[]`` if none.
+    """Every completeness problem of ``pack`` (incl. inherited verbs), ``[]`` if none.
 
-    Aliases are checked through their target (they share its parts and examples).
-    An incomplete decorator-built verb is reported, not raised.
+    Codes: FL600/FL601 (decide reads undeclared facts/attributes), FL602 (too few
+    examples), FL603 (an example does not behave as declared, or its plan/catalog function
+    raises), FL604 (an incomplete decorator-built contract; reported, never raised, and
+    the other contracts are still checked), FL404 (a sampled plan). Aliases are checked
+    through their target.
     """
-    try:
-        pack.names()
-    except ValueError as exc:
-        return [f"FL602: pack {pack.name}: {exc}"]
-    registry = pack.verb_registry()
-    out: list[str] = []
-    for name in pack.names():
-        if pack.is_alias(name):
+    incomplete = pack._flush_lenient()
+    out = [f"FL604: {name}: incomplete contract: {why}" for name, why in incomplete.items()]
+    registry = pack._registry()
+    for name in pack._names():
+        if pack._alias_target(name) is not None:
             continue
-        contract = pack.get(name)
+        contract = pack._resolve(name)
         if contract is not None:
             out.extend(check_contract(contract, registry))
     return out

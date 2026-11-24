@@ -1,18 +1,19 @@
 """BigQuery (GoogleSQL) profile (tier ``native``: SQL parsed with sqlglot in CI, not executed).
 
 Slots: project.dataset.table. Backtick quoting; inside backticks a backslash is an escape,
-so quoted names are written with ``\\``/``\\``` escapes (:func:`backslash_quoting`).
+so in a quoted name a backslash and a backtick are each written after a backslash
+(``quote_escapes``). Column metadata comes from the
+dataset's ``INFORMATION_SCHEMA.COLUMNS`` (the job's default dataset when the ref names none);
+table names match exactly (they are case-sensitive), column names case-insensitively.
 ``TABLESAMPLE SYSTEM`` takes no seed, so it cannot repeat a sample and is not declared
 (FL506); keyhash is the only sample method.
 """
 
 from __future__ import annotations
 
-from factlang.semantics.refs import Ident, TableRef
 from factlang.sql import ast as A
 from factlang.sql.printer import Printer
 from factlang.sql.profile import DialectProfile
-from factlang.sql.profiles._shared import backslash_quoting
 
 # GoogleSQL reserved keywords (lexical structure reference).
 _RESERVED_WORDS = """
@@ -43,32 +44,10 @@ TYPE_FAMILIES: tuple[tuple[str, str], ...] = (
     (r"json", "json"),
 )
 
-_column, _table_name = backslash_quoting("\\`")
-
 
 def _split_prefix(printer: Printer, x: A.SplitPrefix) -> str:
     # SPLIT never returns an empty array for a non-NULL input, so OFFSET(0) always exists.
     return f"SPLIT({printer.expr(x.e)}, {printer.expr(x.separator)})[SAFE_OFFSET(0)]"
-
-
-def _catalog_columns(printer: Printer, x: A.CatalogColumns) -> str:
-    """``INFORMATION_SCHEMA.COLUMNS`` of the table's dataset (the job's default dataset when
-    the ref names none); BigQuery table names are case-sensitive, so names match exactly."""
-    ref = x.table
-    if len(ref.parts()) > printer.profile.max_table_parts:
-        printer.table(ref)  # raises FL505
-    if ref.schema is not None:
-        view = TableRef(ref.catalog, ref.schema, Ident("INFORMATION_SCHEMA"))
-        source = _table_name(printer, A.TableName(view)) + ".COLUMNS"
-    else:
-        source = "INFORMATION_SCHEMA.COLUMNS"
-    printer.check_ident(ref.table.text, ref.table.quoted)
-    conds = [f"table_name = {printer._catalog_param(ref.table.text)}"]
-    if x.column is not None:
-        printer.check_ident(x.column.text, x.column.quoted)
-        conds.append(f"column_name = {printer._catalog_param(x.column.text)}")
-    sql = f"SELECT column_name, data_type FROM {source} WHERE {' AND '.join(conds)}"
-    return f"({sql}) {printer._derived_alias()}"
 
 
 BIGQUERY = DialectProfile(
@@ -107,14 +86,16 @@ BIGQUERY = DialectProfile(
     information_schema_sql=(
         "SELECT column_name, data_type FROM INFORMATION_SCHEMA.COLUMNS WHERE {where}"
     ),
+    qualified_information_schema_sql=(
+        "SELECT column_name, data_type FROM {prefix}INFORMATION_SCHEMA.COLUMNS WHERE {where}"
+    ),
+    information_schema_scope="schema",
     quoted_catalog_match="exact",
     unquoted_catalog_match="exact",
-    overrides={
-        A.Column: _column,
-        A.TableName: _table_name,
-        A.SplitPrefix: _split_prefix,
-        A.CatalogColumns: _catalog_columns,
-    },
+    quoted_column_match="casefold",  # column names are case-insensitive, quoted or not
+    unquoted_column_match="casefold",
+    quote_escapes={"`": "\\`", "\\": "\\\\"},
+    overrides={A.SplitPrefix: _split_prefix},
     sample_styles={"system": None, "bernoulli": None},
     # spec 19 keyhash ruling: FARM_FINGERPRINT is a signed INT64, folded with MOD(MOD(h,B)+B,B)
     keyhash_expr="MOD(MOD(FARM_FINGERPRINT({s}), 1000000) + 1000000, 1000000)",

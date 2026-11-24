@@ -4,12 +4,14 @@ Slots: database.table (2). Identifiers are case-sensitive. Spellings that differ
 ANSI printer:
 
 - ``countIf(c)`` (never NULL);
-- the part before a separator is ``splitByString(sep, x)[1]``;
+- the part before a separator is ``splitByString(sep, assumeNotNull(x))[1]`` (NULL stays
+  NULL);
 - a typed NULL is a bare ``NULL`` (``Nullable(Nothing)`` unifies with ``UInt64`` counts in a
   UNION ALL; ``Nullable(Int64)`` does not), every other cast targets a ``Nullable`` type;
 - a LEFT JOIN fills unmatched right columns with type defaults unless
   ``join_use_nulls = 1``, so a subquery holding one carries that setting;
-- inside quotes a backslash is an escape, so quoted names are written with it doubled.
+- inside quotes a backslash is an escape, so quoted names have it doubled
+  (``quote_escapes``).
 
 ``SAMPLE`` needs a table-level ``SAMPLE BY`` key, so neither table-sample method is
 declared (FL506); keyhash is supported.
@@ -20,7 +22,7 @@ from __future__ import annotations
 from factlang.sql import ast as A
 from factlang.sql.printer import Printer
 from factlang.sql.profile import DialectProfile
-from factlang.sql.profiles._shared import backslash_quoting, derived_union_subquery
+from factlang.sql.profiles._shared import derived_union_subquery
 
 # ClickHouse reserves almost nothing; these keywords are quoted because the parser reads
 # them as clause starters where a bare column name could appear.
@@ -47,15 +49,16 @@ TYPE_FAMILIES: tuple[tuple[str, str], ...] = (
     (r"json|object\s*\(\s*'json'\s*\)", "json"),
 )
 
-_column, _table_name = backslash_quoting('""')
-
 
 def _count_if(printer: Printer, x: A.CountIf) -> str:
     return f"countIf({printer.expr(x.cond)})"
 
 
 def _split_prefix(printer: Printer, x: A.SplitPrefix) -> str:
-    return f"splitByString({printer.expr(x.separator)}, {printer.expr(x.e)})[1]"
+    # splitByString takes no Nullable string: split the non-NULL value, keep NULL as NULL
+    # (the summary branch reads NULL rows too, and must not see them as '')
+    e, sep = printer.expr(x.e), printer.expr(x.separator)
+    return f"if({e} IS NULL, NULL, splitByString({sep}, assumeNotNull({e}))[1])"
 
 
 def _cast(printer: Printer, x: A.Cast) -> str:
@@ -110,9 +113,8 @@ CLICKHOUSE = DialectProfile(
     # identifiers are case-sensitive, quoted or not
     quoted_catalog_match="exact",
     unquoted_catalog_match="exact",
+    quote_escapes={'"': '""', "\\": "\\\\"},
     overrides={
-        A.Column: _column,
-        A.TableName: _table_name,
         A.CountIf: _count_if,
         A.SplitPrefix: _split_prefix,
         A.Cast: _cast,

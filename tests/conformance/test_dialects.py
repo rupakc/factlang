@@ -202,6 +202,13 @@ def test_no_limit_in_sampled_plans_outside_value_membership(name: str, plan: obj
     assert len(limits) == (1 if isinstance(plan, ValueMembership) else 0)
 
 
+# Row-level (Bernoulli) samples whose syntax has no BERNOULLI keyword.
+BARE_ROW_SAMPLES = {
+    ("databricks", "TABLESAMPLE ({percent} PERCENT) REPEATABLE ({seed})"),
+    ("oracle", "SAMPLE ({percent}) SEED ({seed})"),
+}
+
+
 @pytest.mark.parametrize("name", PROFILES)
 @pytest.mark.parametrize("method", sorted(SAMPLES))
 def test_each_sample_method_renders_or_is_fl506(name: str, method: str) -> None:
@@ -226,8 +233,8 @@ def test_each_sample_method_renders_or_is_fl506(name: str, method: str) -> None:
         assert {"TABLESAMPLE", "SAMPLE"} & toks or "USING" in toks
         if method == "system":  # a block sample always names itself (SYSTEM / Oracle BLOCK)
             assert {"SYSTEM", "BLOCK"} & toks
-        else:  # BERNOULLI, or the bare row-level form (Databricks/Oracle ``SAMPLE (p)``)
-            assert "BERNOULLI" in toks or not {"SYSTEM", "BLOCK"} & toks
+        elif "BERNOULLI" not in toks:  # only these dialects spell a row sample bare
+            assert (name, p.sample_styles["bernoulli"]) in BARE_ROW_SAMPLES
 
 
 @pytest.mark.parametrize("name", PROFILES)
@@ -267,7 +274,9 @@ def test_identifier_rules(name: str) -> None:
     def sql_for(ident: Ident) -> str:
         t = TableRef(None, None, Ident("orders"))
         sql = render(ColumnAggregate(t, ident, (Metric.NON_NULL,)), p).sql_template
-        return sql.replace("COUNT_BIG(", "COUNT(")  # T-SQL counts are 64-bit COUNT_BIG
+        if name == "tsql":  # T-SQL counts are 64-bit COUNT_BIG
+            sql = sql.replace("COUNT_BIG(", "COUNT(")
+        return sql
 
     # unquoted stays unquoted, case untouched (the warehouse applies its own rules)
     assert "COUNT(MixedCase)" in sql_for(Ident("MixedCase"))

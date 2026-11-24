@@ -14,6 +14,11 @@ Template fields are FactLang-owned SQL text with ``{name}`` slots, validated her
 - ``keyhash_expr``: the keyhash *bucket* in ``[0, 1_000_000)`` of the hash input ``{s}``
   (spec 19 keyhash ruling); ``None`` means keyhash is not supported (FL506).
 - ``information_schema_sql``: a ``SELECT column_name, data_type …`` with one ``{where}`` slot.
+- ``qualified_information_schema_sql`` (optional): the same query with a ``{prefix}`` slot
+  where the catalog view must be qualified, used when the ref names the part that owns the
+  view (``information_schema_scope``: ``catalog`` -> ``<catalog>.``, e.g. Snowflake/T-SQL;
+  ``schema`` -> ``[<catalog>.]<schema>.``, BigQuery datasets). The prefix is printed with the
+  profile's own identifier rules.
 - ``default_schema_sql`` / ``default_catalog_sql``: the right-hand side of ``table_schema =``
   / ``table_catalog =`` used when a ref has no schema / catalog (e.g. ``current_schema()``,
   or ``ANY (current_schemas(false))``).
@@ -21,7 +26,14 @@ Template fields are FactLang-owned SQL text with ``{name}`` slots, validated her
 ``quoted_catalog_match`` / ``unquoted_catalog_match`` say how CatalogColumns compares a name
 with the catalog, so that it finds what the same identifier finds in SQL: ``exact``;
 ``lower``/``upper`` (fold the name, then compare exactly); ``casefold`` (``LOWER(col) =
-LOWER(name)``, for dialects that resolve identifiers case-insensitively).
+LOWER(name)``, for dialects that resolve identifiers case-insensitively). Column names may
+follow a different rule (``quoted_column_match`` / ``unquoted_column_match``; ``None`` means
+the table rule), e.g. BigQuery tables are case-sensitive but its columns are not.
+
+``quote_escapes`` (optional) maps characters to their spelling inside a quoted identifier for
+dialects where the plain doubling of the closing quote is wrong: in BigQuery a backslash and a
+backtick are each written after a backslash; in ClickHouse a backslash is an escape too. It
+must cover the closing quote.
 """
 
 from __future__ import annotations
@@ -40,6 +52,7 @@ CountIfStyle = Literal["countif", "count_if", "sum_case", "filter"]
 LimitStyle = Literal["limit", "top", "fetch"]
 UnquotedCase = Literal["upper", "lower", "preserve"]
 CatalogMatch = Literal["exact", "casefold", "lower", "upper"]
+InformationSchemaScope = Literal["catalog", "schema"]
 
 TIERS: tuple[str, ...] = ("verified", "native", "best_effort")
 COUNT_IF_STYLES: tuple[str, ...] = ("countif", "count_if", "sum_case", "filter")
@@ -97,6 +110,11 @@ class DialectProfile:
     quoted_catalog_match: CatalogMatch
     unquoted_catalog_match: CatalogMatch
     overrides: Mapping[type, Callable[..., str]] = field(default_factory=dict)
+    quoted_column_match: CatalogMatch | None = None
+    unquoted_column_match: CatalogMatch | None = None
+    qualified_information_schema_sql: str | None = None
+    information_schema_scope: InformationSchemaScope = "catalog"
+    quote_escapes: Mapping[str, str] | None = None
     # Amendment B (spec 19 B2)
     sample_styles: Mapping[str, str | None] = field(default_factory=dict)
     keyhash_expr: str | None = None
@@ -178,6 +196,31 @@ class DialectProfile:
         for name in ("quoted_catalog_match", "unquoted_catalog_match"):
             if getattr(self, name) not in CATALOG_MATCHES:
                 raise ValueError(f"DialectProfile.{name} must be one of {CATALOG_MATCHES}")
+        for name in ("quoted_column_match", "unquoted_column_match"):
+            value = getattr(self, name)
+            if value is not None and value not in CATALOG_MATCHES:
+                raise ValueError(f"DialectProfile.{name} must be None or one of {CATALOG_MATCHES}")
+        if self.information_schema_scope not in ("catalog", "schema"):
+            raise ValueError("DialectProfile.information_schema_scope must be catalog or schema")
+        qualified = self.qualified_information_schema_sql
+        if qualified is not None:
+            _no_semicolon(qualified, "DialectProfile.qualified_information_schema_sql")
+            if _slots(qualified, "qualified_information_schema_sql") != {"where", "prefix"}:
+                raise ValueError(
+                    "DialectProfile.qualified_information_schema_sql must have exactly "
+                    "{prefix} and {where}"
+                )
+        if self.quote_escapes is not None:
+            escapes = _frozen_mapping(self, "quote_escapes")
+            close = "]" if self.quote_char == "[" else self.quote_char
+            if close not in escapes or any(
+                not isinstance(k, str) or len(k) != 1 or not isinstance(v, str)
+                for k, v in escapes.items()
+            ):
+                raise ValueError(
+                    "DialectProfile.quote_escapes maps single characters to text and must "
+                    "cover the closing quote character"
+                )
         if self.cast_params:
             missing = sorted(set(PARAM_FAMILIES) - set(params))
             if missing:
@@ -206,9 +249,20 @@ class DialectProfile:
         return text
 
     def quote_ident(self, text: str) -> str:
-        """``text`` quoted with this dialect's quote character, the closing one doubled."""
+        """``text`` quoted with this dialect's quote character: the closing one doubled, or
+        every character spelled per ``quote_escapes`` when the profile declares them."""
         close = "]" if self.quote_char == "[" else self.quote_char
+        if self.quote_escapes is not None:
+            escapes = self.quote_escapes
+            return self.quote_char + "".join(escapes.get(ch, ch) for ch in text) + close
         return self.quote_char + text.replace(close, close + close) + close
+
+    def column_match(self, quoted: bool) -> str:
+        """How CatalogColumns compares a column name (falls back to the table rule)."""
+        mode = self.quoted_column_match if quoted else self.unquoted_column_match
+        if mode is not None:
+            return mode
+        return self.quoted_catalog_match if quoted else self.unquoted_catalog_match
 
     def is_reserved(self, text: str) -> bool:
         return text.upper() in self.reserved_words
@@ -253,6 +307,7 @@ __all__ = [
     "CatalogMatch",
     "CountIfStyle",
     "DialectProfile",
+    "InformationSchemaScope",
     "LimitStyle",
     "UnquotedCase",
     "family_of",

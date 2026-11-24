@@ -71,6 +71,9 @@ TRINO = DialectProfile(
     information_schema_sql=(
         "SELECT column_name, data_type FROM information_schema.columns WHERE {where}"
     ),
+    qualified_information_schema_sql=(
+        "SELECT column_name, data_type FROM {prefix}information_schema.columns WHERE {where}"
+    ),
     # Trino lower-cases every identifier, quoted ones included, before asking a connector
     quoted_catalog_match="lower",
     unquoted_catalog_match="lower",

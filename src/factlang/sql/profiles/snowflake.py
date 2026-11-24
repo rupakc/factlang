@@ -1,7 +1,9 @@
 """Snowflake profile (tier ``native``: SQL parsed with sqlglot in CI, not executed).
 
-Slots: database.schema.table. Unquoted names fold to upper case. ``SAMPLE … SEED (n)``
-repeats a sample for both methods (seed 0 … 2^31-1).
+Slots: database.schema.table. Unquoted names fold to upper case. Metadata for a ref that
+names a database reads ``<database>.information_schema.columns``. Only ``SAMPLE BERNOULLI
+(p) SEED (n)`` is declared (seed 0 … 2^31-1); a block (``system``) sample's repeatability is
+not proven in CI, so it is FL506 (ruling, Task 15 review).
 """
 
 from __future__ import annotations
@@ -33,6 +35,12 @@ TYPE_FAMILIES: tuple[tuple[str, str], ...] = (
     (r"time(\s*\(\d+\))?", "time"),
     (r"(var)?binary(\s*\(\d+\))?", "bytes"),
     (r"variant|object", "json"),
+)
+
+_COLUMNS = (
+    "SELECT column_name, CASE WHEN data_type = 'NUMBER' AND numeric_scale = 0 "
+    "THEN 'NUMBER(' || numeric_precision || ',0)' ELSE data_type END AS data_type "
+    "FROM {source} WHERE {where}"
 )
 
 SNOWFLAKE = DialectProfile(
@@ -70,15 +78,14 @@ SNOWFLAKE = DialectProfile(
     },
     # data_type is NUMBER for every fixed-point column; scale 0 is spelled out so that
     # INTEGER columns map to the integer family (spec 6.1).
-    information_schema_sql=(
-        "SELECT column_name, CASE WHEN data_type = 'NUMBER' AND numeric_scale = 0 "
-        "THEN 'NUMBER(' || numeric_precision || ',0)' ELSE data_type END AS data_type "
-        "FROM information_schema.columns WHERE {where}"
+    information_schema_sql=_COLUMNS.format(source="information_schema.columns", where="{where}"),
+    qualified_information_schema_sql=_COLUMNS.format(
+        source="{prefix}information_schema.columns", where="{where}"
     ),
     quoted_catalog_match="exact",
     unquoted_catalog_match="upper",
     sample_styles={
-        "system": "SAMPLE SYSTEM ({percent}) SEED ({seed})",
+        "system": None,
         "bernoulli": "SAMPLE BERNOULLI ({percent}) SEED ({seed})",
     },
     sample_seed_range=(0, 2**31 - 1),

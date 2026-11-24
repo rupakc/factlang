@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from factlang.sql import ast as A
 from factlang.sql.profile import DialectProfile
-from factlang.sql.profiles._shared import avg_as_decimal, derived_union_subquery
+from factlang.sql.profiles._shared import derived_union_subquery, widened_aggregates
 
 # Redshift reserved words (Database Developer Guide, "Reserved words").
 _RESERVED_WORDS = """
@@ -78,15 +78,25 @@ REDSHIFT = DialectProfile(
     type_families=TYPE_FAMILIES,
     param_types=_PARAM_TYPES,
     # svv_columns also lists late-binding views and external (Spectrum) tables
-    information_schema_sql="SELECT column_name, data_type FROM svv_columns WHERE {where}",
-    quoted_catalog_match="exact",
+    # svv_all_columns covers every database (cross-database queries, datashares), local and
+    # external tables; numeric precision/scale are spelled out so numeric(p,0) is an integer
+    information_schema_sql=(
+        "SELECT column_name, data_type FROM (SELECT database_name AS table_catalog, "
+        "schema_name AS table_schema, table_name, column_name, CASE WHEN data_type = 'numeric' "
+        "AND numeric_scale IS NOT NULL THEN 'numeric(' || numeric_precision || ',' || "
+        "numeric_scale || ')' ELSE data_type END AS data_type FROM svv_all_columns) fl_cols "
+        "WHERE {where}"
+    ),
+    # with the default enable_case_sensitive_identifier = false, quoted names fold too
+    quoted_catalog_match="lower",
     unquoted_catalog_match="lower",
-    overrides={A.Agg: avg_as_decimal(), A.SubqueryFrom: derived_union_subquery},
+    overrides={A.Agg: widened_aggregates(), A.SubqueryFrom: derived_union_subquery},
     sample_styles={"system": None, "bernoulli": None},
     # spec 19 keyhash ruling: 60 bits of MD5, non-negative, so a single MOD is the bucket
     keyhash_expr="MOD(STRTOL(SUBSTRING(MD5({s}), 1, 15), 16), 1000000)",
     cast_params=True,  # every bind parameter is typed in the SQL text
     default_schema_sql="current_schema()",
+    default_catalog_sql="current_database()",
 )
 
 __all__ = ["REDSHIFT"]

@@ -69,9 +69,16 @@ DATABRICKS = DialectProfile(
         "SELECT column_name, full_data_type AS data_type FROM information_schema.columns "
         "WHERE {where}"
     ),
+    qualified_information_schema_sql=(
+        "SELECT column_name, full_data_type AS data_type FROM {prefix}information_schema.columns "
+        "WHERE {where}"
+    ),
     # Unity Catalog stores names in lower case and resolves them case-insensitively, quoted or not
     quoted_catalog_match="lower",
     unquoted_catalog_match="lower",
+    # column names keep the case they were created with and resolve case-insensitively
+    quoted_column_match="casefold",
+    unquoted_column_match="casefold",
     overrides={A.SubqueryFrom: derived_union_subquery},
     sample_styles={
         "system": None,

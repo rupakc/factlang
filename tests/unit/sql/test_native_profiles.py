@@ -40,6 +40,9 @@ def sql(plan: object, name: str) -> str:
 
 
 def test_all_eleven_native_profiles_are_registered() -> None:
+    from factlang.sql.profiles import BUILTIN_PROFILES
+
+    assert [p.name for p in BUILTIN_PROFILES] == ["duckdb", "postgres", *NEW]
     assert set(native_dialects()) == {*NEW, "duckdb", "postgres"}
 
 
@@ -125,25 +128,17 @@ KEYHASH = {
 # only methods the dialect can repeat with a seed are declared; everything else is FL506
 SAMPLE_STYLES: dict[str, dict[str, str | None]] = {
     "bigquery": {"system": None, "bernoulli": None},
-    "snowflake": {
-        "system": "SAMPLE SYSTEM ({percent}) SEED ({seed})",
-        "bernoulli": "SAMPLE BERNOULLI ({percent}) SEED ({seed})",
-    },
+    # block/page samples: repeatability not CI-proven, so FL506 (review ruling)
+    "snowflake": {"system": None, "bernoulli": "SAMPLE BERNOULLI ({percent}) SEED ({seed})"},
     "redshift": {"system": None, "bernoulli": None},
     "databricks": {
         "system": None,
         "bernoulli": "TABLESAMPLE ({percent} PERCENT) REPEATABLE ({seed})",
     },
     "clickhouse": {"system": None, "bernoulli": None},
-    "tsql": {
-        "system": "TABLESAMPLE SYSTEM ({percent} PERCENT) REPEATABLE ({seed})",
-        "bernoulli": None,
-    },
+    "tsql": {"system": None, "bernoulli": None},
     "mysql": {"system": None, "bernoulli": None},
-    "oracle": {
-        "system": "SAMPLE BLOCK ({percent}) SEED ({seed})",
-        "bernoulli": "SAMPLE ({percent}) SEED ({seed})",
-    },
+    "oracle": {"system": None, "bernoulli": "SAMPLE ({percent}) SEED ({seed})"},
     "trino": {"system": None, "bernoulli": None},
 }
 
@@ -241,7 +236,10 @@ SPLIT = {
     "databricks": "SPLIT_PART(CAST(status AS STRING), {{p1}}, 1)",
     "trino": "SPLIT_PART(CAST(status AS varchar), {{p1}}, 1)",
     "redshift": "SPLIT_PART(CAST(status AS VARCHAR(65535)), CAST({{p1}} AS VARCHAR(65535)), 1)",
-    "clickhouse": "splitByString({{p1}}, CAST(status AS Nullable(String)))[1]",
+    "clickhouse": (
+        "if(CAST(status AS Nullable(String)) IS NULL, NULL, "
+        "splitByString({{p1}}, assumeNotNull(CAST(status AS Nullable(String))))[1])"
+    ),
     "mysql": "SUBSTRING_INDEX(CAST(status AS CHAR), {{p1}}, 1)",
     "tsql": (
         "LEFT(CAST(status AS NVARCHAR(4000)), "
@@ -260,12 +258,25 @@ def test_split_prefix_spelling(name: str) -> None:
     assert f"TRIM({SPLIT[name]})" in text
 
 
-def test_tsql_counts_are_count_big_and_avg_is_not_integer_division() -> None:
-    text = sql(ColumnAggregate(ORDERS, AMOUNT, (Metric.ROW_COUNT, Metric.NON_NULL, Metric.AVG)),
-               "tsql")  # fmt: skip
+def test_tsql_counts_are_count_big_and_sum_avg_widen() -> None:
+    metrics = (Metric.ROW_COUNT, Metric.NON_NULL, Metric.SUM, Metric.AVG)
+    text = sql(ColumnAggregate(ORDERS, AMOUNT, metrics), "tsql")
     assert "COUNT_BIG(*) AS row_count" in text and "COUNT_BIG(amount) AS non_null" in text
+    # an INT sum would overflow at 2^31 and an INT AVG divides as integers; the input type
+    # is unknown at render time, so the widening is type-agnostic
+    assert "SUM(amount * CONVERT(BIGINT, 1)) AS sum_value" in text
     assert "AVG(amount * 1.0) AS avg_value" in text
     assert not re.search(r"\bCOUNT\(", text)
+    assert not re.search(r"\bSUM\(amount\)", text)
+
+
+def test_other_profiles_do_not_widen_sum() -> None:
+    for name in NEW:
+        if name == "tsql":
+            continue
+        assert "SUM(amount) AS sum_value" in sql(
+            ColumnAggregate(ORDERS, AMOUNT, (Metric.SUM,)), name
+        ), name
 
 
 def test_redshift_avg_is_not_integer_division() -> None:
@@ -316,16 +327,105 @@ def test_bigquery_quoted_table_parts_are_escaped() -> None:
     assert "FROM `my-proj`.shop.`or\\`ders`" in text
 
 
-def test_bigquery_metadata_reads_the_dataset_information_schema() -> None:
+def meta(name: str, table: TableRef, column: Ident | None = None) -> tuple[str, list[object]]:
     from factlang.ir import MetadataQuery
 
-    probe = render(MetadataQuery(SHOP_ORDERS, STATUS), prof("bigquery"))
-    assert "FROM shop.INFORMATION_SCHEMA.COLUMNS WHERE table_name = {{cat1}}" in (
-        probe.sql_template
-    )
-    assert [p.value for p in probe.params] == ["orders", "status"]
-    bare = render(MetadataQuery(ORDERS), prof("bigquery")).sql_template
-    assert "FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name = {{cat1}}" in bare
+    probe = render(MetadataQuery(table, column), prof(name))
+    # Redshift types every parameter (cast_params); the comparison shape is what is tested
+    text = re.sub(r"CAST\((\{\{cat\d\}\}) AS VARCHAR\(65535\)\)", r"\1", probe.sql_template)
+    return text, [p.value for p in probe.params]
+
+
+SHOP3 = TableRef(Ident("Wh"), Ident("Shop"), Ident("Orders"))
+SHOP3_QUOTED = TableRef(Ident("Wh", quoted=True), Ident("Shop", quoted=True),
+                        Ident("Orders", quoted=True))  # fmt: skip
+
+# item 1: a ref naming the catalog reads that catalog's metadata view
+CROSS_CATALOG_SOURCE = {
+    "snowflake": "FROM Wh.information_schema.columns WHERE",
+    "trino": "FROM Wh.information_schema.columns WHERE",
+    "tsql": "FROM Wh.INFORMATION_SCHEMA.COLUMNS WHERE",
+    "databricks": "FROM Wh.information_schema.columns WHERE",
+    "bigquery": "FROM Wh.Shop.INFORMATION_SCHEMA.COLUMNS WHERE",
+    # Redshift: svv_all_columns spans every database, filtered by database_name
+    "redshift": "FROM svv_all_columns) fl_cols WHERE",
+}
+
+
+@pytest.mark.parametrize("name", sorted(CROSS_CATALOG_SOURCE))
+def test_three_part_metadata_reads_the_catalogs_own_view(name: str) -> None:
+    text, values = meta(name, SHOP3)
+    assert CROSS_CATALOG_SOURCE[name] in text
+    assert " AND table_catalog = {{cat3}}" in text or "LOWER(table_catalog)" in text
+    assert len(values) == 3
+    # without a catalog the unqualified view (current catalog / default dataset) is read
+    bare, _ = meta(name, ORDERS)
+    assert "Wh" not in bare
+    assert CROSS_CATALOG_SOURCE[name].replace("Wh.Shop.", "").replace("Wh.", "") in bare
+
+
+def test_quoted_catalog_prefix_follows_the_quote_rules() -> None:
+    text, _ = meta("tsql", SHOP3_QUOTED)
+    assert 'FROM "Wh".INFORMATION_SCHEMA.COLUMNS' in text
+    text, _ = meta("bigquery", TableRef(Ident("my`p", quoted=True), Ident("ds"), Ident("t")))
+    assert "FROM `my\\`p`.ds.INFORMATION_SCHEMA.COLUMNS" in text
+
+
+# item 2: (table rule, column rule) for an unquoted and a quoted name
+MATCH = {
+    # BigQuery: table names case-sensitive, column names not
+    "bigquery": ("table_name = {{cat1}}", ["Orders"], "LOWER(column_name) = LOWER({{cat2}})"),
+    # Redshift default (enable_case_sensitive_identifier off): quoted names fold too
+    "redshift": ("table_name = {{cat1}}", ["orders"], "column_name = {{cat2}}"),
+    # Databricks: lower-case object names, case-insensitive columns
+    "databricks": ("table_name = {{cat1}}", ["orders"], "LOWER(column_name) = LOWER({{cat2}})"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(MATCH))
+def test_catalog_match_per_object_kind(name: str) -> None:
+    table_cond, folded, column_cond = MATCH[name]
+    for quoted in (False, True):
+        t = TableRef(None, None, Ident("Orders", quoted=quoted))
+        text, values = meta(name, t, Ident("Status", quoted=quoted))
+        assert table_cond in text and column_cond in text, (quoted, text)
+        assert values[0] == folded[0]
+        assert "LOWER(table_name)" not in text  # negative: tables are never casefolded here
+
+
+def test_bigquery_table_names_are_never_casefolded_and_columns_always_are() -> None:
+    text, values = meta("bigquery", SHOP_ORDERS, Ident("Status"))
+    assert "FROM shop.INFORMATION_SCHEMA.COLUMNS WHERE" in text  # the dataset's own view
+    assert "table_name = {{cat1}}" in text and values[0] == "orders"
+    assert "LOWER(column_name) = LOWER({{cat3}})" in text and values[2] == "Status"
+    assert "column_name = {{cat3}}" not in text.replace("LOWER(column_name) = LOWER({{cat3}})", "")
+
+
+def test_profiles_without_a_column_rule_use_the_table_rule() -> None:
+    for name in ("snowflake", "oracle", "trino", "tsql", "mysql", "clickhouse"):
+        p = prof(name)
+        assert p.quoted_column_match is None and p.unquoted_column_match is None, name
+        assert p.column_match(True) == p.quoted_catalog_match
+
+
+# item 3: DECIMAL(p,0) columns reach the integer family
+@pytest.mark.parametrize(
+    ("name", "spelled"),
+    [
+        ("tsql", "CASE WHEN data_type IN ('decimal', 'numeric') THEN data_type + '('"),
+        ("redshift", "CASE WHEN data_type = 'numeric' AND numeric_scale IS NOT NULL"),
+        ("snowflake", "CASE WHEN data_type = 'NUMBER' AND numeric_scale = 0"),
+    ],
+)
+def test_metadata_spells_out_numeric_precision_and_scale(name: str, spelled: str) -> None:
+    from factlang.sql import family_of
+
+    text, _ = meta(name, ORDERS)
+    assert spelled in text
+    # what those spellings produce maps to the right family; a scale > 0 stays decimal
+    native = {"tsql": "decimal(18,0)", "redshift": "numeric(18,0)", "snowflake": "NUMBER(38,0)"}
+    assert family_of(native[name], prof(name)) == "integer"
+    assert family_of(native[name].replace(",0)", ",2)"), prof(name)) == "decimal"
 
 
 def test_oracle_metadata_reads_all_tab_columns_with_the_current_schema() -> None:
@@ -337,28 +437,67 @@ def test_oracle_metadata_reads_all_tab_columns_with_the_current_schema() -> None
     assert [p.value for p in probe.params] == ["ORDERS"]  # unquoted names fold to upper
 
 
+# the exact sampled FROM clause for every declared method (10%, seed 3)
+SAMPLED_FROM = {
+    ("snowflake", "bernoulli"): "FROM orders SAMPLE BERNOULLI (10) SEED (3)",
+    ("databricks", "bernoulli"): "FROM orders TABLESAMPLE (10 PERCENT) REPEATABLE (3)",
+    ("oracle", "bernoulli"): "FROM orders SAMPLE (10) SEED (3)",
+}
+
+
 @pytest.mark.parametrize("name", NEW)
-def test_unsupported_methods_are_fl506_and_never_limit(name: str) -> None:
+def test_unsupported_methods_are_fl506_and_declared_ones_are_exact(name: str) -> None:
     p = prof(name)
     for method in ("system", "bernoulli"):
-        plan = ColumnAggregate(ORDERS, ID, (Metric.ROW_COUNT,), sample=SampleSpec(
-            method, Decimal("0.1"), seed=3))  # type: ignore[arg-type]  # fmt: skip
-        if p.sample_styles.get(method) is None:
+        spec = SampleSpec(method, Decimal("0.1"), seed=3)  # type: ignore[arg-type]
+        plan = ColumnAggregate(ORDERS, ID, (Metric.ROW_COUNT,), sample=spec)
+        if (name, method) not in SAMPLED_FROM:
+            assert p.sample_styles.get(method) is None
             with pytest.raises(RenderError, match="FL506"):
                 render(plan, p)
-        else:
-            text = render(plan, p).sql_template
-            assert "LIMIT" not in text and "TOP" not in text and "FETCH" not in text
-            assert "(10" in text and "3)" in text  # percent and seed are written
+            continue
+        text = render(plan, p).sql_template
+        expected = (
+            f"SELECT COUNT(*) AS row_count, COUNT(*) AS sampled_rows {SAMPLED_FROM[(name, method)]}"
+        )
+        assert text == expected
 
 
-def test_seed_ranges() -> None:
-    assert prof("snowflake").sample_seed_range == (0, 2**31 - 1)
-    assert prof("oracle").sample_seed_range == (0, 4294967295)
-    plan = ColumnAggregate(ORDERS, ID, (Metric.ROW_COUNT,),
-                           sample=SampleSpec("system", Decimal("0.1"), seed=2**31))  # fmt: skip
-    with pytest.raises(RenderError, match="FL506"):
-        render(plan, prof("snowflake"))
+@pytest.mark.parametrize(
+    ("name", "low", "high"),
+    [("snowflake", 0, 2**31 - 1), ("oracle", 0, 4294967295), ("databricks", 0, 2**31 - 1)],
+)
+def test_bernoulli_seed_ranges(name: str, low: int, high: int) -> None:
+    p = prof(name)
+    assert p.sample_seed_range == (low, high)
+
+    def plan(seed: int) -> ColumnAggregate:
+        spec = SampleSpec("bernoulli", Decimal("0.1"), seed=seed)
+        return ColumnAggregate(ORDERS, ID, (Metric.ROW_COUNT,), sample=spec)
+
+    assert f"({high})" in render(plan(high), p).sql_template
+    assert f"({low})" in render(plan(low), p).sql_template
+    for bad in (low - 1, high + 1):
+        with pytest.raises(RenderError, match="FL506"):
+            render(plan(bad), p)
+
+
+def test_tsql_declares_no_table_sample_and_no_seed_range() -> None:
+    from factlang.sql.profile import INT64
+
+    assert prof("tsql").sample_seed_range == INT64  # no method left that reads a seed
+
+
+def test_oracle_cast_to_date_truncates_the_time_of_day() -> None:
+    plan = KeyOverlap((ColumnRef(ORDERS, Ident("placed")),),
+                      (ColumnRef(SHOP_ORDERS, Ident("day")),), cast_to="date")  # fmt: skip
+    text = sql(plan, "oracle")
+    assert "TRUNC(CAST(placed AS DATE)) AS k1" in text
+    assert "TRUNC(CAST(day AS DATE)) AS k1" in text
+    assert "CAST(placed AS TIMESTAMP(6))" in sql(
+        KeyOverlap((ColumnRef(ORDERS, Ident("placed")),),
+                   (ColumnRef(SHOP_ORDERS, Ident("day")),), cast_to="timestamp"), "oracle"
+    )  # fmt: skip
 
 
 def test_no_factlang_alias_is_a_reserved_word_anywhere() -> None:
@@ -376,3 +515,29 @@ def test_no_factlang_alias_is_a_reserved_word_anywhere() -> None:
     }  # fmt: skip
     for name in native_dialects():
         assert not {n for n in names if prof(name).is_reserved(n)}, name
+
+
+def test_new_profile_fields_are_validated() -> None:
+    import dataclasses
+
+    base = prof("tsql")
+    bad: list[dict[str, object]] = [
+        {"quote_escapes": {"\\": "\\\\"}},  # does not cover the closing quote
+        {"quote_escapes": {'""': '"'}},  # keys are single characters
+        {"qualified_information_schema_sql": "SELECT 1 FROM x WHERE {where}"},  # no {prefix}
+        {"qualified_information_schema_sql": "SELECT 1 FROM {prefix}x WHERE {where}; x"},
+        {"information_schema_scope": "table"},
+        {"quoted_column_match": "sometimes"},
+    ]
+    for change in bad:
+        with pytest.raises(ValueError):
+            dataclasses.replace(base, **change)  # type: ignore[arg-type]
+
+
+def test_schema_scoped_view_needs_the_schema_and_catalog_scope_the_catalog() -> None:
+    # T-SQL's view belongs to a database: a schema alone does not qualify it.
+    # BigQuery's belongs to a dataset: the schema slot alone does.
+    text, _ = meta("tsql", SHOP_ORDERS)
+    assert "FROM INFORMATION_SCHEMA.COLUMNS WHERE" in text and "shop." not in text
+    text, _ = meta("bigquery", SHOP_ORDERS)
+    assert "FROM shop.INFORMATION_SCHEMA.COLUMNS WHERE" in text

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from factlang.semantics.refs import Ident
 from factlang.sql import ast as A
 from factlang.sql.printer import Printer
 
@@ -27,7 +26,7 @@ def derived_union_subquery(printer: Printer, x: A.SubqueryFrom) -> str:
         for s in x.select.selects:
             text = printer.select(s)
             if s.order_by or s.limit is not None:
-                text = f"SELECT * FROM ({text}) {printer._derived_alias()}"
+                text = f"SELECT * FROM ({text}) {printer.derived_alias()}"
             branches.append(text)
         inner = " UNION ALL ".join(branches)
     else:
@@ -35,54 +34,27 @@ def derived_union_subquery(printer: Printer, x: A.SubqueryFrom) -> str:
     return f"({inner}) {printer.alias(x.alias)}"
 
 
-def backslash_quoting(quote_escape: str) -> tuple[Override, Override]:
-    """Column and TableName printers for engines where ``\\`` escapes in a quoted name.
+def widened_aggregates(count_fn: str = "COUNT", sum_widen: str | None = None) -> Override:
+    """``Agg`` printer for engines whose aggregates keep a narrow integer input type.
 
-    In BigQuery and ClickHouse a backslash inside a quoted identifier starts an escape
-    sequence, so the printer's plain quote-doubling would let ``a\\nb`` name a different
-    object. Here a quoted name has every backslash doubled and every quote character
-    written as ``quote_escape`` (BigQuery ``\\```, ClickHouse ``""``): the warehouse reads
-    back exactly the claim's text (spec 8.4).
+    The input's type is not known at render time, so the widening is type-agnostic:
+    ``AVG(x * 1.0)`` (an INT AVG would divide as integers; a DECIMAL/FLOAT input keeps its
+    kind), ``SUM(x * <sum_widen>)`` when given (T-SQL ``CONVERT(BIGINT, 1)``: an INT sum
+    becomes BIGINT instead of overflowing; DECIMAL/FLOAT inputs stay exact/float), and
+    ``count_fn`` for COUNT (T-SQL ``COUNT_BIG``).
     """
-
-    def ident(printer: Printer, i: Ident) -> str:
-        p = printer.profile
-        if not i.quoted:
-            return printer.ident(i)
-        printer.check_ident(i.text, True)
-        q = p.quote_char
-        return q + i.text.replace("\\", "\\\\").replace(q, quote_escape) + q
-
-    def column(printer: Printer, x: A.Column) -> str:
-        col = ident(printer, x.name)
-        return f"{printer.alias(x.qualifier)}.{col}" if x.qualifier else col
-
-    def table_name(printer: Printer, x: A.TableName) -> str:
-        parts = x.ref.parts()
-        if len(parts) > printer.profile.max_table_parts:
-            printer.table(x.ref)  # raises FL505
-        out = ".".join(ident(printer, part) for part in parts)
-        if x.alias is not None:
-            out += " " + printer.alias(x.alias)
-        if x.sample is not None:
-            out += " " + printer.table_sample(x.sample)
-        return out
-
-    return column, table_name
-
-
-def avg_as_decimal(count_fn: str = "COUNT") -> Override:
-    """``Agg`` printer: AVG over ``x * 1.0`` (an integer AVG would truncate), COUNT as given."""
 
     def agg(printer: Printer, x: A.Agg) -> str:
         arg = "*" if x.arg is None else printer.expr(x.arg)
         distinct = "DISTINCT " if x.distinct else ""
         if x.fn == "AVG":
             return f"AVG({distinct}{arg} * 1.0)"
+        if x.fn == "SUM" and sum_widen is not None:
+            return f"SUM({distinct}{arg} * {sum_widen})"
         fn = count_fn if x.fn == "COUNT" else x.fn
         return f"{fn}({distinct}{arg})"
 
     return agg
 
 
-__all__ = ["Override", "avg_as_decimal", "backslash_quoting", "derived_union_subquery"]
+__all__ = ["Override", "derived_union_subquery", "widened_aggregates"]

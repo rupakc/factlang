@@ -6,8 +6,12 @@ ODBC/JDBC driver default), never with brackets. Spellings that differ from the A
 ``TOP n``; ``COUNT_BIG`` (``COUNT`` is a 32-bit INT and overflows past 2^31 rows); a
 conditional count is ``COUNT_BIG(CASE WHEN c THEN 1 END)``; ``AVG`` is taken over ``x * 1.0``
 (an integer AVG truncates); string concatenation is ``+``; the part before a separator is
-``LEFT(x, CHARINDEX(sep, x + sep) - 1)``. ``TABLESAMPLE SYSTEM … REPEATABLE (seed)`` is the
-``system`` method (page sampling); there is no row sample (``bernoulli`` is FL506).
+``LEFT(x, CHARINDEX(sep, x + sep) - 1)``; ``SUM`` is taken over ``x * CONVERT(BIGINT, 1)``
+(an INT sum would overflow). Metadata for a ref that names a database reads
+``<db>.INFORMATION_SCHEMA.COLUMNS``, with DECIMAL/NUMERIC spelled ``decimal(p,s)`` so scale-0
+columns map to the integer family. No table-sample method is declared (FL506): page-level
+``TABLESAMPLE … REPEATABLE`` repeatability is not proven in CI (ruling, Task 15 review), and
+there is no row sample; keyhash is supported.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from __future__ import annotations
 from factlang.sql import ast as A
 from factlang.sql.printer import Printer
 from factlang.sql.profile import DialectProfile
-from factlang.sql.profiles._shared import avg_as_decimal
+from factlang.sql.profiles._shared import widened_aggregates
 
 # T-SQL reserved keywords (Transact-SQL reference, "Reserved keywords").
 _RESERVED_WORDS = """
@@ -73,6 +77,12 @@ _PARAM_TYPES = {
     "timestamp": "DATETIME2",
 }
 
+_COLUMNS = (
+    "SELECT column_name, CASE WHEN data_type IN ('decimal', 'numeric') THEN data_type + '(' + "
+    "CAST(numeric_precision AS VARCHAR(10)) + ',' + CAST(numeric_scale AS VARCHAR(10)) + ')' "
+    "ELSE data_type END AS data_type FROM {source} WHERE {where}"
+)
+
 TSQL = DialectProfile(
     name="tsql",
     tier="verified",
@@ -87,22 +97,19 @@ TSQL = DialectProfile(
     now_sql="SYSUTCDATETIME()",
     type_families=TYPE_FAMILIES,
     param_types=_PARAM_TYPES,
-    information_schema_sql=(
-        "SELECT column_name, data_type FROM INFORMATION_SCHEMA.COLUMNS WHERE {where}"
+    information_schema_sql=_COLUMNS.format(source="INFORMATION_SCHEMA.COLUMNS", where="{where}"),
+    qualified_information_schema_sql=_COLUMNS.format(
+        source="{prefix}INFORMATION_SCHEMA.COLUMNS", where="{where}"
     ),
     # names compare under the database collation, case-insensitive by default
     quoted_catalog_match="casefold",
     unquoted_catalog_match="casefold",
     overrides={
-        A.Agg: avg_as_decimal("COUNT_BIG"),
+        A.Agg: widened_aggregates("COUNT_BIG", sum_widen="CONVERT(BIGINT, 1)"),
         A.CountIf: _count_if,
         A.SplitPrefix: _split_prefix,
     },
-    sample_styles={
-        "system": "TABLESAMPLE SYSTEM ({percent} PERCENT) REPEATABLE ({seed})",
-        "bernoulli": None,
-    },
-    sample_seed_range=(1, 2**63 - 1),  # REPEATABLE takes a positive BIGINT
+    sample_styles={"system": None, "bernoulli": None},
     # spec 19 keyhash ruling: 64 signed bits of MD5, folded with MOD(MOD(h,B)+B,B) (``%``)
     keyhash_expr=(
         "((CONVERT(BIGINT, SUBSTRING(HASHBYTES('MD5', CAST({s} AS NVARCHAR(4000))), 1, 8))"

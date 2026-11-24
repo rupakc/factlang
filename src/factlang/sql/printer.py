@@ -68,7 +68,7 @@ class Printer:
         """A full statement; a top-level UNION ALL is wrapped so it starts with SELECT."""
         self._reserve(node)
         if isinstance(node, A.UnionAll):
-            return f"SELECT * FROM ({self.union(node)}) {self._derived_alias()}"
+            return f"SELECT * FROM ({self.union(node)}) {self.derived_alias()}"
         return self.select(node)
 
     def expression(self, node: A.Expr) -> str:
@@ -135,7 +135,7 @@ class Printer:
             return f"CAST({text} AS {self.profile.param_types[p.family]})"
         return text
 
-    def _catalog_param(self, value: str) -> str:
+    def catalog_param(self, value: str) -> str:
         while True:
             self._catalog_count += 1
             name = f"cat{self._catalog_count}"
@@ -143,7 +143,7 @@ class Printer:
                 break
         return self.param(Param(name, value, "string"))
 
-    def _derived_alias(self) -> str:
+    def derived_alias(self) -> str:
         self._derived += 1
         return f"fl_d{self._derived}"
 
@@ -260,7 +260,7 @@ class Printer:
                 return f"{left} CROSS JOIN {right}"
             return f"{left} {x.kind} JOIN {right} ON {self.expr(x.on)}"
         if isinstance(x, A.CatalogColumns):
-            return f"({self.catalog_columns(x)}) {self._derived_alias()}"
+            return f"({self.catalog_columns(x)}) {self.derived_alias()}"
         raise RenderError(f"FL500 cannot print {type(x).__name__} as a FROM item")
 
     def table_sample(self, s: A.TableSample) -> str:
@@ -289,12 +289,15 @@ class Printer:
 
         def match(column: str, name: Ident) -> None:
             self.check_ident(name.text, name.quoted)
-            mode = p.quoted_catalog_match if name.quoted else p.unquoted_catalog_match
+            if column == "column_name":
+                mode = p.column_match(name.quoted)
+            else:
+                mode = p.quoted_catalog_match if name.quoted else p.unquoted_catalog_match
             if mode == "casefold":
-                conds.append(f"LOWER({column}) = LOWER({self._catalog_param(name.text)})")
+                conds.append(f"LOWER({column}) = LOWER({self.catalog_param(name.text)})")
                 return
             value = {"lower": name.text.lower(), "upper": name.text.upper()}.get(mode, name.text)
-            conds.append(f"{column} = {self._catalog_param(value)}")
+            conds.append(f"{column} = {self.catalog_param(value)}")
 
         match("table_name", ref.table)
         if ref.schema is not None:
@@ -307,7 +310,18 @@ class Printer:
             conds.append(f"table_catalog = {p.default_catalog_sql}")
         if x.column is not None:
             match("column_name", x.column)
-        return p.information_schema_sql.format(where=" AND ".join(conds))
+        where = " AND ".join(conds)
+        qualified = p.qualified_information_schema_sql
+        # the parts that own the catalog view: the catalog, or [catalog.]schema (BigQuery)
+        owner: tuple[Ident, ...]
+        if p.information_schema_scope == "catalog":
+            owner = (ref.catalog,) if ref.catalog is not None else ()
+        else:
+            owner = ref.parts()[:-1]
+        if qualified is not None and owner:
+            prefix = "".join(self.ident(i) + "." for i in owner)
+            return qualified.format(prefix=prefix, where=where)
+        return p.information_schema_sql.format(where=where)
 
     # -- statements -------------------------------------------------------------------------
 
@@ -338,7 +352,7 @@ class Printer:
             text = self.select(s)
             if s.order_by or s.limit is not None:
                 if self.profile.limit_style == "top":
-                    text = f"SELECT * FROM ({text}) {self._derived_alias()}"
+                    text = f"SELECT * FROM ({text}) {self.derived_alias()}"
                 else:
                     text = f"({text})"
             branches.append(text)

@@ -4,10 +4,12 @@ Slots: schema (owner).table (2). Unquoted names fold to upper case. ``FETCH FIRS
 ONLY`` (12c+); the part before a separator is ``SUBSTR(x, 1, INSTR(x || sep, sep) - 1)``;
 the clock is ``SYS_EXTRACT_UTC(SYSTIMESTAMP)``. Column metadata comes from
 ``ALL_TAB_COLUMNS`` (there is no ``information_schema``), with a scale-0 ``NUMBER`` spelled
-``NUMBER(p,0)`` so integer columns map to the integer family. ``SAMPLE BLOCK (p) SEED (n)``
-is the ``system`` method and ``SAMPLE (p) SEED (n)`` the ``bernoulli`` one.
+``NUMBER(p,0)`` so integer columns map to the integer family. ``SAMPLE (p) SEED (n)`` is the
+``bernoulli`` method; block sampling (``SAMPLE BLOCK``) only "attempts to" repeat with a
+seed, so ``system`` is FL506 (ruling, Task 15 review).
 
-An Oracle ``DATE`` holds a time of day, so it maps to the ``timestamp`` family.
+An Oracle ``DATE`` holds a time of day, so it maps to the ``timestamp`` family, and a cast to
+the ``date`` family truncates it (``TRUNC(CAST(x AS DATE))``) so dates compare as dates.
 """
 
 from __future__ import annotations
@@ -44,6 +46,11 @@ TYPE_FAMILIES: tuple[tuple[str, str], ...] = (
     (r"raw(\s*\(\d+\))?|long raw|blob|bfile", "bytes"),
     (r"json", "json"),
 )
+
+
+def _cast(printer: Printer, x: A.Cast) -> str:
+    text = f"CAST({printer.expr(x.e)} AS {printer.cast_type(x.family)})"
+    return f"TRUNC({text})" if x.family == "date" else text
 
 
 def _split_prefix(printer: Printer, x: A.SplitPrefix) -> str:
@@ -89,9 +96,13 @@ ORACLE = DialectProfile(
     ),
     quoted_catalog_match="exact",
     unquoted_catalog_match="upper",
-    overrides={A.SplitPrefix: _split_prefix, A.SubqueryFrom: derived_union_subquery},
+    overrides={
+        A.Cast: _cast,
+        A.SplitPrefix: _split_prefix,
+        A.SubqueryFrom: derived_union_subquery,
+    },
     sample_styles={
-        "system": "SAMPLE BLOCK ({percent}) SEED ({seed})",
+        "system": None,
         "bernoulli": "SAMPLE ({percent}) SEED ({seed})",
     },
     sample_seed_range=(0, 4294967295),

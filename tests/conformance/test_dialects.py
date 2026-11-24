@@ -6,10 +6,12 @@ test here automatically.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,10 +35,11 @@ from factlang.sql import (
     family_of,
     get_profile,
     native_dialects,
-    render,
     render_filter,
     render_join,
 )
+from factlang.sql import render as render_exact
+from factlang.sql.probe import RenderedProbe
 from factlang.sql.profile import DialectProfile
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "type_names"
@@ -101,6 +104,28 @@ KEYHASH_PLANS: list[object] = [
     KeyOverlap((cref(ITEMS, "id"),), (cref(ORDERS, "id"),), sample=KEYHASH, right_sample=KEYHASH),
     PatternCoverage(ORDERS, STATUS, "%a%", sample=KEYHASH),
 ]
+
+
+def fit(obj: Any, max_parts: int) -> Any:
+    """``obj`` with every table ref cut to the dialect's slots (spec 4.3): a 2-slot dialect
+    (mysql, clickhouse, oracle) has no catalog, so ``warehouse.shop.order_items`` is
+    ``shop.order_items`` there. FL505 for too many parts is tested on the uncut ref."""
+    if isinstance(obj, TableRef):
+        return TableRef(None, obj.schema, obj.table) if len(obj.parts()) > max_parts else obj
+    if isinstance(obj, tuple):
+        return tuple(fit(x, max_parts) for x in obj)
+    if isinstance(obj, dict):
+        return {fit(k, max_parts): fit(v, max_parts) for k, v in obj.items()}
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, (type, Ident, Param)):
+        changes = {
+            f.name: fit(getattr(obj, f.name), max_parts) for f in dataclasses.fields(obj) if f.init
+        }
+        return dataclasses.replace(obj, **changes)
+    return obj
+
+
+def render(plan: Any, p: DialectProfile) -> RenderedProbe:
+    return render_exact(fit(plan, p.max_table_parts), p)
 
 
 def profile(name: str) -> DialectProfile:
@@ -199,7 +224,10 @@ def test_each_sample_method_renders_or_is_fl506(name: str, method: str) -> None:
         assert "TABLESAMPLE" not in toks and "SAMPLE" not in toks
     else:
         assert {"TABLESAMPLE", "SAMPLE"} & toks or "USING" in toks
-        assert method.upper() in toks
+        if method == "system":  # a block sample always names itself (SYSTEM / Oracle BLOCK)
+            assert {"SYSTEM", "BLOCK"} & toks
+        else:  # BERNOULLI, or the bare row-level form (Databricks/Oracle ``SAMPLE (p)``)
+            assert "BERNOULLI" in toks or not {"SYSTEM", "BLOCK"} & toks
 
 
 @pytest.mark.parametrize("name", PROFILES)
@@ -238,16 +266,19 @@ def test_identifier_rules(name: str) -> None:
 
     def sql_for(ident: Ident) -> str:
         t = TableRef(None, None, Ident("orders"))
-        return render(ColumnAggregate(t, ident, (Metric.NON_NULL,)), p).sql_template
+        sql = render(ColumnAggregate(t, ident, (Metric.NON_NULL,)), p).sql_template
+        return sql.replace("COUNT_BIG(", "COUNT(")  # T-SQL counts are 64-bit COUNT_BIG
 
     # unquoted stays unquoted, case untouched (the warehouse applies its own rules)
     assert "COUNT(MixedCase)" in sql_for(Ident("MixedCase"))
     # a reserved word is quoted after the profile's unquoted-case fold
     folded = {"upper": "SELECT", "lower": "select", "preserve": "Select"}[p.unquoted_case]
     assert f"COUNT({q}{folded}{close})" in sql_for(Ident("Select"))
-    # quoted keeps its case; an embedded quote character is doubled
+    # quoted keeps its case; an embedded quote character is doubled (BigQuery, where a
+    # backslash is an escape inside backticks, writes it as \`)
+    escaped = "\\`" if name == "bigquery" else close + close
     assert f"COUNT({q}Order Items{close})" in sql_for(Ident("Order Items", quoted=True))
-    assert f"COUNT({q}a{close}{close}b{close})" in sql_for(Ident(f"a{close}b", quoted=True))
+    assert f"COUNT({q}a{escaped}b{close})" in sql_for(Ident(f"a{close}b", quoted=True))
     # refused, never sanitised
     for bad in ("a\x00b", "a\nb", "a\rb", "{{p1}}", "x}}y", "a" * (p.max_identifier_length + 1)):
         with pytest.raises(RenderError, match="FL502"):
@@ -265,7 +296,7 @@ def test_too_many_table_parts_is_fl505(name: str) -> None:
     if p.max_table_parts >= 3:
         pytest.skip("a TableRef holds at most three parts")
     with pytest.raises(RenderError, match="FL505"):
-        render(ColumnAggregate(ITEMS, None, (Metric.ROW_COUNT,)), p)
+        render_exact(ColumnAggregate(ITEMS, None, (Metric.ROW_COUNT,)), p)
 
 
 @pytest.mark.parametrize("name", PROFILES)
@@ -284,10 +315,11 @@ def test_hostile_literal_only_in_params(name: str) -> None:
         assert any(HOSTILE.lower() in str(x.value).lower() for x in probe.params)
     frag = render_filter(hostile, table=ORDERS, dialect=name)
     assert "DROP" not in frag.sql_template and [x.value for x in frag.params] == [HOSTILE]
+    items = fit(ITEMS, p.max_table_parts)
     join = render_join(
-        [EdgeRef(cref(ITEMS, "order_id"), cref(ORDERS, "id"))],
+        [EdgeRef(cref(items, "order_id"), cref(ORDERS, "id"))],
         name,
-        filters={ORDERS: hostile, ITEMS: hostile},
+        filters={ORDERS: hostile, items: hostile},
     )
     assert "DROP" not in join.sql_template
     assert [x.value for x in join.params] == [HOSTILE, HOSTILE]
@@ -299,13 +331,14 @@ def test_render_filter_and_join_render(name: str) -> None:
     assert frag.dialect == name and frag.tier == profile(name).tier
     assert "o.deleted" in frag.sql_template and "o.status" in frag.sql_template
     assert ";" not in frag.sql_template
+    items = fit(ITEMS, profile(name).max_table_parts)
     join = render_join(
         [
-            EdgeRef(cref(ITEMS, "order_id"), cref(ORDERS, "id")),
+            EdgeRef(cref(items, "order_id"), cref(ORDERS, "id")),
             EdgeRef(cref(ORDERS, "customer_id"), cref(CUSTOMERS, "id")),
         ],
         dialect=name,
-        filters={ITEMS: PAID, CUSTOMERS: FIsNull(Ident("deleted_at"))},
+        filters={items: PAID, CUSTOMERS: FIsNull(Ident("deleted_at"))},
         aliases={ORDERS: "o"},
     )
     sql = join.sql_template

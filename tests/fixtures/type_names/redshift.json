@@ -1,0 +1,23 @@
+{
+  "smallint": "integer",
+  "integer": "integer",
+  "bigint": "integer",
+  "numeric": "decimal",
+  "numeric(18,0)": "integer",
+  "numeric(12,4)": "decimal",
+  "real": "float",
+  "double precision": "float",
+  "character varying": "string",
+  "character varying(256)": "string",
+  "character(10)": "string",
+  "boolean": "boolean",
+  "date": "date",
+  "timestamp without time zone": "timestamp",
+  "timestamp with time zone": "timestamp",
+  "time without time zone": "time",
+  "time with time zone": "time",
+  "binary varying": "bytes",
+  "super": "json",
+  "geometry": "other",
+  "hllsketch": "other"
+}

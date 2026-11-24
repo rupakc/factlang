@@ -66,7 +66,7 @@ def count_if_sql(p: DialectProfile) -> str:
 
 
 def test_builtin_profiles_are_registered() -> None:
-    assert {p.name for p in BUILTIN_PROFILES} == {"duckdb", "postgres"}
+    assert {p.name for p in BUILTIN_PROFILES} >= {"duckdb", "postgres"}  # + Task 15's nine
     assert {"duckdb", "postgres"} <= set(native_dialects())
     assert get_profile("duckdb") is DUCK and get_profile("nope") is None
     assert DUCK.tier == PG.tier == "verified"

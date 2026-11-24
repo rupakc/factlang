@@ -1,0 +1,23 @@
+{
+  "tinyint": "integer",
+  "smallint": "integer",
+  "int": "integer",
+  "bigint": "integer",
+  "decimal(10,2)": "decimal",
+  "decimal(10,0)": "integer",
+  "float": "float",
+  "double": "float",
+  "string": "string",
+  "varchar(10)": "string",
+  "char(3)": "string",
+  "boolean": "boolean",
+  "date": "date",
+  "timestamp": "timestamp",
+  "timestamp_ntz": "timestamp",
+  "binary": "bytes",
+  "variant": "json",
+  "array<string>": "array",
+  "struct<a:int,b:string>": "struct",
+  "map<string,int>": "other",
+  "interval day to second": "other"
+}

@@ -11,7 +11,7 @@ from factlang.judge import Within
 from factlang.packs.standard._common import (
     ANSWER_EXCLUSIVE,
     answer_attrs,
-    number,
+    count,
 )
 from factlang.semantics.checked import CheckedClaim
 from factlang.semantics.signature import Operand, VerbSpec
@@ -31,7 +31,7 @@ def plan(claim: CheckedClaim) -> ir.ProbePlan:
 
 
 def derive(payload: Mapping[str, object], claim: CheckedClaim) -> dict[str, object]:
-    return {"value": number(payload["row_count"])}
+    return {"value": count(payload["row_count"])}
 
 
 CONTRACT = Contract(

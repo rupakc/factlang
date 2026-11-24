@@ -94,9 +94,16 @@ class VerbSpec:
             ("paired", self.paired),
         ):
             for first, second in pairs:
+                if field in ("exclusive", "paired") and first == second:
+                    raise ValueError(f"{self.name}: {field} pairs {first!r} with itself")
                 for n in (first, second):
                     if n not in seen:
                         raise ValueError(f"{self.name}: {field} names undeclared attribute {n!r}")
+        types = {a.name: a.type for a in self.attrs}
+        for first, second in self.paired:
+            for n in (first, second):
+                if types[n] != "COLUMN_LIST":
+                    raise ValueError(f"{self.name}: paired attribute {n!r} must be COLUMN_LIST")
         if self.cast_attr is not None and self.cast_attr not in seen:
             raise ValueError(
                 f"{self.name}: cast_attr names undeclared attribute {self.cast_attr!r}"

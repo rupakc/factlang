@@ -24,9 +24,18 @@ KEY_METRICS: tuple[Metric, ...] = (
 
 
 def number(value: object) -> Decimal | None:
-    """Exact ``Decimal`` of a measured number; ``None`` for NULL (or a non-finite value)."""
+    """Exact ``Decimal`` of a measured number; ``None`` for NULL (or a non-finite value).
+
+    A string is a driver's textual NUMERIC (``Decimal(str)``); a non-numeric string raises
+    ``TypeError`` (judged as ERROR)."""
     if value is None or isinstance(value, bool):
         return None
+    if isinstance(value, str):
+        try:
+            parsed = Decimal(value.strip())
+        except ArithmeticError:
+            raise TypeError(f"expected a number, got {value!r}") from None
+        return parsed if parsed.is_finite() else None
     if isinstance(value, Decimal):
         return value if value.is_finite() else None
     if isinstance(value, int):
@@ -93,17 +102,30 @@ def answer_attrs(value_type: str) -> tuple[AttrSpec, ...]:
 ANSWER_EXCLUSIVE: tuple[tuple[str, str], ...] = (("TOLERANCE", "ABS_TOLERANCE"),)
 
 
+def answer_number(value: object) -> Decimal | float | None:
+    """A measured SUM/AVG/MIN/MAX number: a finite float stays a float (so the judge's
+    no-band ``==``/``!=`` use ``isclose``, spec 6.4); everything else is an exact ``Decimal``."""
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    return number(value)
+
+
 def answer_value(value: object, claim: CheckedClaim) -> object:
-    """A measured MIN/MAX value in the kind of the claim's ``VALUE``: numbers as exact
-    ``Decimal``; timestamps in UTC (naive = UTC); a DATE against a TIMESTAMP target is its
-    midnight UTC. Anything else is returned unchanged (a kind mismatch is judged as ERROR)."""
+    """A measured MIN/MAX value in the kind of the claim's ``VALUE``: numbers as
+    ``answer_number``; timestamps in UTC (naive = UTC); a DATE against a TIMESTAMP target is
+    its midnight UTC; a timestamp against a DATE target is its UTC calendar date (the
+    half-open-day semantics for all six operators). Anything else is returned unchanged
+    (a kind mismatch is judged as ERROR)."""
     if value is None:
         return None
-    if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
-        return number(value)
+    if isinstance(value, (int, float, Decimal, str)) and not isinstance(value, bool):
+        return answer_number(value)
     target = claim.value("VALUE")
     if isinstance(value, dt.datetime):
-        return as_utc(value)
+        utc = as_utc(value)
+        if isinstance(target, dt.date) and not isinstance(target, dt.datetime):
+            return utc.date()
+        return utc
     if isinstance(value, dt.date) and isinstance(target, dt.datetime):
         return as_utc(value)
     return value

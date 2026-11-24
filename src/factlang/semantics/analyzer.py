@@ -632,8 +632,11 @@ class _ClaimCheck:
                     "FL312",
                     f"join compares a {lf} column ({lt}) with a {rf} column ({rt})",
                     c.operands[0].span,
-                    hint=f"add {spec.cast_attr or 'a cast'} <family> to compare both sides "
-                    "as one type",
+                    hint=(
+                        f"add {spec.cast_attr} <family> to compare both sides as one type"
+                        if spec.cast_attr is not None
+                        else None
+                    ),
                 )
         if unknown:
             self.bag.info(

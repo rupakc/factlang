@@ -632,3 +632,33 @@ def test_pair_behaviour_is_keyed_on_the_spec_not_attr_names() -> None:
     bag = DiagnosticBag()
     claims = analyze(res.document, reg, bag=bag)
     assert bag.codes() == [] and len(claims) == 1
+
+
+def _edge_registry(cast_attr: str | None, attrs: tuple[AttrSpec, ...]) -> VerbRegistry:
+    reg = VerbRegistry()
+    reg.register(
+        VerbSpec(
+            "LINK", "edge", (OperandSpec("edge", OperandKind.EDGE),), attrs, cast_attr=cast_attr
+        )
+    )
+    return reg
+
+
+def _link(reg: VerbRegistry, src: str) -> DiagnosticBag:
+    cat = StaticCatalog({"a": {"i": "int"}, "b": {"y": "varchar"}})
+    bag = DiagnosticBag()
+    analyze(parse(src).document, reg, catalog=cat, bag=bag)
+    return bag
+
+
+def test_fl312_follows_the_spec_cast_attr() -> None:
+    """A differently-named cast attribute suppresses FL312 and is named in the hint; an
+    attribute called CAST on a verb whose cast_attr is None suppresses nothing."""
+    named = _edge_registry("COERCE", (AttrSpec("COERCE", "TYPE_FAMILY"),))
+    bag = _link(named, "LINK a.i -> b.y")
+    assert bag.codes() == ["FL312"] and "COERCE" in (next(iter(bag)).hint or "")
+    assert _link(named, "LINK a.i -> b.y COERCE string").codes() == []
+
+    none = _edge_registry(None, (AttrSpec("CAST", "TYPE_FAMILY"),))
+    bag = _link(none, "LINK a.i -> b.y CAST string")
+    assert bag.codes() == ["FL312"] and next(iter(bag)).hint is None

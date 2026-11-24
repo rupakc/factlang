@@ -99,7 +99,12 @@ def test_register_rejects_unregistered_value_type() -> None:
 
 
 def _attrs() -> tuple[AttrSpec, ...]:
-    return (AttrSpec("A", "RATIO"), AttrSpec("B", "NUMBER"), AttrSpec("C", "COLUMN_LIST"))
+    return (
+        AttrSpec("A", "RATIO"),
+        AttrSpec("B", "NUMBER"),
+        AttrSpec("C", "COLUMN_LIST"),
+        AttrSpec("D", "COLUMN_LIST"),
+    )
 
 
 def test_new_fields_default_empty() -> None:
@@ -108,7 +113,7 @@ def test_new_fields_default_empty() -> None:
 
 
 def test_new_fields_accept_declared_names() -> None:
-    v = spec(attrs=_attrs(), exclusive=(("A", "B"),), paired=(("C", "C"),), cast_attr="B")
+    v = spec(attrs=_attrs(), exclusive=(("A", "B"),), paired=(("C", "D"),), cast_attr="B")
     assert v.exclusive == (("A", "B"),) and v.cast_attr == "B"
 
 
@@ -124,3 +129,17 @@ def test_new_fields_accept_declared_names() -> None:
 def test_new_fields_reject_undeclared_names(kw: dict[str, object]) -> None:
     with pytest.raises(ValueError, match="undeclared attribute 'Z'"):
         spec(attrs=_attrs(), **kw)
+
+
+@pytest.mark.parametrize(
+    "kw", [{"exclusive": (("A", "A"),)}, {"paired": (("C", "C"),)}], ids=["exclusive", "paired"]
+)
+def test_self_pairs_are_rejected(kw: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="with itself"):
+        spec(attrs=_attrs(), **kw)
+
+
+def test_paired_attributes_must_be_column_lists() -> None:
+    with pytest.raises(ValueError, match="must be COLUMN_LIST"):
+        spec(attrs=_attrs(), paired=(("C", "A"),))
+    assert spec(attrs=_attrs(), paired=(("C", "D"),)).paired == (("C", "D"),)

@@ -184,7 +184,7 @@ the [playground](playground.md) does in your browser.
 
 ```python
 for probe in fl.compile("NULLS customers.email RATE <=5%", dialect="snowflake"):
-    print(probe.inline())       # display-oriented: literals inlined, or FL500 if unsafe
+    print(probe.inline())       # display-oriented: literals inlined, or FL507 if unsafe
 ```
 
 `probe.sql_template` and `probe.params` are the executable form; `probe.bind("qmark")`

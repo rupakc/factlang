@@ -48,7 +48,7 @@ print(probe.inline())                  # display-oriented text; never executed b
 
 Rendered probes must begin with `SELECT` or `WITH` and contain no `;` outside literals.
 
-`inline()` fails closed: it quotes strings by doubling `'` in every dialect and never relies on backslash escaping, and it refuses with `FL500` any value it cannot render safely (a string with a backslash or NUL, a `'` for BigQuery or Databricks, a non-scalar, `NaN` or an infinity). Evidence then shows the `{{name}}` template instead; the check itself is unaffected.
+`inline()` fails closed: it quotes strings by doubling `'` in every dialect and never relies on backslash escaping, and it refuses with `FL507` any value it cannot render safely (a string with a backslash, NUL or lone surrogate; a `'` where the resolved dialect's lexer has no doubled-quote form, such as BigQuery, Databricks, Spark or Hive; a subclass of a scalar type; a non-scalar, `NaN`, an infinity or an over-long number; a type that does not match its family). Literal spellings come from the profile (`doubled_quote_escape`, `string_literal_prefix`, `boolean_literals`, `date_literal`, `timestamp_literal`): T-SQL writes `N'…'` and `1`/`0`, Oracle `1`/`0`. Evidence then shows the `{{name}}` template instead; the check itself is unaffected.
 
 ## Type families
 

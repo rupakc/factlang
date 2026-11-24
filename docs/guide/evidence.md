@@ -50,17 +50,39 @@ whatever it cannot render safely instead of guessing:
 - Strings are quoted by doubling `'`, in every dialect. Nothing relies on backslash escaping,
   so a literal never changes meaning with server settings (MySQL's default `sql_mode`,
   PostgreSQL's `standard_conforming_strings`).
-- A string holding a backslash or a NUL is refused, as is a `'` in a dialect whose string
-  literals have no doubled-quote form (`bigquery`, `databricks`).
-- Only scalars are inlined: `NULL`, booleans, integers, finite decimals and floats, dates,
-  timestamps and strings. Lists, dicts, sets, bytes, other objects, `NaN` and infinities are
-  refused.
+- A string holding a backslash, a NUL or a lone surrogate is refused, as is a `'` in a
+  dialect whose lexer does not read `''` as a quote. That is decided by the dialect the
+  renderer resolves: a native profile's `doubled_quote_escape` (`False` for `bigquery` and
+  `databricks`), or, for a bridged dialect, sqlglot's own tokenizer (so `spark`, `spark2` and
+  `hive` refuse it too). A dialect nothing knows refuses it.
+- Only values of an exact built-in type are inlined: `None`, `bool`, `int`, `float`,
+  `Decimal`, `str`, `datetime.date` and `datetime.datetime`. A subclass of any of them (an
+  `IntEnum`, a numpy scalar, a `str` subclass) is refused, because its own methods could
+  print anything; values are rendered through the base type's functions or from their
+  fields. Lists, dicts, sets, bytes, other objects, `NaN`, infinities, integers or decimals
+  with more than 4300 digits, and a value whose type does not match its parameter family (a
+  `datetime` in a `date` parameter, `True` in an `integer` one) are refused.
+- Spellings follow the dialect: T-SQL strings are national literals (`N'…'`); T-SQL and
+  Oracle booleans are `1`/`0`; timestamps are converted to UTC and written as
+  `CAST('… …' AS DATETIME2)` on T-SQL, `TIMESTAMP '… …'` on Oracle, and
+  `TIMESTAMP '…T…+00:00'` elsewhere; T-SQL dates are `CAST('…' AS DATE)`.
 
-A refusal is `RenderError("FL500 cannot inline <type> parameter <name> …")`. Evidence never
+A refusal is `RenderError("FL507 cannot inline <type> parameter <name> …")`. Evidence never
 fails a check over it: `evidence.sql` (and `factlang explain`, the agent's `factlang_explain`
 and `Checker.estimate`) shows the template with its `{{name}}` placeholders instead, and the
-values are in `params`. The claim itself is judged exactly as before, because the executed
-statement always binds its parameters.
+values are in `params`; any other exception raised while converting a value is treated the
+same way. The claim itself is judged exactly as before, because the executed statement
+always binds its parameters. (`FL500` stays a genuine render bug and is never swallowed.)
+
+!!! warning "What inline text assumes"
+    Inline text is for display, and for hosts that cannot bind parameters. Bind whenever you
+    can. The literals assume the client connection uses UTF-8 (or a single-byte character
+    set in which every byte is a whole character): a multi-byte client charset such as SJIS,
+    Big5 or GBK talking to a server that also honours backslash escapes is out of scope.
+    Console tools may reinterpret pasted text before the server sees it: SQL*Plus
+    substitutes `&name`, SSMS and `sqlcmd` split batches at a line holding `GO`, and drivers
+    that parse paramstyle markers can read a `%s`, `%(name)s` or `?` inside a literal as a
+    placeholder. Pass inline text to such a tool only after checking it.
 
 ```python
 import factlang as fl
@@ -71,7 +93,7 @@ from factlang.engine import display_sql
 try:
     probe.inline()
 except fl.sql.RenderError as exc:
-    print(exc)  # FL500 cannot inline str parameter p1: it contains a backslash or NUL, ...
+    print(exc)  # FL507 cannot inline str parameter p1: it contains a backslash or NUL, ...
 print(display_sql(probe))
 # SELECT COUNT(*) AS row_count FROM orders WHERE status = {{p1}}
 assert display_sql(probe) == probe.sql_template

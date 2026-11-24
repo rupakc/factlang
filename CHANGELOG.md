@@ -7,6 +7,47 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Security: literal inlining trusts no value's own methods (post-0.1.1 security review).
+
+### Security
+- `inline()` accepts only values of an exact built-in type (`bool`, `int`, `float`,
+  `Decimal`, `str`, `date`, `datetime`, or `None`) and refuses every subclass (`IntEnum`,
+  `int`-`Enum` mixins, numpy scalars, `str`/`float`/`Decimal`/`date` subclasses), whose own
+  `__repr__`/`__format__`/`isoformat` could print SQL. Values are rendered through the base
+  type's functions or from their fields; timestamps are converted to UTC and accept only
+  `datetime.timezone`/`zoneinfo` time zones.
+- New diagnostic `FL507` *literal cannot be inlined safely* for every value-dependent
+  refusal: non-scalars, non-finite numbers, subclasses, backslash/NUL, lone surrogates,
+  integers or decimals with more than 4300 digits (`Decimal("1E+100000000")` used to render
+  100M digits, a huge `int` raised `ValueError`), a value whose type does not match its
+  family (a `datetime` in a `date` parameter, `True` in an `integer` one), and a `'` where
+  the dialect has no doubled-quote form. These were `FL500`, which now means a genuine
+  render bug only. `display_sql` falls back to the template on `FL507` and on any other
+  exception from the conversion, but lets `FL500` propagate.
+- The quote form follows the dialect the renderer resolves, not a fixed name list: a native
+  profile's new `doubled_quote_escape` (`False` for `bigquery`, `databricks`;
+  conformance-checked against sqlglot's tokenizer), or sqlglot's tokenizer for a bridged
+  dialect. `spark`, `spark2` and `hive` (and names like `"bigquery, k=v"`) used to inline
+  `''`, which their lexers read as the end of the literal; a dialect nothing knows refuses
+  a `'`.
+- T-SQL strings inline as national literals `N'…'` (no code-page conversion that could
+  turn a look-alike character into `'`); T-SQL and Oracle booleans inline as `1`/`0`
+  (`TRUE` is an identifier there); timestamps inline as `CAST('YYYY-MM-DD HH:MM:SS[.ffffff]'
+  AS DATETIME2)` on T-SQL and `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff]'` on Oracle, and T-SQL
+  dates as `CAST('YYYY-MM-DD' AS DATE)`. New `DialectProfile` fields
+  `string_literal_prefix`, `boolean_literals`, `date_literal`, `timestamp_literal`; bridged
+  dialects take the spellings of the nearest native ancestor (Fabric -> T-SQL).
+
+### Changed
+- `RenderedProbe.inline()` / `RenderedFragment.inline()` take an optional `style`
+  (`factlang.sql.probe.LiteralStyle`) and default to the probe's own dialect
+  (`factlang.sql.registry.literal_style_for`).
+
+### Documentation
+- The evidence guide states what inline text assumes: display or hosts without binding, a
+  UTF-8 (or single-byte-safe) client charset, and console tools (SQL*Plus `&`, SSMS `GO`,
+  driver paramstyle parsing of `%s`/`?`) that may reinterpret pasted text.
+
 ## [0.1.1] - 2026-11-24
 
 Security hardening: fail-closed literal inlining.

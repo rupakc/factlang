@@ -694,7 +694,8 @@ report = checker.check(open("facts.fl").read())
 pack = fl.standard_pack().extend("mine", "1.0")
 @pack.verb("POSITIVE", operands=[fl.Operand.column()], filterable=True)
 def positive(claim):                                    # returns the plan
-    return fl.ir.ColumnAggregate(claim.table, claim.column, [fl.Metric.MIN_VALUE])
+    return fl.ir.ColumnAggregate(claim.table, claim.column, [fl.Metric.MIN_VALUE],
+                                 filter=claim.filter)  # a filterable verb must pass it on (FL605)
 @positive.derive
 def _(payload, claim): return {"min": payload["min_value"]}
 positive.decide(fl.Compare("min", ">", value=0))
@@ -705,7 +706,7 @@ positive.example("POSITIVE orders.amount", valid=True)
 ```python
 m = fl.measure(fl.ir.ValueMembership(t, col, declared=(), report_limit=20), connector=c)  # exact top-k
 est = checker.estimate("JOIN orders.customer_id -> customers.id MATCH >=99%")             # dry-run bytes
-f = fl.parse_filter("deleted IS NULL OR NOT deleted")            # FilterExpr + diagnostics, no claim
+f, diags = fl.parse_filter("deleted IS NULL OR NOT deleted")     # (FilterExpr | None, DiagnosticBag), no claim
 frag = fl.sql.render_filter(f, table=t, dialect="snowflake")     # RenderedFragment(sql_template, params)
 snippet = fl.sql.render_join([edge1, edge2], dialect="bigquery",
                              filters={t1: f})                     # RenderedFragment, display/bindable
@@ -728,7 +729,7 @@ Extension operations on `ContractPack`: `register(c)` (raises on duplicate),
 `remove(name)`, `extend(name, version)` (copy-on-write child pack),
 `merge(other, on_conflict="error"|"keep"|"replace")`. Packs are discoverable via the
 entry-point group `factlang.packs`. Custom value types:
-`fl.types.register(ValueType("EMAIL_DOMAIN", parse=fn))`. Custom dialect:
+`fl.types.register(ValueType("EMAIL_DOMAIN", accepts=frozenset({LiteralKind.STRING}), coerce=fn, validate=check))`. Custom dialect:
 `fl.sql.register_profile(DialectProfile(...))` or subclass an existing one with
 `dataclasses.replace`. Custom primitive: `fl.ir.register_primitive(cls, lower=fn)`.
 
@@ -782,7 +783,7 @@ ratio > 1) · FL311 no such table/column · FL312 cross-type join without CAST
 FL501 metric not renderable · FL502 identifier not representable · FL503 cast not
 expressible · FL504 unknown dialect · FL505 too many table-name parts for dialect · FL600 decide reads a fact derive never
 produces · FL601 decide reads an undeclared attribute · FL602 contract has fewer than 3 valid + 3 invalid
-examples · FL603 an example does not behave as declared (or its plan/catalog function raises) · FL604 incomplete contract (decorator builder missing a part) · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL405 sample method needs a single read; use keyhash (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
+examples · FL603 an example does not behave as declared (or its plan/catalog function raises) · FL604 incomplete contract (decorator builder missing a part) · FL605 a filterable verb's plan drops the claim's WHERE filter · FL700 execution failed · FL701 over cost budget · FL702 timeout · FL703 metadata SQL refused by guard (Amendment A) · FL404 sampled plan in a claim (Amendment B) · FL405 sample method needs a single read; use keyhash (Amendment B) · FL506 sample method not supported by dialect (Amendment B).
 `FL5xx` raise `RenderError`; `FL6xx` are asserted by tests over every registered
 pack; `FL7xx` become `ERROR` outcomes.
 

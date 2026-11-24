@@ -409,3 +409,125 @@ def test_run_metadata_uses_aexecute_free_sync_path() -> None:
     with pytest.raises(ExecutionError) as info:
         run_metadata(Failing(), "SHOW TABLES")
     assert info.value.code == "FL702"
+
+
+# -- round 3: non-ASCII, leading tokens, every forbidden word, T-SQL wrapping ---------------
+
+NON_ASCII = {
+    "dotless i (Spark folds it to I)": "SELECT a FROM t WHERE x = 1 " + chr(0x0131) + "NSERT",
+    "long s": "SELECT a FROM t " + chr(0x017F) + "et",
+    "dotted capital I": "SELECT a FROM t " + chr(0x0130) + "NTO",
+    "Kelvin sign": "SELECT a FROM t " + chr(0x212A) + "ILL",
+    "zero-width space": "SELECT a FROM t WHERE x" + chr(0x200B) + "= 1",
+    "no-break space": "SELECT" + chr(0x00A0) + "a FROM t",
+    "fullwidth": "SELECT a FROM t WHERE x " + chr(0xFF1D) + " 1",
+    "BOM": chr(0xFEFF) + "SELECT 1",
+    "BOM inside": "SELECT 1" + chr(0xFEFF),
+}
+
+
+@pytest.mark.parametrize("sql", list(NON_ASCII.values()), ids=list(NON_ASCII))
+def test_non_ascii_is_refused(sql: str) -> None:
+    _refused(sql)
+
+
+def test_non_ascii_value_passes_as_a_parameter() -> None:
+    rec = Recorder()
+    run_metadata(
+        rec,
+        "SELECT a FROM t WHERE x = {{v}}",
+        {"v": chr(0x0131) + "NSERT " + chr(0x00E9) + "t" + chr(0x00E9)},
+    )
+    assert rec.calls[0][0].params[0].value == chr(0x0131) + "NSERT " + chr(0x00E9) + "t" + chr(
+        0x00E9
+    )
+
+
+@pytest.mark.parametrize("sql", ["{{a}} SELECT 1", "{{a}}SELECT 1", " {{a}}"])
+def test_leading_token_is_refused(sql: str) -> None:
+    with pytest.raises(ExecutionError) as info:
+        run_metadata(Recorder(), sql, {"a": "x"})
+    assert info.value.code == "FL703"
+
+
+@pytest.mark.parametrize("word", sorted(FORBIDDEN_WORDS))
+def test_every_forbidden_word_is_refused_in_any_dialect(word: str) -> None:
+    for dialect in (None, "duckdb", "tsql"):
+        with pytest.raises(ExecutionError):
+            check_metadata_sql(f"SELECT a FROM t WHERE x = 1 {word.lower()} y", dialect)
+
+
+def test_round_three_words_are_listed() -> None:
+    required = {
+        *("PLAN", "SHARE", "SHUTDOWN", "BACKUP", "RESTORE", "DBCC", "DENY", "RECONFIGURE"),
+        *("CHECKPOINT", "DISABLE", "ENABLE", "RAISERROR", "WAITFOR", "SETUSER", "REVERT"),
+        *("OPEN", "CLOSE", "FETCH", "DEALLOCATE", "SEND", "RECEIVE", "MOVE", "BULK"),
+        *("WRITETEXT", "UPDATETEXT", "GOTO", "THROW"),
+    }
+    assert required <= FORBIDDEN_WORDS
+
+
+def test_oracle_explain_plan_and_for_share_are_refused() -> None:
+    _refused("EXPLAIN PLAN FOR SELECT 1 FROM dual")
+    _refused("SELECT * FROM information_schema.tables FOR SHARE")
+
+
+class TsqlRecorder(Recorder):
+    dialect = "tsql"
+
+
+TSQL_BYPASSES = [
+    "SELECT 1 SHUTDOWN WITH NOWAIT",
+    "SELECT 1 BACKUP DATABASE x TO DISK = {{p}}",
+    "SELECT 1 RESTORE DATABASE x FROM DISK = {{p}}",
+    "SELECT 1 DBCC CHECKDB",
+    "SELECT 1 DENY SELECT ON t TO u",
+    "SELECT 1 RECONFIGURE",
+    "SELECT 1 CHECKPOINT",
+    "SELECT 1 DISABLE TRIGGER t ON DATABASE",
+    "SELECT 1 RAISERROR({{p}}, 16, 1) WITH LOG",
+    "SELECT 1 WAITFOR DELAY {{p}}",
+    "IF 1=1 SHUTDOWN",
+    "BACKUP DATABASE x TO DISK = {{p}}",
+    "SELECT 1 SELECT 2",
+    "SELECT 1 FROM t) q SHUTDOWN SELECT * FROM (SELECT 1",
+    "SELECT 1 FROM t) q SELECT * FROM (SELECT 1",
+    "SELECT (1",
+    "SELECT 1 UNION SELECT 2",
+    "SELECT name FROM [sys].[tables]",
+    'SELECT "name" FROM sys.tables',
+    "SELECT name FROM sys.tables WHERE name = 'x'",
+    "WITH x AS (SELECT 1 AS a) SELECT a FROM x",
+    "SHOW TABLES",
+    "DESCRIBE t",
+    "EXPLAIN SELECT 1",
+]
+
+
+@pytest.mark.parametrize("sql", TSQL_BYPASSES)
+def test_tsql_bypasses_are_refused(sql: str) -> None:
+    rec = TsqlRecorder()
+    with pytest.raises(ExecutionError) as info:
+        run_metadata(rec, sql, {"p": "x"} if "{{p}}" in sql else {})
+    assert info.value.code == "FL703"
+    assert rec.calls == []
+
+
+def test_tsql_select_runs_wrapped() -> None:
+    rec = TsqlRecorder()
+    inner = (
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = {{s}}"
+        " AND TABLE_NAME IN (SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS)"
+    )
+    run_metadata(rec, inner, {"s": "dbo"})
+    probe = rec.calls[0][0]
+    assert probe.sql_template == f"SELECT * FROM ({inner}) AS fl_meta_q"
+    sql, params = probe.bind("qmark")
+    assert sql.startswith("SELECT * FROM (SELECT TABLE_NAME") and sql.endswith(") AS fl_meta_q")
+    assert params == ("dbo",)
+
+
+def test_other_dialects_are_not_wrapped() -> None:
+    rec = Recorder()
+    run_metadata(rec, "SELECT 1 AS a")
+    assert rec.calls[0][0].sql_template == "SELECT 1 AS a"

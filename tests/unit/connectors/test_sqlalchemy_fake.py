@@ -135,6 +135,47 @@ def test_colons_are_escaped_for_text(fake_sqlalchemy: types.ModuleType) -> None:
     assert params == {"p": "v"}
 
 
+@pytest.mark.parametrize(
+    "template",
+    [
+        "SELECT a{{t}} AS row_count",
+        "SELECT {{t}}b AS row_count",
+        "SELECT {{t}}{{u}} AS row_count",
+        "SELECT x::{{t}} AS row_count",
+        "SELECT x:{{t}} AS row_count",
+    ],
+)
+def test_glued_tokens_are_refused(fake_sqlalchemy: types.ModuleType, template: str) -> None:
+    engine = FakeEngine("postgresql")
+    names = [n for n in ("t", "u") if "{{" + n + "}}" in template]
+    p = RenderedProbe(
+        template,
+        tuple(Param(n, "v", "string") for n in names),
+        probe().arity,
+        probe().plan,
+        "postgres",
+        "verified",
+    )
+    with pytest.raises(ExecutionError) as info:
+        SQLAlchemyConnector(engine).execute(p, timeout_s=None)
+    assert info.value.code == "FL700"
+    assert engine.log == []
+
+
+def test_separated_tokens_bind(fake_sqlalchemy: types.ModuleType) -> None:
+    engine = FakeEngine("postgresql")
+    p = RenderedProbe(
+        "SELECT ({{t}}) AS row_count, x = {{u}}",
+        (Param("t", 1, "integer"), Param("u", "v", "string")),
+        probe().arity,
+        probe().plan,
+        "postgres",
+        "verified",
+    )
+    SQLAlchemyConnector(engine).execute(p, timeout_s=None)
+    assert engine.log == [("SELECT (:t) AS row_count, x = :u", {"t": 1, "u": "v"})]
+
+
 def test_token_right_after_colon_is_refused(fake_sqlalchemy: types.ModuleType) -> None:
     engine = FakeEngine("postgresql")
     p = RenderedProbe(

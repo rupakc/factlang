@@ -6,6 +6,7 @@ SQLAlchemy is imported lazily, inside the functions that need it.
 from __future__ import annotations
 
 import importlib
+import re
 from collections.abc import Mapping
 from types import MappingProxyType, ModuleType
 from typing import Any
@@ -35,6 +36,11 @@ def _sqlalchemy() -> ModuleType:
         ) from exc
 
 
+# a token right after ':' or a word character, right before a word character, or two
+# tokens back to back: text() cannot see ':name' as a bind there
+_GLUED_TOKEN = re.compile(r"[:\w]\{\{|\}\}\w|\}\}\{\{")
+
+
 def escape_colons(template: str) -> str:
     """Escape every ``:`` for ``text()``, which would read ``:word`` as a bind parameter even
     inside a string literal; ``text()`` turns ``\\:`` back into ``:``. Neutral ``{{name}}``
@@ -61,10 +67,10 @@ class SQLAlchemyConnector:
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
         sa = _sqlalchemy()
-        if ":{{" in probe.sql_template:
+        if _GLUED_TOKEN.search(probe.sql_template):
             raise ExecutionError(
-                "a {{name}} parameter directly after ':' cannot be bound through SQLAlchemy "
-                "text(); separate them",
+                "a {{name}} parameter glued to ':', a word character or another parameter "
+                "cannot be bound through SQLAlchemy text(); separate them with a space",
                 code="FL700",
             )
         sql, params = bind_template(

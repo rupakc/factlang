@@ -208,10 +208,16 @@ def deadline(timeout_s: float | None, handles: Sequence[object]) -> Iterator[thr
 # -- the metadata-SQL guard (R8, FL703) ------------------------------------------------------
 
 METADATA_KEYWORDS: tuple[str, ...] = ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")
+# On T-SQL statements need no separator, so only a wrapped SELECT is accepted.
+TSQL_METADATA_KEYWORDS: tuple[str, ...] = ("SELECT",)
+TSQL_WRAPPER = "SELECT * FROM ({sql}) AS fl_meta_q"
 # Character sequences that, in some dialect, start a comment, a quote form, a second
 # statement or a chain: refused anywhere in the raw text, inside quotes too.
 FORBIDDEN_SEQUENCES: tuple[str, ...] = (";", "->>", "--", "/*", "*/", "//", "#", "$", "\\")
-# Write, DDL and control keywords: refused as whole words anywhere, inside quotes too.
+# On T-SQL also every quote character, so the wrapper's parentheses cannot be escaped.
+TSQL_FORBIDDEN_CHARS: tuple[str, ...] = ("'", '"', "[", "]")
+# Write, DDL, control and T-SQL statement keywords: refused as whole words anywhere (inside
+# quotes too), in every dialect.
 FORBIDDEN_WORDS: frozenset[str] = frozenset(
     (
         *("INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "TRUNCATE", "INTO", "OUTFILE"),
@@ -220,6 +226,13 @@ FORBIDDEN_WORDS: frozenset[str] = frozenset(
         *("CALL", "EXEC", "EXECUTE", "PREPARE", "DECLARE", "SET", "USE"),
         *("BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "KILL", "NOTIFY"),
         *("ATTACH", "DETACH", "PRAGMA", "VACUUM", "ANALYZE", "ANALYSE"),
+        # Oracle EXPLAIN PLAN writes PLAN_TABLE; FOR SHARE takes locks
+        *("PLAN", "SHARE"),
+        # T-SQL statement verbs (belt and braces for every dialect)
+        *("SHUTDOWN", "BACKUP", "RESTORE", "DBCC", "DENY", "RECONFIGURE", "CHECKPOINT"),
+        *("DISABLE", "ENABLE", "RAISERROR", "WAITFOR", "SETUSER", "REVERT", "OPEN"),
+        *("CLOSE", "FETCH", "DEALLOCATE", "SEND", "RECEIVE", "MOVE", "BULK"),
+        *("WRITETEXT", "UPDATETEXT", "GOTO", "THROW"),
     )
 )
 _TOKEN = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}")
@@ -231,24 +244,57 @@ def _refuse(reason: str) -> ExecutionError:
     return ExecutionError(f"metadata SQL refused by guard: {reason}", code="FL703")
 
 
-def check_metadata_sql(sql: str) -> None:
+def _check_tsql(text: str) -> None:
+    for ch in TSQL_FORBIDDEN_CHARS:
+        if ch in text:
+            raise _refuse(f"{ch!r} is not allowed in T-SQL metadata SQL (bind values as params)")
+    depth = 0
+    selects_at_top = 0
+    for m in re.finditer(r"[()]|[A-Za-z_][A-Za-z0-9_]*", text):
+        tok = m.group(0)
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth -= 1
+            if depth < 0:
+                raise _refuse("unbalanced ')' in T-SQL metadata SQL")
+        elif depth == 0 and tok.upper() == "SELECT":
+            selects_at_top += 1
+            if selects_at_top > 1:
+                raise _refuse("a second top-level SELECT is a second T-SQL statement")
+    if depth != 0:
+        raise _refuse("unbalanced '(' in T-SQL metadata SQL")
+
+
+def check_metadata_sql(sql: str, dialect: str | None = None) -> None:
     """Raise ``ExecutionError`` ``FL703`` unless ``sql`` passes the metadata guard (R8).
 
     The guard is **lexer-free and deliberately over-strict**. It reads the raw text, quotes
-    ignored (a string literal is scanned like any other text), after removing the
-    ``{{name}}`` parameter tokens, and refuses:
+    ignored (a string literal is scanned like any other text), and refuses:
 
+    - a first word, read on the raw text *before* parameter tokens are removed (so a
+      leading ``{{name}}`` is refused), that is not one of :data:`METADATA_KEYWORDS`
+      (on ``tsql``: :data:`TSQL_METADATA_KEYWORDS`, i.e. only ``SELECT``);
+
+    and, after removing the ``{{name}}`` parameter tokens:
+
+    - any non-ASCII character (engines such as Spark fold Unicode case into keywords:
+      dotless i U+0131, long s U+017F, dotted capital I U+0130, the Kelvin sign
+      U+212A; zero-width and no-break spaces, fullwidth forms and a BOM are refused too);
     - any of :data:`FORBIDDEN_SEQUENCES` (``;`` ``->>`` ``--`` ``/*`` ``*/`` ``//`` ``#``
       ``$`` ``\\``) anywhere;
     - an Oracle alternative-quote prefix (``q'``, ``nq'``, any case) starting a token;
-    - any of :data:`FORBIDDEN_WORDS` (write, DDL and control keywords) as a whole word
-      anywhere, case-insensitive;
-    - a first word that is not one of :data:`METADATA_KEYWORDS`.
+    - any of :data:`FORBIDDEN_WORDS` (write, DDL, control and T-SQL statement keywords) as
+      a whole word anywhere, case-insensitive;
+    - on ``tsql`` (statements need no separator): any of ``'`` ``"`` ``[`` ``]``,
+      parentheses that do not balance (or close below depth 0), and a second ``SELECT`` at
+      parenthesis depth 0 (put a ``UNION`` inside a derived table).
 
     Modelling each dialect's lexer was rejected: review found bypasses through PostgreSQL /
     DuckDB dollar quotes, MySQL's ``--``, Snowflake's ``//`` and Oracle's ``q'``. Refusing a
     legitimate query is the accepted price: pass any value containing these characters or
-    words as a bound parameter (``{{name}}``), which the scan never sees.
+    words (or any non-ASCII text) as a bound parameter (``{{name}}``), which the scan never
+    sees.
 
     This is a keyword guard, not a sandbox: side-effecting functions called from a
     ``SELECT`` (``dblink_exec``, ``pg_terminate_backend``, …) are not detected, and the
@@ -256,21 +302,23 @@ def check_metadata_sql(sql: str) -> None:
     """
     if not isinstance(sql, str):
         raise TypeError(f"metadata SQL must be a string, got {type(sql).__name__}")
+    allowed = TSQL_METADATA_KEYWORDS if dialect == "tsql" else METADATA_KEYWORDS
+    first = _WORD.match(sql.lstrip(" \t\r\n"))
+    if first is None or first.group(0).upper() not in allowed:
+        raise _refuse(f"the statement must start with one of {', '.join(allowed)}")
     text = _TOKEN.sub(" ", sql)
+    if not text.isascii():
+        raise _refuse("non-ASCII characters are not allowed (bind such values as params)")
     for seq in FORBIDDEN_SEQUENCES:
         if seq in text:
             raise _refuse(f"{seq!r} is not allowed in metadata SQL (bind values as {{{{name}}}})")
     if _ORACLE_QUOTE.search(text):
         raise _refuse("Oracle alternative quoting (q'…') is not allowed")
-    words = [w.upper() for w in _WORD.findall(text)]
-    stripped = text.lstrip()
-    if not words or not stripped or _WORD.match(stripped) is None:
-        raise _refuse(f"the statement must start with one of {', '.join(METADATA_KEYWORDS)}")
-    if words[0] not in METADATA_KEYWORDS:
-        raise _refuse(f"{words[0]} is not a metadata statement")
-    bad = sorted(set(words) & FORBIDDEN_WORDS)
+    bad = sorted({w.upper() for w in _WORD.findall(text)} & FORBIDDEN_WORDS)
     if bad:
         raise _refuse(f"keyword(s) {', '.join(bad)} not allowed (bind values as {{{{name}}}})")
+    if dialect == "tsql":
+        _check_tsql(text)
 
 
 def _infer_param(name: str, value: object) -> Param:
@@ -317,10 +365,20 @@ def run_metadata(
     ``:word`` as a bind parameter even inside a string literal, every ``:`` in ``sql`` is
     escaped before binding, so literals such as ``'a:b'`` and casts such as ``x::text``
     reach the driver unchanged. A ``{{name}}`` token *immediately* after a ``:`` (``x::{{t}}``)
-    cannot be bound by ``text()`` and is refused there with ``FL700``; put a space or other
-    text between them.
+    cannot be bound by ``text()``; neither can a token glued to a word character
+    (``a{{t}}``, ``{{t}}b``) or to another token (``{{a}}{{b}}``). SQLAlchemyConnector
+    refuses those with ``FL700`` before executing; separate them with a space.
+
+    **T-SQL** (``connector.dialect == "tsql"``), where statements need no separator: only a
+    ``SELECT`` is accepted, and it runs wrapped as ``SELECT * FROM (<sql>) AS fl_meta_q``.
+    So there is no ``WITH``/``SHOW``, no ``ORDER BY`` without ``TOP`` (SQL Server rejects it
+    in a derived table), every result column needs a distinct name, and no quote character
+    may appear: no string literals and no quoted identifiers (``'`` ``"`` ``[`` ``]``); pass
+    values, and compare odd names, as parameters.
     """
-    check_metadata_sql(sql)
+    check_metadata_sql(sql, connector.dialect)
+    if connector.dialect == "tsql":
+        sql = TSQL_WRAPPER.format(sql=sql)
     if isinstance(params, Mapping):
         bound = tuple(_infer_param(k, v) for k, v in params.items())
     else:
@@ -347,6 +405,9 @@ __all__ = [
     "FORBIDDEN_SEQUENCES",
     "FORBIDDEN_WORDS",
     "METADATA_KEYWORDS",
+    "TSQL_FORBIDDEN_CHARS",
+    "TSQL_METADATA_KEYWORDS",
+    "TSQL_WRAPPER",
     "AsyncConnector",
     "Connector",
     "ExecutionError",

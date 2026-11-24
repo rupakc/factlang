@@ -373,7 +373,7 @@ Each verb is one file exporting one `Contract`. Each has ≥3 valid and ≥3 inv
 ### 6.1 Structure facts (catalog-only, no data scan)
 | Verb | Form | Facts | Passes when |
 |---|---|---|---|
-| `EXISTS` | `EXISTS t` / `EXISTS t.c` | `exists` | object exists |
+| `EXISTS` | `EXISTS t` / `EXISTS t COLUMN c` (a bare `a.b` operand is always a table ref, so a column is named by the `COLUMN` attribute — avoids the schema.table vs table.column ambiguity) | `exists` | object exists |
 | `TYPE` | `TYPE t.c IS integer` | `actual_type`, `family` | normalised type family equals the value (families: `integer, decimal, float, string, boolean, date, timestamp, time, bytes, json, array, struct, other`) |
 
 These contracts set `catalog_facts` (a third contract mode beside `plan` and

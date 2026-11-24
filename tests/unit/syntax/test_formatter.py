@@ -67,7 +67,7 @@ def test_filter_forms() -> None:
         "ROWS t WHERE a IN [1, 'x'] AND b NOT IN [TRUE] AND c IS NULL AND d IS NOT NULL "
         "AND e BETWEEN 1 AND 2 AND f >= TIMESTAMP '2025-01-31T12:00:00Z' AND g = DATE '2025-01-01'"
     )
-    assert fmt(src) == src.replace("AND c IS", "AND c IS")
+    assert fmt(src) == src
     assert fmt("ROWS t WHERE a  IS   NOT  NULL") == "ROWS t WHERE a IS NOT NULL"
 
 
@@ -82,3 +82,17 @@ def test_document_lines_and_format_claim() -> None:
     assert isinstance(claim, ast.Claim)
     assert format_claim(claim) == "ROWS t VALUE 1  # c"
     assert format_document(parse("").document) == ""
+
+
+def test_wide_numbers_not_rounded() -> None:
+    big = "1" * 70
+    assert fmt(f"ROWS t VALUE {big}") == f"ROWS t VALUE {big}"
+    assert fmt(f"ROWS t VALUE {big}%") == f"ROWS t VALUE {big}%"
+    assert fmt("ROWS t VALUE 1" + "0" * 70) == "ROWS t VALUE 1" + "0" * 70
+
+
+def test_negative_zero_and_negatives() -> None:
+    assert fmt("ROWS t VALUE -0") == "ROWS t VALUE 0"
+    assert fmt("ROWS t VALUE -0.0%") == "ROWS t VALUE 0%"
+    assert fmt("RANGE t.c BETWEEN [-1, -2]") == "RANGE t.c BETWEEN [-1, -2]"
+    assert fmt("ROWS t WHERE a BETWEEN -1 AND -2") == "ROWS t WHERE a BETWEEN -1 AND -2"

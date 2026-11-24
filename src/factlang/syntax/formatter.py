@@ -19,19 +19,40 @@ tokens, diagnostics); it must not import the parser.
 
 from __future__ import annotations
 
-import decimal
 from decimal import Decimal
 
 from factlang.syntax import ast
 
 LK = ast.LiteralKind
 
-_WIDE = decimal.Context(prec=60, Emax=decimal.MAX_EMAX, Emin=decimal.MIN_EMIN, traps=[])
 _UNITS = (("w", 604800), ("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
 
 
+def _shift(value: Decimal, places: int) -> Decimal:
+    """``value * 10**places`` by exponent change: exact, never rounded."""
+    sign, digits, exp = value.as_tuple()
+    assert isinstance(exp, int)
+    return Decimal((sign, digits, exp + places))
+
+
 def _number(value: Decimal) -> str:
-    return format(value.normalize(_WIDE), "f")
+    """Plain-notation text of ``value`` without trailing zeros, exact at any width."""
+    if value.is_zero():
+        return "0"
+    sign, digits, exp = value.as_tuple()
+    assert isinstance(exp, int)
+    ds = list(digits)
+    while len(ds) > 1 and ds[-1] == 0:
+        ds.pop()
+        exp += 1
+    text = "".join(map(str, ds))
+    if exp >= 0:
+        text += "0" * exp
+    elif -exp >= len(text):
+        text = "0." + "0" * (-exp - len(text)) + text
+    else:
+        text = text[:exp] + "." + text[exp:]
+    return ("-" if sign else "") + text
 
 
 def _duration(seconds: int) -> str:
@@ -66,7 +87,7 @@ def _literal(lit: ast.Literal) -> str:
         return _number(value)
     if kind is LK.PERCENT:
         assert isinstance(value, Decimal)
-        return _number(value.scaleb(2, context=_WIDE)) + "%"
+        return _number(_shift(value, 2)) + "%"
     if kind is LK.DURATION:
         assert isinstance(value, int)
         return _duration(value)

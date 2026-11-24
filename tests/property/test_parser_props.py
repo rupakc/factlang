@@ -39,10 +39,10 @@ def _decimals(negative: bool) -> st.SearchStrategy[Decimal]:
 
 # The lexer reads '-' as a sign only after a non-operand token, so a negative number
 # may follow an operator, '[' or ',' but not an identifier (or BETWEEN / AND).
-nonneg_numbers = _decimals(False).map(lambda d: _lit(LK.NUMBER, d))
+nonneg_numbers = _decimals(True).map(lambda d: _lit(LK.NUMBER, d))
 any_numbers = _decimals(True).map(lambda d: _lit(LK.NUMBER, d))
 percents = _decimals(True).map(lambda d: _lit(LK.PERCENT, d.scaleb(-2)))
-nonneg_percents = _decimals(False).map(lambda d: _lit(LK.PERCENT, d.scaleb(-2)))
+nonneg_percents = _decimals(True).map(lambda d: _lit(LK.PERCENT, d.scaleb(-2)))
 durations = st.integers(0, 10**7).map(lambda s: _lit(LK.DURATION, s))
 strings = _text.map(lambda s: _lit(LK.STRING, s))
 idents = _ident.map(lambda s: _lit(LK.IDENT, s))
@@ -196,3 +196,13 @@ def test_crlf_equivalent_to_lf_on_arbitrary_text(source: str) -> None:
     a, b = parse(source), parse(source.replace("\n", "\r\n"))
     assert format_document(a.document) == format_document(b.document)
     assert a.diagnostics.codes() == b.diagnostics.codes()
+
+
+@settings(max_examples=200, deadline=None)
+@given(st.lists(st.one_of(claims(), refs.map(lambda r: ast.Directive(r, None, SP))), max_size=5))
+def test_document_fixpoint_with_directives(items: list[ast.Claim | ast.Directive]) -> None:
+    doc = ast.Document(tuple(items), "")
+    once = format_document(doc)
+    res = parse(once)
+    assert not res.diagnostics.has_errors, res.diagnostics.render(once)
+    assert format_document(res.document) == once

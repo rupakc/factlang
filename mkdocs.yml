@@ -1,0 +1,146 @@
+site_name: FactLang
+site_description: >-
+  A small formal language for factual claims about a data warehouse. Every claim
+  compiles to read-only SQL, runs over all rows and comes back as a verdict with evidence.
+site_url: https://rupakc.github.io/factlang/
+repo_url: https://github.com/rupakc/factlang
+repo_name: rupakc/factlang
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Rupak Chakraborty &middot; MIT licence
+
+# The design spec and plan are working documents for contributors, not site pages.
+exclude_docs: |
+  overrides/
+  specs/
+  wiki/
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  language: en
+  font:
+    text: Schibsted Grotesk
+    code: Fragment Mono
+  icon:
+    logo: material/check-decagram-outline
+    repo: fontawesome/brands/github
+  favicon: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Use light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Follow the system theme
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+
+extra_css:
+  - assets/factlang.css
+  - assets/playground/playground.css
+extra_javascript:
+  - assets/factlang.js
+  - assets/playground/playground.js
+
+hooks:
+  - scripts/docs_hooks.py
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      pygments_lang_class: true
+      # FactLang blocks keep a `language-factlang*` class; assets/factlang.js colours them
+      extend_pygments_lang:
+        - name: factlang
+          lang: text
+        - name: factlang-valid
+          lang: text
+        - name: factlang-invalid
+          lang: text
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+            docstring_style: sphinx
+            show_signature_annotations: true
+            separate_signature: true
+            merge_init_into_class: true
+            filters: ["!^_"]
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Playground: playground.md
+  - Guide:
+      - The language: guide/language.md
+      - Standard verbs: guide/verbs.md
+      - Filters: guide/filters.md
+      - Namespaces: guide/namespaces.md
+      - Verdicts: guide/verdicts.md
+      - Evidence: guide/evidence.md
+      - Batching and fusion: guide/batching.md
+      - Raw measurement and sampling: guide/measure.md
+      - Agents and LLMs: agents.md
+      - Command line: cli.md
+  - Extending:
+      - New verbs: extending/verbs.md
+      - Packs: extending/packs.md
+      - Value types: extending/types.md
+      - Dialects: extending/dialects.md
+      - Connectors: extending/connectors.md
+      - Catalogs: extending/catalogs.md
+      - IR primitives: extending/primitives.md
+      - Filter and join fragments: extending/fragments.md
+  - Reference:
+      - Grammar: reference/grammar.md
+      - Verbs: reference/verbs.md
+      - Diagnostics: reference/diagnostics.md
+      - Python API: reference/api.md

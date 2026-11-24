@@ -1,0 +1,88 @@
+{% extends "main.html" %}
+
+{#- The landing page: a hero with the claim ledger, then docs/index.md as the body. The
+    ledger rows are real outcomes of the Getting started shop database; the test
+    tests/conformance/test_docs_examples.py re-checks every row against it. -#}
+
+{% block extrahead %}
+  {{ super() }}
+  <meta property="og:title" content="FactLang: verdicts for claims about your data">
+  <meta property="og:description" content="{{ config.site_description }}">
+  <style>.md-content__inner > h1:first-child { display: none; }</style>
+{% endblock %}
+
+{% block tabs %}
+  {{ super() }}
+  <section class="fl-hero" aria-labelledby="fl-hero-title">
+    <div class="fl-hero__inner">
+      <div>
+        <h1 id="fl-hero-title">Every claim about your warehouse, checked against every row.</h1>
+        <p>
+          FactLang is a small language for facts about data: joins, nulls, counts, allowed
+          values, freshness. Each line compiles to read-only SQL for your warehouse and
+          comes back as a verdict, with the measured numbers and the exact query as
+          evidence.
+        </p>
+        <div class="fl-hero__actions">
+          <a class="fl-button fl-button--solid" href="{{ 'getting-started/' | url }}">Get started</a>
+          <a class="fl-button" href="{{ 'playground/' | url }}">Try the playground</a>
+        </div>
+        <div class="fl-install">
+          <code>pip install factlang</code> &nbsp;no dependencies in the core
+        </div>
+      </div>
+
+      <figure class="fl-ledger" aria-label="Six claims from an agent's answer and what the data says about each">
+        <div class="fl-ledger__head" aria-hidden="true">
+          <span>An agent's answer, written as claims</span>
+          <span>What the data says</span>
+        </div>
+        <div class="fl-ledger__row" data-verdict="fail">
+          <code class="fl-ledger__claim fl-src">JOIN orders.customer_id -&gt; customers.id CARD N:1 MATCH &gt;=99%</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--fail">fail</span>
+            <span class="fl-ledger__why">match_rate 0.9765625 &lt; 0.99</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="pass">
+          <code class="fl-ledger__claim fl-src">NULLS customers.email RATE &lt;=5%</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--pass">pass</span>
+            <span class="fl-ledger__why">null_rate 0.04 &lt;= 0.05</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="fail">
+          <code class="fl-ledger__claim fl-src">VALUES orders.status IN ['paid', 'open', 'shipped']</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--fail">fail</span>
+            <span class="fl-ledger__why">undeclared_rows 200 != 0</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="pass">
+          <code class="fl-ledger__claim fl-src">COUNT orders VALUE ==1400 WHERE status = 'paid'</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--pass">pass</span>
+            <span class="fl-ledger__why">value 1400 == 1400</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="pass">
+          <code class="fl-ledger__claim fl-src">SUM orders.amount VALUE ==209000 TOLERANCE 1%</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--pass">pass</span>
+            <span class="fl-ledger__why">value 209000 satisfies == 209000 (band 2090)</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="no_data">
+          <code class="fl-ledger__claim fl-src">AVG orders.amount VALUE ==100 WHERE status = 'lost'</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--no_data">no data</span>
+            <span class="fl-ledger__why">value was not measured</span>
+          </div>
+        </div>
+        <figcaption class="fl-ledger__foot">
+          Real outcomes on the shop database from <a href="{{ 'getting-started/' | url }}">Getting started</a>, measured on DuckDB.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+{% endblock %}

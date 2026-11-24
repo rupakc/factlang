@@ -1,0 +1,370 @@
+/* FactLang site theme.
+ * Palette: cool assay paper + deep ink, with verdict colours that carry meaning
+ * (pass / fail / no data / unprobeable). Used by the docs, the landing page and the
+ * playground. */
+
+:root {
+  --fl-paper: #f2f5f9;
+  --fl-surface: #ffffff;
+  --fl-ink: #17203a;
+  --fl-muted: #55607a;
+  --fl-rule: #d3dae5;
+  --fl-accent: #2347c5;
+  --fl-pass: #0b7a55;
+  --fl-fail: #c4283a;
+  --fl-nodata: #996400;
+  --fl-unprobeable: #6a55b8;
+  --fl-verb: #2347c5;
+  --fl-attr: #7a3e9d;
+  --fl-keyword: #a0461b;
+  --fl-string: #0b7a55;
+  --fl-number: #b0306a;
+  --fl-comment: #7b859b;
+  --fl-ident: inherit;
+}
+
+[data-md-color-scheme="slate"] {
+  --fl-paper: #0f1528;
+  --fl-surface: #171f38;
+  --fl-ink: #e7ebf4;
+  --fl-muted: #a3adc4;
+  --fl-rule: #2a3456;
+  --fl-accent: #93a9ff;
+  --fl-pass: #45c894;
+  --fl-fail: #ff7b86;
+  --fl-nodata: #e5b54a;
+  --fl-unprobeable: #b6a6f5;
+  --fl-verb: #93a9ff;
+  --fl-attr: #d2a1f0;
+  --fl-keyword: #f2a477;
+  --fl-string: #6fd6a8;
+  --fl-number: #ff9cc6;
+  --fl-comment: #7f8aa6;
+}
+
+/* -- Material colour mapping ------------------------------------------------------- */
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #17203a;
+  --md-primary-fg-color--light: #2a3456;
+  --md-primary-fg-color--dark: #0f1528;
+  --md-primary-bg-color: #f2f5f9;
+  --md-primary-bg-color--light: #c9d2e3;
+  --md-accent-fg-color: #2347c5;
+  --md-accent-fg-color--transparent: #2347c51a;
+  --md-default-bg-color: #f7f9fc;
+  --md-default-fg-color: #17203aee;
+  --md-default-fg-color--light: #17203a99;
+  --md-typeset-a-color: #2347c5;
+  --md-code-bg-color: #eaeef5;
+  --md-code-fg-color: #17203a;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 228;
+  --md-primary-fg-color: #171f38;
+  --md-primary-fg-color--light: #2a3456;
+  --md-primary-fg-color--dark: #0f1528;
+  --md-primary-bg-color: #e7ebf4;
+  --md-primary-bg-color--light: #a3adc4;
+  --md-accent-fg-color: #93a9ff;
+  --md-accent-fg-color--transparent: #93a9ff1a;
+  --md-default-bg-color: #0f1528;
+  --md-typeset-a-color: #93a9ff;
+  --md-code-bg-color: #171f38;
+  --md-code-fg-color: #e7ebf4;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--fl-ink);
+}
+
+.md-typeset h1 {
+  font-size: 2.2em;
+}
+
+/* Fragment Mono draws >=, == and -> as ligatures; FactLang must read as typed. */
+code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--fl-accent);
+  outline-offset: 2px;
+}
+
+/* -- FactLang syntax highlighting (applied by factlang.js) -------------------------- */
+
+.fl-tok-verb { color: var(--fl-verb); font-weight: 600; }
+.fl-tok-attr { color: var(--fl-attr); }
+.fl-tok-kw { color: var(--fl-keyword); font-weight: 600; }
+.fl-tok-str { color: var(--fl-string); }
+.fl-tok-num { color: var(--fl-number); }
+.fl-tok-op { color: var(--fl-muted); }
+.fl-tok-com { color: var(--fl-comment); font-style: italic; }
+.fl-tok-qid { color: var(--fl-ink); text-decoration: underline dotted var(--fl-rule); }
+
+/* -- Verdict marks (docs tables and the playground) ---------------------------------- */
+
+.fl-verdict {
+  display: inline-block;
+  padding: 0.05em 0.55em 0.1em;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.85em;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.fl-verdict--pass { color: var(--fl-pass); }
+.fl-verdict--fail { color: var(--fl-fail); }
+.fl-verdict--no_data { color: var(--fl-nodata); }
+.fl-verdict--error { color: var(--fl-fail); border-style: dashed; }
+.fl-verdict--unprobeable { color: var(--fl-unprobeable); }
+.fl-verdict--invalid { color: var(--fl-muted); border-style: dotted; }
+
+/* -- Landing page ----------------------------------------------------------------------- */
+
+
+.fl-hero {
+  background: var(--fl-paper);
+  border-bottom: 1px solid var(--fl-rule);
+  color: var(--fl-ink);
+}
+
+.fl-hero__inner {
+  max-width: 61rem;
+  margin: 0 auto;
+  padding: 3.2rem 1rem 3rem;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 2.4rem;
+  align-items: center;
+}
+
+.fl-hero h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(1.9rem, 3.4vw, 2.75rem);
+  line-height: 1.08;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--fl-ink);
+}
+
+.fl-hero p {
+  margin: 0 0 1.4rem;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--fl-muted);
+  max-width: 34em;
+}
+
+.fl-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.md-typeset .fl-button,
+.fl-button {
+  display: inline-block;
+  padding: 0.6em 1.1em;
+  border-radius: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1.5px solid var(--fl-ink);
+  color: var(--fl-ink);
+  background: transparent;
+}
+.fl-button:hover { background: var(--fl-surface); }
+.md-typeset .fl-button--solid,
+.fl-button--solid {
+  background: var(--fl-ink);
+  color: var(--fl-paper);
+}
+.md-typeset .fl-button--solid:hover,
+.fl-button--solid:hover { background: var(--fl-accent); border-color: var(--fl-accent); color: #fff; }
+[data-md-color-scheme="slate"] .md-typeset .fl-button--solid:hover,
+.fl-button--solid:hover { color: #0f1528; }
+
+.fl-install {
+  margin-top: 1.1rem;
+  font-family: var(--md-code-font-family);
+  font-size: 0.72rem;
+  color: var(--fl-muted);
+}
+.fl-install code {
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-rule);
+  border-radius: 0.3rem;
+  padding: 0.25em 0.5em;
+  color: var(--fl-ink);
+}
+
+/* The ledger: claims on the left, the data's answer in the margin. */
+.fl-ledger {
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-rule);
+  border-radius: 0.6rem;
+  padding: 0.4rem 0;
+  font-family: var(--md-code-font-family);
+  font-size: 0.68rem;
+  box-shadow: 0 1px 0 var(--fl-rule), 0 18px 40px -28px #17203a66;
+}
+
+.fl-ledger__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 13.5rem;
+  padding: 0.5rem 1rem 0.6rem;
+  border-bottom: 1px solid var(--fl-rule);
+  font-family: var(--md-text-font-family);
+  font-size: 0.68rem;
+  color: var(--fl-muted);
+}
+
+.fl-ledger__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 13.5rem;
+  align-items: stretch;
+  border-bottom: 1px dashed var(--fl-rule);
+}
+.fl-ledger__row:last-child { border-bottom: 0; }
+
+.fl-ledger__claim {
+  padding: 0.7rem 1rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.fl-ledger__margin {
+  padding: 0.6rem 1rem 0.7rem;
+  border-left: 2px solid var(--fl-rule);
+  line-height: 1.45;
+  color: var(--fl-muted);
+}
+
+.fl-ledger__margin .fl-verdict {
+  font-family: var(--md-text-font-family);
+  margin-bottom: 0.25rem;
+}
+
+.fl-ledger__why {
+  display: block;
+  font-size: 0.62rem;
+  overflow-wrap: anywhere;
+}
+
+/* One orchestrated moment: claims are written, then the data answers in the margin. */
+.fl-ledger.fl-anim .fl-ledger__claim {
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 0.55s steps(28, end);
+}
+.fl-ledger.fl-anim .fl-ledger__margin > * {
+  opacity: 0;
+  transform: scale(1.35) rotate(-4deg);
+  transition: opacity 0.18s ease-out, transform 0.22s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.fl-ledger.fl-anim .fl-ledger__row.is-written .fl-ledger__claim { clip-path: inset(0 0 0 0); }
+.fl-ledger.fl-anim .fl-ledger__row.is-judged .fl-ledger__margin > * {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-ledger.fl-anim .fl-ledger__claim,
+  .fl-ledger.fl-anim .fl-ledger__margin > * {
+    clip-path: none;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+.fl-ledger__foot {
+  padding: 0.55rem 1rem 0.3rem;
+  border-top: 1px solid var(--fl-rule);
+  font-family: var(--md-text-font-family);
+  font-size: 0.64rem;
+  color: var(--fl-muted);
+}
+
+/* Landing sections (written in Markdown with md_in_html). */
+.fl-section { margin: 2.6rem 0; }
+
+.md-typeset .fl-lead {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  max-width: 40em;
+  color: var(--fl-muted);
+}
+
+.fl-trio {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  gap: 0;
+  border: 1px solid var(--fl-rule);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--fl-surface);
+}
+.fl-trio > div { padding: 0.9rem 1rem; }
+.fl-trio > div + div { border-left: 1px solid var(--fl-rule); }
+.md-typeset .fl-trio h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--fl-muted);
+  font-weight: 600;
+}
+.md-typeset .fl-trio p { font-size: 0.74rem; margin: 0 0 0.5rem; }
+.md-typeset .fl-trio pre { margin: 0; }
+.md-typeset .fl-trio ul { margin: 0; padding: 0; list-style: none; font-size: 0.72rem; }
+.md-typeset .fl-trio li { margin: 0 0 0.45rem; padding: 0; }
+.md-typeset .fl-trio mark {
+  background: var(--md-accent-fg-color--transparent);
+  color: inherit;
+  border-bottom: 1.5px solid var(--fl-accent);
+  padding: 0 0.1em;
+}
+
+.fl-uses { border-top: 1px solid var(--fl-rule); }
+.fl-use {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 1.6rem;
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--fl-rule);
+  align-items: start;
+}
+.md-typeset .fl-use h3 { margin: 0 0 0.3rem; font-size: 0.92rem; }
+.md-typeset .fl-use p { margin: 0; font-size: 0.76rem; color: var(--fl-muted); }
+.md-typeset .fl-use pre { margin: 0; }
+
+.fl-promises {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 2rem;
+}
+.md-typeset .fl-promises p { margin: 0 0 0.9rem; font-size: 0.76rem; }
+.md-typeset .fl-promises strong { color: var(--fl-ink); }
+
+@media screen and (max-width: 60em) {
+  .fl-hero__inner { grid-template-columns: minmax(0, 1fr); padding-top: 2rem; gap: 1.6rem; }
+  .fl-trio { grid-template-columns: minmax(0, 1fr); }
+  .fl-trio > div + div { border-left: 0; border-top: 1px solid var(--fl-rule); }
+  .fl-use { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
+  .fl-promises { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media screen and (max-width: 34em) {
+  .fl-ledger__head,
+  .fl-ledger__row { grid-template-columns: minmax(0, 1fr); }
+  .fl-ledger__head span:last-child { display: none; }
+  .fl-ledger__margin { border-left: 0; border-top: 1px dotted var(--fl-rule); padding-top: 0.4rem; }
+}

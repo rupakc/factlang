@@ -1,0 +1,43 @@
+name: Docs
+
+# Build the documentation site and the in-browser playground, then publish them to the
+# gh-pages branch (the repository's Pages source).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push supersedes a queued one.
+concurrency:
+  group: docs-pages
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install build -e ".[docs]"
+      - name: Build the wheel the playground installs
+        run: python -m build --wheel
+      - name: Generate the verb reference
+        run: python scripts/gen_reference.py
+      - name: Build the site
+        run: mkdocs build --strict
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: "docs: publish ${{ github.sha }}"

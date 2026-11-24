@@ -28,7 +28,7 @@ from typing import Any
 from factlang.agent.reference import verb_reference
 from factlang.contract import ContractPack
 from factlang.diagnostics import DiagnosticBag
-from factlang.engine import Checker, string_quoter
+from factlang.engine import Checker, display_sql, string_quoter
 from factlang.judge import Outcome, json_safe
 from factlang.semantics.analyzer import analyze
 from factlang.sql import RenderedProbe, RenderError, native_dialects, renderer_for
@@ -68,7 +68,8 @@ _LINT = (
 _EXPLAIN = (
     "Show the SQL each FactLang claim would run, for the given SQL dialect, without "
     "executing anything. Returns one entry per claim, in order: its probe (display SQL with "
-    "literals inlined, the parameterised template and typed parameters) or, when it has no "
+    "literals inlined, or the template when a literal cannot be inlined safely; the "
+    "parameterised template and typed parameters) or, when it has no "
     "probe, its outcome (e.g. invalid with diagnostics)."
 )
 
@@ -196,7 +197,7 @@ def _probe_entry(probe: RenderedProbe) -> dict[str, object]:
         "kind": "probe",
         "dialect": probe.dialect,
         "tier": probe.tier,
-        "sql": probe.inline(string_quoter(probe.dialect)),
+        "sql": display_sql(probe, string_quoter(probe.dialect)),
         "sql_template": probe.sql_template,
         "params": json_safe(
             [{"name": p.name, "value": p.value, "family": p.family} for p in probe.params]

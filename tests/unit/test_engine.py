@@ -16,7 +16,7 @@ from factlang.ir import ColumnAggregate, Metric
 from factlang.judge import Outcome, Verdict
 from factlang.semantics.catalog import NullCatalog, StaticCatalog
 from factlang.semantics.refs import Ident, TableRef
-from factlang.sql import RenderedProbe
+from factlang.sql import RenderedProbe, RenderError
 
 ORDERS = TableRef(None, None, Ident("orders"))
 
@@ -427,13 +427,43 @@ def test_report_serialisations_carry_verified_first() -> None:
 def test_evidence_inlines_with_the_dialect_string_quoter() -> None:
     fn = rows_fn([{"row_count": 0}])
     (o,) = (
+        Checker(CallableConnector(fn, "postgres"), catalog=NullCatalog())
+        .check("COUNT orders VALUE == 0 WHERE status = 'it''s'")
+        .outcomes
+    )
+    assert o.evidence is not None and "'it''s'" in (o.evidence.sql or "")
+    assert string_quoter("duckdb")("it's") == "'it''s'"
+    # no dialect escapes with a backslash any more: it doubles, or refuses
+    assert string_quoter("mysql")("it's") == "'it''s'"
+    with pytest.raises(RenderError, match="FL500"):
+        string_quoter("mysql")("a\\b")
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "postgres", "mysql", "bigquery", "tsql"])
+def test_uninlinable_evidence_falls_back_to_the_placeholder_template(dialect: str) -> None:
+    fn = rows_fn([{"row_count": 0}])
+    checker = Checker(CallableConnector(fn, dialect), catalog=NullCatalog())
+    claim = "COUNT orders VALUE == 0 WHERE status = 'x\\'' OR 1=1 --'"
+    (o,) = checker.check(claim).outcomes
+    assert o.verdict is Verdict.PASS, o.explanation
+    assert o.evidence is not None and o.evidence.sql is not None
+    assert "{{p1}}" in o.evidence.sql
+    assert "OR 1=1" not in o.evidence.sql
+    assert o.evidence.params == ("x\\' OR 1=1 --",)
+    (est,) = checker.estimate(claim)
+    assert est.sql is not None and "{{p1}}" in est.sql
+
+
+def test_bigquery_evidence_with_a_quote_falls_back_instead_of_backslash_escaping() -> None:
+    fn = rows_fn([{"row_count": 0}])
+    (o,) = (
         Checker(CallableConnector(fn, "bigquery"), catalog=NullCatalog())
         .check("COUNT orders VALUE == 0 WHERE status = 'it''s'")
         .outcomes
     )
-    assert o.evidence is not None and "'it\\'s'" in (o.evidence.sql or "")
-    assert string_quoter("duckdb")("it's") == "'it''s'"
-    assert string_quoter("mysql")("a\\b'") == "'a\\\\b\\''"
+    assert o.verdict is Verdict.PASS
+    assert o.evidence is not None and "{{p1}}" in (o.evidence.sql or "")
+    assert "\\" not in (o.evidence.sql or "")
 
 
 def test_acheck_uses_native_aexecute() -> None:

@@ -47,7 +47,9 @@ SELECT a.non_null AS non_null, ... FROM orders ...;
 SELECT COUNT(*) AS row_count FROM orders;
 ```
 
-The SQL is the display form, literals inlined. Any native dialect works, and with
+The SQL is the display form, literals inlined; a literal that cannot be inlined safely
+(a backslash or NUL in a string, for example) is left as its `{{name}}` placeholder, with
+the value listed under `params` in `--format json`. Any native dialect works, and with
 `factlang[sqlglot]` installed any dialect sqlglot knows.
 
 ## check

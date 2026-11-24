@@ -8,6 +8,7 @@ each connector calls :meth:`RenderedProbe.bind` with its driver's style.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -107,26 +108,67 @@ def bind_template(
     return sql, used
 
 
+def _refuse_unsafe_text(text: str, what: str) -> None:
+    """Refuse text whose meaning in a string literal depends on server settings."""
+    if "\\" in text or "\x00" in text:
+        raise RenderError(
+            f"FL500 cannot inline {what}: it contains a backslash or NUL, whose meaning in a "
+            "string literal depends on the server; bind it as a parameter instead"
+        )
+
+
 def ansi_quote(text: str) -> str:
-    """ANSI string literal: single quotes, inner quotes doubled."""
+    """ANSI string literal: single quotes, inner quotes doubled.
+
+    Text holding a backslash or NUL is refused with ``FL500``: some servers (MySQL by
+    default, PostgreSQL with ``standard_conforming_strings`` off, BigQuery, Databricks,
+    ClickHouse) read a backslash as an escape, so no single spelling is safe everywhere.
+    """
+    _refuse_unsafe_text(text, "a string")
     return "'" + text.replace("'", "''") + "'"
 
 
+def _refuse(p: Param, why: str = "") -> RenderError:
+    return RenderError(f"FL500 cannot inline {type(p.value).__name__} parameter {p.name}{why}")
+
+
 def _inline_value(p: Param, quote_string: Callable[[str], str]) -> str:
+    """One literal that means exactly ``p.value`` in every native dialect, or ``FL500``.
+
+    Only scalars are inlined: ``None``, ``bool``, ``int``, finite ``Decimal`` and ``float``,
+    ``date``/``datetime`` and ``str`` without a backslash or NUL. Everything else (lists,
+    dicts, sets, bytes, arbitrary objects, NaN and infinities) is refused, never stringified.
+    """
     v = p.value
     if v is None:
         return "NULL"
-    if p.family == "boolean" or isinstance(v, bool):
+    if isinstance(v, bool):
         return "TRUE" if v else "FALSE"
-    if isinstance(v, (int, Decimal)) and p.family in ("integer", "decimal"):
-        return str(v)
+    if p.family == "boolean":
+        raise _refuse(p, ": the boolean family takes only True or False")
     if isinstance(v, float):
+        if not math.isfinite(v):
+            raise _refuse(p, ": NaN and infinities have no portable literal")
         return repr(v)
-    if p.family == "timestamp" and isinstance(v, dt.datetime):
-        return "TIMESTAMP " + quote_string(v.isoformat())
-    if p.family == "date" and isinstance(v, dt.date):
-        return "DATE " + quote_string(v.isoformat())
-    return quote_string(str(v))
+    if isinstance(v, Decimal):
+        if not v.is_finite():
+            raise _refuse(p, ": NaN and infinities have no portable literal")
+        return format(v, "f")
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, dt.datetime) and p.family == "timestamp":
+        return "TIMESTAMP " + _quote(p, v.isoformat(), quote_string)
+    if isinstance(v, dt.date) and p.family == "date":
+        return "DATE " + _quote(p, v.isoformat(), quote_string)
+    if isinstance(v, (str, dt.date)):
+        return _quote(p, str(v), quote_string)
+    raise _refuse(p)
+
+
+def _quote(p: Param, text: str, quote_string: Callable[[str], str]) -> str:
+    # checked here as well as in the quoter, so a host-supplied quoter cannot bypass it
+    _refuse_unsafe_text(text, f"{type(p.value).__name__} parameter {p.name}")
+    return quote_string(text)
 
 
 def inline_template(
@@ -134,7 +176,13 @@ def inline_template(
     params: tuple[Param, ...],
     quote_string: Callable[[str], str] | None = None,
 ) -> str:
-    """Display-only SQL with every parameter inlined and escaped. Never executed."""
+    """Display-oriented SQL with every parameter inlined as a literal.
+
+    FactLang never executes it, but it must be safe if a host does: each value either
+    becomes a literal that means exactly that value regardless of server settings, or the
+    whole call fails closed with ``RenderError("FL500 cannot inline ...")``. Strings are
+    quoted by doubling ``'``; nothing ever relies on backslash escaping.
+    """
     quote = quote_string if quote_string is not None else ansi_quote
     by_name = {p.name: p for p in params}
 

@@ -54,7 +54,7 @@ edge2 = EdgeRef(ColumnRef(orders, Ident("customer_id")), ColumnRef(customers, Id
 f, diags = fl.parse_filter("deleted IS NULL OR NOT deleted")
 frag = fl.sql.render_filter(f, table=orders, dialect="snowflake")
 snippet = fl.sql.render_join([edge1, edge2], dialect="bigquery", filters={items: f})
-print(frag.inline())      # display-only text, literals escaped
+print(frag.inline())      # display-oriented text; FL500 for a literal it cannot render safely
 ```
 
 A `RenderedFragment` has `sql_template`, `params`, `bind(paramstyle)` and `inline()`, like a probe, but is not a full statement and is never executed by FactLang. In `render_join` the left-most table's filter goes in `WHERE`, other tables' filters in their `ON`. Hostile literals appear only in params.

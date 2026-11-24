@@ -43,10 +43,12 @@ import factlang as fl
 
 (probe,) = fl.compile("COUNT orders VALUE >=1 WHERE status = 'shipped'", dialect="postgres")
 sql, params = probe.bind("pyformat")   # what a driver wants
-print(probe.inline())                  # display-only text; never executed
+print(probe.inline())                  # display-oriented text; never executed by FactLang
 ```
 
 Rendered probes must begin with `SELECT` or `WITH` and contain no `;` outside literals.
+
+`inline()` fails closed: it quotes strings by doubling `'` in every dialect and never relies on backslash escaping, and it refuses with `FL500` any value it cannot render safely (a string with a backslash or NUL, a `'` for BigQuery or Databricks, a non-scalar, `NaN` or an infinity). Evidence then shows the `{{name}}` template instead; the check itself is unaffected.
 
 ## Type families
 

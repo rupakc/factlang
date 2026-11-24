@@ -252,3 +252,14 @@ def test_explain_other_dialect_reuses_the_pack(checker: Checker) -> None:
     assert result["dialect"] == other
     assert result["claims"][0]["kind"] == "probe"
     assert result["claims"][0]["dialect"] == other
+
+
+def test_explain_falls_back_to_the_template_for_an_uninlinable_literal(checker: Checker) -> None:
+    claims = "COUNT orders VALUE == 0 WHERE status = 'a\\b'"
+    result = _roundtrip(
+        handle_tool_call("factlang_explain", {"claims": claims, "dialect": "mysql"}, checker)
+    )
+    (entry,) = result["claims"]
+    assert entry["kind"] == "probe"
+    assert entry["sql"] == entry["sql_template"] and "{{p1}}" in entry["sql"]
+    assert [p["value"] for p in entry["params"]] == ["a\\b"]

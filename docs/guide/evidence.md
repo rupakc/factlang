@@ -5,7 +5,7 @@ A verdict you cannot audit is just another claim. Every measured outcome carries
 
 | field | |
 |---|---|
-| `sql` | the query, **display form**: literals inlined and escaped, ready to paste into a console |
+| `sql` | the query, **display form**: literals inlined, ready to paste into a console; the `{{name}}` template when a literal cannot be inlined safely |
 | `params` | the values that were bound as typed parameters when the query actually ran |
 | `dialect` | the dialect it was rendered for |
 | `tier` | how much that rendering is trusted: `verified`, `native` or `best_effort` |
@@ -35,12 +35,47 @@ print(probe.inline())
 
 Parameters carry their type family, and some profiles (Postgres here) cast each placeholder
 to that type explicitly. `bind(paramstyle)` produces the driver's spelling for `qmark`,
-`numeric`, `named`, `format` or `pyformat`; each connector declares its own. `inline()` is for people only and is never
-executed.
+`numeric`, `named`, `format` or `pyformat`; each connector declares its own.
 
 Two guards hold on every rendered probe: it begins with `SELECT` or `WITH`, and it contains
 no `;` outside a literal. Identifiers that cannot be represented safely (a NUL or newline, or
 longer than the dialect allows) are refused with `FL502`, never sanitised.
+
+## Inlining is display-oriented, and fails closed
+
+`inline()` is for people: FactLang never executes it. Because a host might still run it (a
+driver that cannot bind, a console paste), it is built to be safe if executed, and refuses
+whatever it cannot render safely instead of guessing:
+
+- Strings are quoted by doubling `'`, in every dialect. Nothing relies on backslash escaping,
+  so a literal never changes meaning with server settings (MySQL's default `sql_mode`,
+  PostgreSQL's `standard_conforming_strings`).
+- A string holding a backslash or a NUL is refused, as is a `'` in a dialect whose string
+  literals have no doubled-quote form (`bigquery`, `databricks`).
+- Only scalars are inlined: `NULL`, booleans, integers, finite decimals and floats, dates,
+  timestamps and strings. Lists, dicts, sets, bytes, other objects, `NaN` and infinities are
+  refused.
+
+A refusal is `RenderError("FL500 cannot inline <type> parameter <name> …")`. Evidence never
+fails a check over it: `evidence.sql` (and `factlang explain`, the agent's `factlang_explain`
+and `Checker.estimate`) shows the template with its `{{name}}` placeholders instead, and the
+values are in `params`. The claim itself is judged exactly as before, because the executed
+statement always binds its parameters.
+
+```python
+import factlang as fl
+
+from factlang.engine import display_sql
+
+(probe,) = fl.compile(r"COUNT orders VALUE ==0 WHERE status = 'a\b'", dialect="mysql")
+try:
+    probe.inline()
+except fl.sql.RenderError as exc:
+    print(exc)  # FL500 cannot inline str parameter p1: it contains a backslash or NUL, ...
+print(display_sql(probe))
+# SELECT COUNT(*) AS row_count FROM orders WHERE status = {{p1}}
+assert display_sql(probe) == probe.sql_template
+```
 
 ## Tiers
 

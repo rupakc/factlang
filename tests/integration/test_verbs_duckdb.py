@@ -176,6 +176,25 @@ def test_hostile_literal_is_bound(duck: Any, conn: DBAPIConnector) -> None:
     assert duck.execute("SELECT COUNT(*) FROM orders").fetchone() == (100,)
 
 
+def test_backslash_literal_judges_correctly_with_placeholder_evidence() -> None:
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()
+    con.execute("CREATE TABLE orders (id INTEGER, status VARCHAR)")
+    con.execute("INSERT INTO orders VALUES (1, ?), (2, ?), (3, 'paid')", ["a\\b", "x\\' OR 1=1 --"])
+    checker = Checker(DBAPIConnector(con, "duckdb"), catalog=NullCatalog())
+    one, two, none = checker.check(
+        "COUNT orders VALUE == 1 WHERE status = 'a\\b'\n"
+        "COUNT orders VALUE == 1 WHERE status = 'x\\'' OR 1=1 --'\n"
+        "COUNT orders VALUE == 0 WHERE status = 'a\\'"
+    ).outcomes
+    for outcome, value in ((one, "a\\b"), (two, "x\\' OR 1=1 --"), (none, "a\\")):
+        assert outcome.verdict is Verdict.PASS, outcome.explanation
+        assert outcome.evidence is not None and outcome.evidence.sql is not None
+        assert "{{p1}}" in outcome.evidence.sql and "OR 1=1" not in outcome.evidence.sql
+        assert outcome.evidence.params == (value,)
+    con.close()
+
+
 def test_quoted_table_and_reserved_column(conn: DBAPIConnector) -> None:
     text = (
         'ROWS "Order Items" VALUE == 3\n'

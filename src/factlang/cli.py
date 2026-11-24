@@ -32,7 +32,7 @@ from factlang.api import lint
 from factlang.connectors import DBAPIConnector, connect
 from factlang.connectors.base import AsyncConnector, Connector
 from factlang.diagnostics import DiagnosticBag
-from factlang.engine import Checker, Report, string_quoter
+from factlang.engine import Checker, Report, display_sql, string_quoter
 from factlang.judge import Outcome, Verdict, json_safe
 from factlang.packs.standard import standard_pack
 from factlang.sql import RenderedProbe
@@ -214,7 +214,7 @@ def cmd_explain(args: argparse.Namespace, out: TextIO) -> int:
             records.append(
                 {
                     "claim": claim,
-                    "sql": item.inline(quote),
+                    "sql": display_sql(item, quote),
                     "sql_template": item.sql_template,
                     "params": [
                         {"name": p.name, "value": p.value, "family": p.family} for p in item.params

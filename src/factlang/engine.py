@@ -51,27 +51,52 @@ from factlang.packs.standard import standard_pack
 from factlang.semantics.analyzer import analyze
 from factlang.semantics.catalog import CachedCatalog, Catalog, NullCatalog
 from factlang.semantics.checked import CheckedClaim
-from factlang.sql import RenderedProbe, RenderError, renderer_for
+from factlang.sql import RenderedFragment, RenderedProbe, RenderError, renderer_for
 from factlang.sql.probe import ansi_quote
 from factlang.syntax import ast, parse
 
 Prefer = Literal["native", "sqlglot"]
 _CODE = re.compile(r"^(FL\d{3})\b")
 _LEAD = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)")
-# dialects whose string literals treat a backslash as an escape character
-_BACKSLASH_STRINGS = frozenset({"bigquery", "mysql", "databricks", "clickhouse"})
+# dialects whose lexers do not read a doubled '' as a quote inside a string literal
+_NO_DOUBLED_QUOTE = frozenset({"bigquery", "databricks"})
 _NOT_OK = frozenset({Verdict.FAIL, Verdict.ERROR, Verdict.INVALID})
 
 
 def string_quoter(dialect: str) -> Callable[[str], str]:
-    """The string-literal quoting used to inline parameters into display SQL (evidence only)."""
-    if dialect in _BACKSLASH_STRINGS:
+    """The string-literal quoting used to inline parameters into display SQL (evidence only).
+
+    Every dialect quotes by doubling ``'``; none relies on backslash escaping, so the
+    literal cannot change meaning with server settings. Text holding a backslash or NUL is
+    refused with ``FL500``, and so is a ``'`` in a dialect whose lexer does not read ``''``
+    as a quote. Callers that only display SQL fall back to the template (``display_sql``).
+    """
+    if dialect in _NO_DOUBLED_QUOTE:
 
         def quote(text: str) -> str:
-            return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+            if "'" in text:
+                raise RenderError(
+                    f"FL500 cannot inline a string containing ' for {dialect}: its string "
+                    "literals have no doubled-quote form"
+                )
+            return ansi_quote(text)
 
         return quote
     return ansi_quote
+
+
+def display_sql(
+    item: RenderedProbe | RenderedFragment, quote: Callable[[str], str] | None = None
+) -> str:
+    """Evidence SQL: literals inlined when that is safe, else the ``{{name}}`` template.
+
+    Inlining fails closed (``FL500``) for values it cannot render safely; evidence never
+    fails a check over that, it shows the template and the params are listed beside it.
+    """
+    try:
+        return item.inline(quote)
+    except RenderError:
+        return item.sql_template
 
 
 # -- results ---------------------------------------------------------------------------------
@@ -448,7 +473,7 @@ class Checker:
                 except Exception:
                     size = None
             method: Literal["dry_run", "unknown"] = "dry_run" if size is not None else "unknown"
-            out.append(CostEstimate(key, probe.inline(self._quote), size, method))
+            out.append(CostEstimate(key, display_sql(probe, self._quote), size, method))
         return out
 
     # -- front end -----------------------------------------------------------------------
@@ -628,7 +653,7 @@ class Checker:
         if catalog is not self._default_catalog:  # the metadata SQL was not what answered
             return Evidence(dialect=probe.dialect, tier=probe.tier)
         return Evidence(
-            sql=probe.inline(self._quote),
+            sql=display_sql(probe, self._quote),
             params=tuple(p.value for p in probe.params),
             dialect=probe.dialect,
             tier=probe.tier,
@@ -774,7 +799,7 @@ class Checker:
                     error = ExecutionError(
                         f"result shape: {type(exc).__name__}: {exc}", code="FL700"
                     )
-            sql = probe.inline(self._quote)
+            sql = display_sql(probe, self._quote)
             params = tuple(p.value for p in probe.params)
             member_plans = dict(self._member_plans(fp))
             for key in keys:
@@ -862,4 +887,4 @@ class Checker:
         return out
 
 
-__all__ = ["Checker", "CostEstimate", "Measurement", "Report", "string_quoter"]
+__all__ = ["Checker", "CostEstimate", "Measurement", "Report", "display_sql", "string_quoter"]

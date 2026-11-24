@@ -135,8 +135,9 @@ print(evidence.dialect, evidence.tier)   # duckdb verified
 assert evidence.params == ("paid",)
 ```
 
-`evidence.sql` is the display form, with literals inlined and escaped so you can paste it
-into a SQL console. What actually ran was a parameterised statement: `'paid'` travelled as a
+`evidence.sql` is the display form, with literals inlined so you can paste it into a SQL
+console (a value it cannot inline safely is left as a `{{name}}` placeholder; see
+[Evidence](guide/evidence.md#inlining-is-display-oriented-and-fails-closed)). What actually ran was a parameterised statement: `'paid'` travelled as a
 typed bind parameter (`evidence.params`), never as SQL text. That holds for every literal
 in every claim, which is why a claim cannot inject SQL.
 
@@ -183,7 +184,7 @@ the [playground](playground.md) does in your browser.
 
 ```python
 for probe in fl.compile("NULLS customers.email RATE <=5%", dialect="snowflake"):
-    print(probe.inline())       # display-only: literals inlined and escaped
+    print(probe.inline())       # display-oriented: literals inlined, or FL500 if unsafe
 ```
 
 `probe.sql_template` and `probe.params` are the executable form; `probe.bind("qmark")`

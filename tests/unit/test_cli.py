@@ -556,3 +556,14 @@ def test_output_is_utf8_whatever_the_console(
     assert cli.main(["lint", f]) == 2
     stream.flush()
     assert "café".encode() in raw.getvalue()
+
+
+def test_explain_falls_back_to_the_template_for_an_uninlinable_literal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = write(tmp_path, "a.fl", "COUNT orders VALUE == 0 WHERE status = 'a\\b'\n")
+    code, out, _ = run(["--format", "json", "explain", f, "--dialect", "mysql"], capsys)
+    (item,) = json.loads(out)
+    assert code == 0
+    assert item["sql"] == item["sql_template"] and "{{p1}}" in item["sql"]
+    assert [p["value"] for p in item["params"]] == ["a\\b"]

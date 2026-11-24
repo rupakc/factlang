@@ -7,6 +7,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
+Security hardening: fail-closed literal inlining.
+
+### Security
+- `inline()` on probes and fragments is display-oriented, but hosts may execute it when a
+  driver cannot bind, so it now fails closed. Values it cannot render safely raise
+  `RenderError("FL500 cannot inline <type> parameter <name> …")`: non-scalars (lists,
+  dicts, sets, bytes, arbitrary objects, which used to become a quoted `str(v)`), `NaN` and
+  infinities (which used to be inlined bare), and strings holding a backslash or NUL.
+- String literals no longer depend on server settings: every dialect quotes by doubling
+  `'`, and the backslash-escaping used for `bigquery`, `mysql`, `databricks` and
+  `clickhouse` is gone. `bigquery` and `databricks` have no doubled-quote form, so a `'`
+  in a string is refused there.
+
+### Changed
+- `Evidence.sql`, `Checker.estimate`, `factlang explain` and the agent's `factlang_explain`
+  show the `{{name}}` template (values in `params`) when a literal cannot be inlined; a
+  check never fails because its evidence could not be inlined. New helper
+  `factlang.engine.display_sql`.
+- Decimal literals inline in plain positional form (`1000`, not `1E+3`).
+
 ## [0.1.0] - 2026-11-24
 
 The first release. Development status: Alpha. Python 3.10–3.13.
@@ -64,5 +86,6 @@ The first release. Development status: Alpha. Python 3.10–3.13.
   probe (both claims were reported as `FL500`).
 - `str(Verdict.PASS)` is `"pass"`.
 
-[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/rupakc/factlang/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/rupakc/factlang/releases/tag/v0.1.0

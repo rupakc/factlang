@@ -107,7 +107,7 @@ def test_exported_objects_are_the_real_ones() -> None:
     assert fl.connectors is connectors
     assert fl.connectors.run_metadata is connectors.run_metadata
     assert fl.types.register is types_mod.register_type
-    assert fl.__version__ == "0.1.0" and fl.LANGUAGE_VERSION == "1.0"
+    assert fl.__version__ == "0.1.1" and fl.LANGUAGE_VERSION == "1.0"
 
 
 def test_usability_names_are_reachable_from_public_paths() -> None:

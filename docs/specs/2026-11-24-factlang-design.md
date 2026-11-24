@@ -35,8 +35,8 @@ company, product or dataset from the project it was conceived in.
 
 ### 1.1 Lineage
 
-FactLang is a from-scratch reimplementation of the ideas of an internal language
-("ClaimLang"). No ClaimLang code is copied. The concepts carried forward, each of
+FactLang is a from-scratch reimplementation of the ideas of an internal predecessor
+language. None of its code is copied. The concepts carried forward, each of
 which exists because its absence caused a measured wrong answer, are:
 
 1. **Line-oriented claims** — one claim per line, so a file with five mistakes reports
@@ -68,9 +68,9 @@ which exists because its absence caused a measured wrong answer, are:
     contract's examples are run as tests.
 14. **Layering enforced by test** and a **portability test** on the core's imports.
 
-### 1.2 What FactLang adds over ClaimLang
+### 1.2 What FactLang adds over the predecessor
 
-| Gap in ClaimLang | FactLang v1 |
+| Gap in the predecessor | FactLang v1 |
 |---|---|
 | Two dialects (BigQuery, Postgres) | 10 native dialect profiles + any sqlglot dialect (§8) |
 | Host must execute SQL | Optional connectors that execute, with timeouts and cost guards (§9) |
@@ -147,7 +147,7 @@ which exists because its absence caused a measured wrong answer, are:
 2. The grammar knows no verbs. A verb is the first token of a claim and must be an
    all-uppercase identifier; it is validated against the active pack.
 3. Attribute names are all-uppercase identifiers. **Operands end at the first
-   all-uppercase bare identifier.** Consequence (keep from ClaimLang, documented as
+   all-uppercase bare identifier.** Consequence (keep from the predecessor, documented as
    grammar): an uppercase bare word can never be an operand; symbolic arguments are
    attribute values (`UNIT t.c IS bytes`). Identifiers that are uppercase *and* must
    be operands (e.g. a table literally named `ORDERS` in Snowflake) are written
@@ -172,7 +172,7 @@ COMMENT     = "#" { any char except newline } ;
 CONT        = "\" NEWLINE ;
 ```
 
-Changes from ClaimLang, and why:
+Changes from the predecessor, and why:
 - **Strings are single-quoted only**; double quotes and backticks are *identifiers*
   (SQL convention, so agents trained on SQL write them correctly). `''` escapes a quote.
 - `=` is accepted in `WHERE` filters (SQL habit); in attributes `=` is a synonym of
@@ -311,6 +311,11 @@ dialect knows SQL; only the connector knows a network.
 ### 5.1 Package layout and layers
 
 A module may import only from strictly lower layers (enforced by `test_layering.py`).
+Within one layer number, modules are ordered by sub-layer and may import only
+earlier ones: layer 5 = `refs` (5.0) < `types` (5.1) < `filters` (5.2) <
+`signature` (5.3); layer 6 = `catalog` (6.0) < `checked` (6.1); layer 7 =
+`identity` (7.0) < `analyzer` (7.1). `parser` and `formatter` (both 4) may not
+import each other.
 
 | Layer | Module | Responsibility |
 |---|---|---|
@@ -815,7 +820,7 @@ factlang/
 
 ## 16. Approaches considered
 
-1. **Hand-written SQL per warehouse** (ClaimLang's approach). Precise and
+1. **Hand-written SQL per warehouse** (the predecessor's approach). Precise and
    dependency-free, but ten full renderers drift on NULL/case semantics. Rejected
    as the sole mechanism.
 2. **One shared generator + small dialect profiles**. Dependency-free core,
@@ -828,7 +833,7 @@ path; sqlglot is an optional extra covering the long tail, labelled `best_effort
 and used in tests to cross-check native SQL. Both start from the same internal SQL
 AST (§8.2) so they cannot disagree on semantics.
 
-Also decided by the owner: build from scratch, reusing ClaimLang's concepts, not its code.
+Also decided by the owner: build from scratch, reusing the predecessor's concepts, not its code.
 
 ## 17. Left to the builder
 Exact internal class names below the public API; error message wording (codes and

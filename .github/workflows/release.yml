@@ -1,0 +1,100 @@
+name: Release
+
+# A version tag (v*) publishes that commit: verify -> PyPI (Trusted Publishing) -> GitHub
+# Release. The PyPI trusted publisher is registered for this workflow file name and the
+# `pypi` environment; renaming either breaks publishing. No API token is used anywhere.
+on:
+  push:
+    tags: ["v*"]
+
+# One release per tag; never cancel a release that is already publishing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read # gh run list: the CI verdict of the tagged commit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tag matches factlang.__about__.__version__
+        run: |
+          version=$(PYTHONPATH=src python -c "from factlang.__about__ import __version__; print(__version__)")
+          echo "tag=${GITHUB_REF_NAME} version=${version}"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+      - name: CI succeeded for the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pass on any completed successful ci.yml run of this exact commit; wait (up to 60
+          # minutes) while runs are still queued or in progress; fail when every run of the
+          # commit finished without success, or none exists.
+          deadline=$(( $(date +%s) + 3600 ))
+          while :; do
+            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+              --workflow ci.yml --limit 50 --json status,conclusion)
+            echo "$runs"
+            if echo "$runs" | jq -e 'any(.[]; .status == "completed" and .conclusion == "success")' >/dev/null; then
+              echo "CI is green for $GITHUB_SHA"
+              exit 0
+            fi
+            if ! echo "$runs" | jq -e 'any(.[]; .status != "completed")' >/dev/null; then
+              echo "::error::no successful ci.yml run for $GITHUB_SHA"
+              exit 1
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::timed out waiting for ci.yml on $GITHUB_SHA"
+              exit 1
+            fi
+            sleep 30
+          done
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  pypi:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/factlang/
+    permissions:
+      id-token: write # Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: FactLang ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: true

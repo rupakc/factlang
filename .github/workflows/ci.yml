@@ -146,10 +146,11 @@ jobs:
       - name: ODBC Driver 18 for SQL Server
         run: |
           if ! odbcinst -q -d -n "ODBC Driver 18 for SQL Server" >/dev/null 2>&1; then
+            # the runner may already hold this key and list: overwrite, never prompt
             curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-              | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+              | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
             curl -fsSL "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list" \
-              | sudo tee /etc/apt/sources.list.d/mssql-release.list
+              | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
             sudo apt-get update
             sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
           fi

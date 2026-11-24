@@ -91,7 +91,7 @@ Rules enforced by the parser:
 ```ebnf
 condition  = conj { "OR" conj } ;
 conj       = atom { "AND" atom } ;
-atom       = "NOT" atom | "(" condition ")" | comparison ;
+atom       = "NOT" atom | "(" condition ")" | comparison | name ;   (* bare boolean column *)
 comparison = name OP literal
            | name "IN" list
            | name "NOT" "IN" list
@@ -104,10 +104,31 @@ literal    = NUMBER | STRING | typed | "TRUE" | "FALSE" ;
 - `AND OR NOT IN IS NULL BETWEEN TRUE FALSE DATE TIMESTAMP` are filter keywords,
   recognised **uppercase only**. A bare keyword is never a column name; quote it.
 - The column of a comparison is a single name (`IDENT` or `QIDENT`), not a dotted ref.
+- A `name` standing alone as an atom tests a boolean column: `deleted` means
+  `deleted = TRUE`. A bare `TRUE` or `FALSE` atom is `FL206` (they are keywords; quote a
+  column named `true` as `"TRUE"`).
 - `x = NULL` is `FL206`: `IS NULL` is the only way to test NULL.
 - Inside `IN`, items are filter literals; a trailing comma is allowed.
 
 ## 5. Valid examples
+
+A bare boolean column as a filter.
+
+```factlang-valid
+ROWS orders WHERE deleted
+```
+
+The live-row filter for a flag that is TRUE or NULL.
+
+```factlang-valid
+ROWS orders WHERE deleted IS NULL OR NOT deleted
+```
+
+A parenthesised bare atom under `NOT`.
+
+```factlang-valid
+ROWS orders WHERE NOT (paid) AND amount > 0
+```
 
 A table exists.
 
@@ -410,6 +431,18 @@ EXISTS orders.a:b
 ```
 
 An attribute needs a value.
+
+A bare atom must stand alone; a second name is not an operator.
+
+```factlang-invalid FL206
+ROWS orders WHERE deleted deleted
+```
+
+A bare `TRUE` is a keyword, not a column.
+
+```factlang-invalid FL206
+ROWS orders WHERE TRUE
+```
 
 ```factlang-invalid FL201
 NULLS customers.email RATE

@@ -255,7 +255,6 @@ def test_null_comparison_fl206() -> None:
 def test_malformed_filters_fl206() -> None:
     for tail in [
         "",
-        "x",
         "x =",
         "= 1",
         "x = 1 AND",
@@ -402,3 +401,53 @@ def test_nesting_depth_ten_still_parses() -> None:
     assert not parse("ROWS o WHERE " + "NOT " * 10 + "a = 1").diagnostics.has_errors
     assert not parse("ROWS o X " + "[" * 10 + "]" * 10).diagnostics.has_errors
     assert not parse("ROWS o WHERE " + "(" * 64 + "a = 1" + ")" * 64).diagnostics.has_errors
+
+
+def test_bare_boolean_atom() -> None:
+    def cond(text: str) -> ast.Cond:
+        f = claim(f"ROWS t WHERE {text}").filter
+        assert f is not None
+        return f.condition
+
+    c = cond("deleted")
+    assert isinstance(c, ast.FilterName) and c.column.text == "deleted" and not c.column.quoted
+    c = cond('"my flag"')
+    assert isinstance(c, ast.FilterName) and c.column.quoted and c.column.text == "my flag"
+    c = cond("NOT deleted")
+    assert isinstance(c, ast.Not) and isinstance(c.item, ast.FilterName)
+    c = cond("deleted IS NULL OR NOT deleted")
+    assert isinstance(c, ast.Or) and isinstance(c.items[0], ast.IsNull)
+    assert isinstance(c.items[1], ast.Not) and isinstance(c.items[1].item, ast.FilterName)
+    c = cond("NOT (paid) AND amount > 0")
+    assert isinstance(c, ast.And) and isinstance(c.items[0], ast.Not)
+    assert isinstance(c.items[0].item, ast.FilterName)
+    c = cond("(a) AND b")
+    assert isinstance(c, ast.And) and all(isinstance(i, ast.FilterName) for i in c.items)
+
+
+def test_bare_atom_does_not_break_comparisons() -> None:
+    for text in ["a = 1", "a IN [1]", "a NOT IN [1]", "a IS NULL", "a BETWEEN 1 AND 2"]:
+        f = claim(f"ROWS t WHERE {text}").filter
+        assert f is not None and not isinstance(f.condition, ast.FilterName), text
+
+
+def test_bare_atom_malformed_fl206() -> None:
+    for tail in [
+        "deleted deleted",
+        "TRUE",
+        "FALSE",
+        "NOT TRUE",
+        "NOT FALSE",
+        "a AND TRUE",
+        "deleted NOT paid",
+        "t.deleted",
+        "deleted = ",
+    ]:
+        assert codes(f"ROWS t WHERE {tail}") == ["FL206"], tail
+    f = claim('ROWS t WHERE "TRUE"').filter
+    assert f is not None and isinstance(f.condition, ast.FilterName)
+
+
+def test_not_before_bare_name_counts_toward_depth() -> None:
+    assert codes("ROWS t WHERE " + "NOT " * 70 + "a") == ["FL207"]
+    assert codes("ROWS t WHERE " + "NOT " * 10 + "a") == []

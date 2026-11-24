@@ -117,6 +117,7 @@ leaves = st.one_of(
         st.just(SP),
     ),
     st.builds(ast.IsNull, _cols, st.booleans(), st.just(SP)),
+    st.builds(ast.FilterName, _cols, st.just(SP)),
     st.builds(ast.Between, _cols, _between_scalars, _between_scalars, st.just(SP)),
 )
 conditions: st.SearchStrategy[ast.Cond] = st.recursive(

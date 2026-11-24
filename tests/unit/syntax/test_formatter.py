@@ -96,3 +96,14 @@ def test_negative_zero_and_negatives() -> None:
     assert fmt("ROWS t VALUE -0.0%") == "ROWS t VALUE 0%"
     assert fmt("RANGE t.c BETWEEN [-1, -2]") == "RANGE t.c BETWEEN [-1, -2]"
     assert fmt("ROWS t WHERE a BETWEEN -1 AND -2") == "ROWS t WHERE a BETWEEN -1 AND -2"
+
+
+def test_bare_boolean_atom_prints_bare() -> None:
+    assert fmt("ROWS t WHERE  deleted") == "ROWS t WHERE deleted"
+    assert fmt("ROWS t WHERE deleted IS NULL OR NOT  deleted") == (
+        "ROWS t WHERE deleted IS NULL OR NOT deleted"
+    )
+    assert fmt("ROWS t WHERE NOT (paid) AND amount > 0") == "ROWS t WHERE NOT paid AND amount > 0"
+    assert fmt('ROWS t WHERE "my flag" AND "TRUE"') == 'ROWS t WHERE "my flag" AND "TRUE"'
+    assert fmt("ROWS t WHERE NOT (a AND b)") == "ROWS t WHERE NOT (a AND b)"
+    assert fmt("ROWS t WHERE (a OR b) AND c") == "ROWS t WHERE (a OR b) AND c"

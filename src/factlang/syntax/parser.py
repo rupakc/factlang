@@ -401,7 +401,9 @@ class _Line:
         col = self.column()
         tok = self.peek()
         if tok is None:
-            raise self.fail("FL206", "expected an operator after the column", self.end_span())
+            return ast.FilterName(col, col.span)
+        if tok.kind is K.RPAREN or self.kw("AND") or self.kw("OR"):
+            return ast.FilterName(col, col.span)
         if tok.kind is K.OP:
             self.next()
             lit = self.filter_literal()

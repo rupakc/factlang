@@ -102,6 +102,14 @@ class Between:
 
 
 @dataclass(frozen=True)
+class FilterName:
+    """A bare boolean column used as an atom: ``deleted`` (≡ ``deleted = TRUE``)."""
+
+    column: Name
+    span: Span
+
+
+@dataclass(frozen=True)
 class And:
     items: tuple[Cond, ...]
     span: Span
@@ -119,7 +127,7 @@ class Not:
     span: Span
 
 
-Cond = Comparison | InList | IsNull | Between | And | Or | Not
+Cond = Comparison | InList | IsNull | Between | FilterName | And | Or | Not
 
 
 @dataclass(frozen=True)

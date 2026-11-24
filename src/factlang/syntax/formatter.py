@@ -133,6 +133,8 @@ def _cond(cond: ast.Cond, parent: type | None = None) -> str:
         return f"{_name(cond.column)} IS {'NOT ' if cond.negated else ''}NULL"
     if isinstance(cond, ast.Between):
         return f"{_name(cond.column)} BETWEEN {_literal(cond.low)} AND {_literal(cond.high)}"
+    if isinstance(cond, ast.FilterName):
+        return _name(cond.column)
     if isinstance(cond, ast.Not):
         inner = _cond(cond.item, ast.Not)
         return f"NOT {inner}"

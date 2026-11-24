@@ -1,4 +1,8 @@
-"""Every example in docs/reference/grammar.md is executable (FL3xx blocks run in Task 7)."""
+"""Every example in docs/reference/grammar.md is executable.
+
+FL3xx blocks are syntactically valid and are checked by the analyser against the standard
+pack; until the pack exists (Task 10) they are ``xfail(strict=False)`` (Task 12 removes it).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from factlang.diagnostics import DiagnosticBag
+from factlang.semantics.analyzer import analyze
 from factlang.syntax import parse
 
 DOC = Path(__file__).resolve().parents[2] / "docs" / "reference" / "grammar.md"
@@ -42,6 +48,23 @@ def test_valid_blocks_parse_cleanly(src: str) -> None:
 )
 def test_invalid_blocks_report_their_code(code: str, src: str) -> None:
     assert code in parse(src).diagnostics.codes(), src
+
+
+@pytest.mark.xfail(strict=False, reason="needs the standard pack (Task 10); Task 12 removes")
+@pytest.mark.parametrize(
+    ("code", "src"),
+    [(c, s) for c, s in INVALID if c is not None and c.startswith("FL3")],
+    ids=lambda v: v[:50],
+)
+def test_fl3_blocks_report_their_code(code: str, src: str) -> None:
+    import importlib
+
+    pack = importlib.import_module("factlang.packs.standard")
+    res = parse(src)
+    assert not res.diagnostics.has_errors, res.diagnostics.render(src)
+    bag = DiagnosticBag()
+    analyze(res.document, pack.registry(), bag=bag)
+    assert code in bag.codes(), src
 
 
 def test_invalid_blocks_are_not_all_one_code() -> None:

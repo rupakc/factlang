@@ -137,19 +137,21 @@ def _fragment_bridge(
     if isinstance(dialect, DialectProfile):
         if prefer == "native":
             return None
-        dialect = dialect.name
-    if prefer == "native" and dialect in _PROFILES:
+        name = dialect.name
+    else:
+        name = dialect
+    if prefer == "native" and name in _PROFILES:
         return None
     bridge = _bridge()
     if bridge is None:
         if prefer == "sqlglot":
             raise RenderError(
                 "FL504 sqlglot bridge not installed (pip install factlang[sqlglot]); "
-                f"cannot render {dialect!r} through it"
+                f"cannot render {name!r} through it"
             )
-        raise _unknown(dialect)
-    if not bridge.supports_dialect(dialect):
-        raise _unknown(dialect)
+        raise _unknown(name)
+    if not bridge.supports_dialect(name):
+        raise _unknown(name)
     return bridge
 
 
@@ -176,9 +178,9 @@ def render_filter(
     """
     bridge = _fragment_bridge(dialect, prefer)
     if bridge is not None:
-        name = dialect.name if isinstance(dialect, DialectProfile) else dialect
+        # a DialectProfile object is threaded through as given (never swapped)
         node = lower_filter(filter, alias, param_prefix=param_prefix)
-        bridged: RenderedFragment = bridge.render_filter_fragment(node, name, table=table)
+        bridged: RenderedFragment = bridge.render_filter_fragment(node, dialect, table=table)
         return bridged
     profile = _profile(dialect)
     printer = Printer(profile)
@@ -206,8 +208,7 @@ def render_join(
     bridge = _fragment_bridge(dialect, prefer)
     from_, where = lower_join(edges, filters, aliases, param_prefix=param_prefix)
     if bridge is not None:
-        name = dialect.name if isinstance(dialect, DialectProfile) else dialect
-        bridged: RenderedFragment = bridge.render_join_fragment(from_, where, name)
+        bridged: RenderedFragment = bridge.render_join_fragment(from_, where, dialect)
         return bridged
     profile = _profile(dialect)
     printer = Printer(profile)

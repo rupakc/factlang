@@ -144,13 +144,13 @@ def test_fragments_route_to_the_bridge_by_the_resolution_order(
             return dialect != "nope"
 
         @staticmethod
-        def render_filter_fragment(node: object, dialect: str, *, table: object = None) -> str:
-            calls.append(("filter", dialect))
+        def render_filter_fragment(node: object, dialect: object, *, table: object = None) -> str:
+            calls.append(("filter", getattr(dialect, "name", dialect)))
             return "bridged"
 
         @staticmethod
-        def render_join_fragment(from_: object, where: object, dialect: str) -> str:
-            calls.append(("join", dialect))
+        def render_join_fragment(from_: object, where: object, dialect: object) -> str:
+            calls.append(("join", getattr(dialect, "name", dialect)))
             return "bridged"
 
     f = FCompare(Ident("status"), "=", Param("p1", "paid", "string"))

@@ -7,6 +7,7 @@ must return identical rows for every primitive (the cross-check forces the bridg
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import re
 from decimal import Decimal
@@ -27,8 +28,10 @@ from factlang.ir import (
 from factlang.semantics.filters import FBool, FCompare, FIn, FIsNull, FNot, FOr, Param
 from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 from factlang.sql import (
+    SQLGLOT_NAMES,
     RenderError,
     get_profile,
+    native_dialects,
     render,
     render_filter,
     render_join,
@@ -320,8 +323,10 @@ def test_table_parts_over_the_limit_are_fl505() -> None:
 
 
 def test_unknown_dialect_is_fl504() -> None:
-    with pytest.raises(RenderError, match="FL504"):
+    with pytest.raises(RenderError, match="FL504") as err:
         bridge.render_sqlglot(EXACT["pattern"], "no_such_dialect")
+    msg = str(err.value)
+    assert "duckdb" in msg and "postgres" in msg and "pip install factlang[sqlglot]" in msg
     with pytest.raises(RenderError, match="FL504"):
         renderer_for("no_such_dialect")(EXACT["pattern"])  # type: ignore[arg-type]
 
@@ -350,55 +355,120 @@ def test_keyhash_without_a_hash_mapping_is_fl506(dialect: str) -> None:
         bridge.render_sqlglot(SAMPLED["keyhash_aggregate"], dialect)
 
 
-def test_keyhash_on_a_native_keyhash_dialect_uses_the_ruled_hash() -> None:
-    pg = bridge.render_sqlglot(SAMPLED["keyhash_aggregate"], "postgres").sql_template
-    assert "HASHTEXTEXTENDED(" in pg.upper()
-    assert "1000000" in pg
-    duck = bridge.render_sqlglot(SAMPLED["keyhash_aggregate"], "duckdb").sql_template
-    assert "HASH(" in duck.upper()
+def _unparen(node: Any) -> Any:
+    while isinstance(node, sqlglot.exp.Paren):
+        node = node.this
+    return node
 
 
-@pytest.mark.parametrize(
-    "dialect", ["presto", "athena", "hive", "spark2", "teradata", "starrocks", "doris"]
-)
+def _bucket(sql: str, dialect: str) -> Any:
+    """The keyhash bucket expression: the left side of ``bucket < {{threshold}}``."""
+    tree = sqlglot.parse_one(sql, read=dialect)
+    (lt,) = [n for n in tree.find_all(sqlglot.exp.LT)]
+    return _unparen(lt.this)
+
+
+def _is_number(node: Any, value: int) -> bool:
+    node = _unparen(node)
+    return isinstance(node, sqlglot.exp.Literal) and node.this == str(value)
+
+
+def test_keyhash_on_bridged_native_dialects_is_the_ruled_fold() -> None:
+    b = 1_000_000
+    # postgres: MOD(MOD(hashtextextended(s, 0), B) + B, B), signed fold, never ABS
+    sql, _ = bridge.render_sqlglot(SAMPLED["keyhash_aggregate"], "postgres").bind("qmark")
+    outer = _bucket(sql, "postgres")
+    assert isinstance(outer, sqlglot.exp.Mod) and _is_number(outer.expression, b)
+    add = _unparen(outer.this)
+    assert isinstance(add, sqlglot.exp.Add) and _is_number(add.expression, b)
+    inner = _unparen(add.this)
+    assert isinstance(inner, sqlglot.exp.Mod) and _is_number(inner.expression, b)
+    h = _unparen(inner.this)
+    assert h.sql(dialect="postgres").upper().startswith("HASHTEXTEXTENDED(")
+    assert _is_number(h.expressions[-1], 0)
+    assert "ABS(" not in sql.upper()
+    # the hash input is seed || '|' || CAST(key AS text)
+    concat = _unparen(h.expressions[0])
+    assert isinstance(concat, sqlglot.exp.DPipe)
+    # duckdb: hash(s) % B, no fold (UBIGINT)
+    sql, _ = bridge.render_sqlglot(SAMPLED["keyhash_aggregate"], "duckdb").bind("qmark")
+    bucket = _bucket(sql, "duckdb")
+    assert isinstance(bucket, sqlglot.exp.Mod) and _is_number(bucket.expression, b)
+    assert _unparen(bucket.this).sql(dialect="duckdb").upper().startswith("HASH(")
+
+
+def _sampled(method: str, seed: int = 7) -> ColumnAggregate:
+    spec = SampleSpec(method, Decimal("0.05"), seed)  # type: ignore[arg-type]
+    return ColumnAggregate(BIG, None, (Metric.ROW_COUNT,), sample=spec)
+
+
+@pytest.mark.parametrize("dialect", [*LONG_TAIL, "dune", "exasol", "dremio"])
 @pytest.mark.parametrize("method", ["system", "bernoulli"])
-def test_a_table_sample_sqlglot_cannot_express_faithfully_is_fl506(
+def test_a_table_sample_on_a_dialect_without_a_native_profile_is_fl506(
     dialect: str, method: str
 ) -> None:
-    # hive/spark2 drop the method, teradata drops method and seed, starrocks/doris have no
-    # TABLESAMPLE, presto/athena have no seed clause (an unseeded sample does not repeat)
-    plan = ColumnAggregate(
-        BIG, None, (Metric.ROW_COUNT,), sample=SampleSpec(method, Decimal("0.05"), 7)
-    )  # type: ignore[arg-type]
-    with pytest.raises(RenderError, match="FL506"):
-        bridge.render_sqlglot(plan, dialect)
-
-
-@pytest.mark.parametrize("dialect", ["exasol", "dremio"])
-def test_a_table_sample_with_method_and_seed_renders(dialect: str) -> None:
+    # 0.1.0 ruling: no engine verification exists for non-native dialects, so every
+    # system/bernoulli sample there is FL506, whatever sqlglot could spell
     if not bridge.supports_dialect(dialect):
         pytest.skip(f"sqlglot {sqlglot.__version__} has no {dialect} dialect")
-    plan = ColumnAggregate(
-        BIG, None, (Metric.ROW_COUNT,), sample=SampleSpec("bernoulli", Decimal("0.05"), 7)
-    )
-    sql = bridge.render_sqlglot(plan, dialect).sql_template
-    assert "TABLESAMPLE BERNOULLI (5 PERCENT) SEED (7)" in sql
-    sqlglot.parse_one(sql, read=dialect)
-
-
-def test_a_native_dialect_through_the_bridge_samples_only_what_its_profile_declares() -> None:
-    system = ColumnAggregate(
-        BIG, None, (Metric.ROW_COUNT,), sample=SampleSpec("system", Decimal("0.05"), 7)
-    )
-    with pytest.raises(RenderError, match="FL506"):  # duckdb SYSTEM is not repeatable
-        bridge.render_sqlglot(system, "duckdb")
-    pg = bridge.render_sqlglot(system, "postgres").sql_template
-    assert "TABLESAMPLE SYSTEM (5) REPEATABLE (7)" in pg
-    out_of_range = ColumnAggregate(
-        BIG, None, (Metric.ROW_COUNT,), sample=SampleSpec("bernoulli", Decimal("0.05"), -1)
-    )
+    assert get_profile(dialect) is None
     with pytest.raises(RenderError, match="FL506"):
-        bridge.render_sqlglot(out_of_range, "duckdb")
+        bridge.render_sqlglot(_sampled(method), dialect)
+    with pytest.raises(RenderError, match="FL506"):
+        bridge.to_sqlglot(A.TableSample(method, Decimal("0.05"), 7), dialect)
+
+
+NATIVE_STYLES = sorted(
+    (name, method)
+    for name in native_dialects()
+    for method in ("system", "bernoulli")
+    if name in SQLGLOT_NAMES
+)
+
+
+@pytest.mark.parametrize(("name", "method"), NATIVE_STYLES)
+def test_a_native_dialect_through_the_bridge_uses_its_profile_sample_style(
+    name: str, method: str
+) -> None:
+    profile = get_profile(name)
+    assert profile is not None
+    plan = _sampled(method)
+    if not profile.supports_sample(method):  # a None style is FL506, as natively
+        with pytest.raises(RenderError, match="FL506"):
+            bridge.render_sqlglot(plan, name)
+        return
+    style = profile.sample_styles[method]
+    assert style is not None
+    want = style.format(percent="5", fraction="0.05", seed=7)
+    probe = renderer_for(name, prefer="sqlglot")(plan)
+    assert probe.tier == "best_effort"
+    assert want in probe.sql_template  # the profile's declared spelling, verbatim
+    assert want in render(plan, profile).sql_template
+
+
+def test_bridged_native_samples_keep_the_profiles_seed_range() -> None:
+    with pytest.raises(RenderError, match="FL506"):
+        bridge.render_sqlglot(_sampled("bernoulli", seed=-1), "duckdb")
+    assert "TABLESAMPLE SYSTEM (5) REPEATABLE (7)" in (
+        bridge.render_sqlglot(_sampled("system"), "postgres").sql_template
+    )
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "postgres"])
+@pytest.mark.parametrize("method", ["system", "bernoulli"])
+def test_block_and_row_samples_on_multi_read_plans_are_fl405(dialect: str, method: str) -> None:
+    spec = SampleSpec(method, Decimal("0.05"), 7)  # type: ignore[arg-type]
+    plans = [
+        ValueMembership(ORDERS, Ident("status"), ("paid",), sample=spec),
+        KeyOverlap((c(ITEMS, "order_id"),), (c(ORDERS, "id"),), sample=spec),
+        ColumnAggregate(ORDERS, ID, (Metric.MAX_PER_KEY,), sample=spec),
+        CompositeKeyAggregate(ITEMS, (Ident("order_id"),), (Metric.DUPLICATE_KEYS,), sample=spec),
+    ]
+    for plan in plans:
+        with pytest.raises(RenderError, match="FL405"):
+            renderer_for(dialect, prefer="sqlglot")(plan)  # type: ignore[arg-type]
+        with pytest.raises(RenderError, match="FL405"):
+            bridge.render_sqlglot(plan, "presto")
 
 
 def test_fraction_one_renders_no_sample() -> None:
@@ -468,3 +538,49 @@ def test_bridged_fragments_execute_like_native_ones_on_duckdb(con: Any) -> None:
     assert results == [(1,), (5,), (1,), (5,)]
     bridged = render_filter(LIVE, dialect="duckdb", prefer="sqlglot")
     assert bridged.tier == "best_effort"
+
+
+# -- native dialects through the bridge, custom profile objects, long-tail metadata ------------
+
+
+@pytest.mark.parametrize("name", sorted(EXACT))
+def test_trino_native_through_the_bridge_renders_and_parses_back(name: str) -> None:
+    assert get_profile("trino") is not None, "trino is native (Amendment A, R7)"
+    probe = renderer_for("trino", prefer="sqlglot")(EXACT[name])  # type: ignore[arg-type]
+    assert probe.tier == "best_effort" and probe.dialect == "trino"
+    sql, values = probe.bind("qmark")
+    assert sql.count("?") == len(values)  # type: ignore[arg-type]
+    assert isinstance(sqlglot.parse_one(sql, read="trino"), sqlglot.exp.Query)
+
+
+def test_a_profile_object_is_threaded_through_not_swapped() -> None:
+    # an unregistered profile under a registered name: the bridge must use THIS object
+    custom = dataclasses.replace(DUCK, max_table_parts=1)
+    short = dataclasses.replace(DUCK, max_identifier_length=10)
+    two_parts = TableRef(None, Ident("main"), Ident("orders"))
+    assert render_filter(LIVE, table=two_parts, dialect="duckdb", prefer="sqlglot")
+    with pytest.raises(RenderError, match="FL505"):
+        render_filter(LIVE, table=two_parts, dialect=custom, prefer="sqlglot")
+    with pytest.raises(RenderError, match="FL502"):  # 11 bytes > 10
+        render_filter(FIsNull(Ident("longname123")), dialect=short, prefer="sqlglot")
+    assert render_filter(FIsNull(Ident("longname12")), dialect=short, prefer="sqlglot")
+    edges = [EdgeRef(c(ITEMS, "order_id"), c(ORDERS, "id"))]
+    with pytest.raises(RenderError, match="FL502"):  # 'order_items' is 11 bytes
+        render_join(edges, short, prefer="sqlglot")
+    frag = render_filter(LIVE, table=ORDERS, dialect=custom, prefer="sqlglot")
+    assert frag.tier == "best_effort" and frag.dialect == "duckdb"
+    with pytest.raises(RenderError, match="FL505"):
+        bridge.render_sqlglot(ColumnAggregate(two_parts, None, (Metric.ROW_COUNT,)), custom)
+    probe = bridge.render_sqlglot(ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,)), custom)
+    assert probe.dialect == "duckdb" and probe.tier == "best_effort"
+
+
+def test_long_tail_metadata_compares_quoted_names_exactly_and_unquoted_case_folded() -> None:
+    quoted = TableRef(None, Ident("Sales", quoted=True), Ident("Orders", quoted=True))
+    probe = bridge.render_sqlglot(MetadataQuery(quoted, Ident("ID")), "presto")
+    sql = probe.sql_template
+    assert "table_name = {{cat1}}" in sql and "table_schema = {{cat2}}" in sql
+    assert "LOWER(column_name) = LOWER({{cat3}})" in sql
+    assert [p.value for p in probe.params] == ["Orders", "Sales", "ID"]
+    unquoted = bridge.render_sqlglot(MetadataQuery(ORDERS), "presto").sql_template
+    assert "LOWER(table_name) = LOWER({{cat1}})" in unquoted

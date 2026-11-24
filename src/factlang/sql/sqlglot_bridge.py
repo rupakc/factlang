@@ -23,10 +23,11 @@ bridge takes that profile's limits and FactLang-owned spellings (cast types, ``n
 keyhash expression, the information_schema query, sample declarations) and lets sqlglot
 re-spell them, so both paths mean the same thing.
 
-Sampling (spec 19 B2): ``keyhash`` needs a hash mapping, which the bridge has exactly for the
-dialects with a native profile that declares ``keyhash_expr``; otherwise ``FL506``.
-``system``/``bernoulli`` render where sqlglot spells ``TABLESAMPLE`` keeping both the method
-and the seed (a sample whose seed is dropped does not repeat, B4 (c)); otherwise ``FL506``.
+Sampling (spec 19 B2; 0.1.0 ruling): sampling is rendered only for a dialect with a native
+profile, from that profile's own declarations: ``keyhash`` from its ``keyhash_expr``
+(re-spelled by sqlglot), ``system``/``bernoulli`` from its ``sample_styles`` (the native
+printer's FROM item, spliced verbatim; a ``None`` style is ``FL506``). Every dialect without a
+native profile is ``FL506`` for every method: no engine verification exists for them.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ import functools
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from factlang.ir import ProbePlan
@@ -44,10 +44,10 @@ from factlang.semantics.refs import Ident, TableRef
 from factlang.sql import ast as A
 from factlang.sql.fragment import RenderedFragment
 from factlang.sql.lower import Lowerer
-from factlang.sql.printer import guard
+from factlang.sql.printer import Printer, guard
 from factlang.sql.probe import RenderedProbe, RenderError, placeholder
-from factlang.sql.profile import INT64, DialectProfile
-from factlang.sql.registry import SQLGLOT_NAMES, get_profile
+from factlang.sql.profile import DialectProfile
+from factlang.sql.registry import SQLGLOT_NAMES, get_profile, native_dialects
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; sqlglot is imported lazily at runtime
     from sqlglot import exp
@@ -57,8 +57,6 @@ DEFAULT_MAX_TABLE_PARTS = 3
 # No sqlglot dialect states its identifier limit; 128 is the common one (ANSI, Teradata,
 # Hive). A longer name is refused rather than risk a silent truncation.
 DEFAULT_MAX_IDENTIFIER_LENGTH = 128
-# sqlglot writes a SEED clause for these, but the engines have none: FL506, never unseeded
-_NO_SEED_CLAUSE = frozenset({"presto", "athena", "trino"})
 # Quoted when written unquoted, on top of sqlglot's own per-dialect reserved keywords.
 _ANSI_WORDS = """
 all and any as asc between both by case cast check column constraint create cross
@@ -104,11 +102,6 @@ def _exp() -> Any:
     return exp
 
 
-def _percent(fraction: Decimal) -> str:
-    text = format((fraction * 100).normalize(), "f")
-    return text.rstrip("0").rstrip(".") if "." in text else text
-
-
 # -- target ------------------------------------------------------------------------------------
 
 
@@ -137,13 +130,18 @@ def supports_dialect(dialect: str) -> bool:
     return _sqlglot_dialect(SQLGLOT_NAMES.get(dialect, dialect)) is not None
 
 
-def _target(dialect: str, max_table_parts: int | None = None) -> _Target:
+def _target(dialect: str | DialectProfile, max_table_parts: int | None = None) -> _Target:
+    """Resolve ``dialect``; a ``DialectProfile`` object is used as given (never swapped)."""
+    if isinstance(dialect, DialectProfile):
+        profile: DialectProfile | None = dialect
+        dialect = dialect.name
+    else:
+        profile = get_profile(dialect)
     if not supports_dialect(dialect):
         raise RenderError(
-            f"FL504 unknown dialect {dialect!r}: neither a native FactLang profile nor a "
-            "sqlglot dialect"
+            f"FL504 unknown dialect {dialect!r}; native dialects: {', '.join(native_dialects())}; "
+            "the sqlglot bridge (pip install factlang[sqlglot]) knows no dialect of that name"
         )
-    profile = get_profile(dialect)
     if max_table_parts is None:
         max_table_parts = profile.max_table_parts if profile else DEFAULT_MAX_TABLE_PARTS
     if isinstance(max_table_parts, bool) or not isinstance(max_table_parts, int):
@@ -432,54 +430,28 @@ class _Converter:
 
     # -- relations -----------------------------------------------------------------------
 
-    def table_sample(self, s: A.TableSample) -> Any:
-        e = self.exp
+    def _native_sampler(self, method: str) -> Printer:
+        """The native printer that spells a sample (0.1.0: native profiles only), else FL506."""
         t = self.target
-        name = t.name if t is not None else "(none)"
-        unsupported = RenderError(
-            f"FL506 sample method {s.method} is not supported by dialect {name}"
-        )
-        if t is None:
-            raise unsupported
-        if t.profile is not None:
-            if not t.profile.supports_sample(s.method):
-                raise unsupported
-            lo, hi = t.profile.sample_seed_range
-        else:
-            if t.sqlglot in _NO_SEED_CLAUSE:
-                raise unsupported
-            lo, hi = INT64
-        if not lo <= s.seed <= hi:
-            raise RenderError(f"FL506 sample seed {s.seed} is outside {name}'s range [{lo}, {hi}]")
-        node = e.TableSample(
-            method=e.Var(this=s.method.upper()),
-            percent=e.Literal.number(_percent(s.fraction)),
-            seed=e.Literal.number(s.seed),
-        )
-        # sqlglot silently drops a method or seed it cannot spell (Hive, Teradata) and raises
-        # for a dialect without TABLESAMPLE: keep only a faithful spelling
-        from sqlglot.errors import ErrorLevel, UnsupportedError
-
-        probe_table = e.Table(this=e.Identifier(this="t"))
-        probe_table.set("sample", node.copy())
-        try:
-            text = (
-                e.select(e.Star())
-                .from_(probe_table)
-                .sql(dialect=t.sqlglot, unsupported_level=ErrorLevel.RAISE)
+        if t is None or t.profile is None or not t.profile.supports_sample(method):
+            name = t.name if t is not None else "(none)"
+            why = "" if t is not None and t.profile is not None else " (no native profile)"
+            raise RenderError(
+                f"FL506 sample method {method} is not supported by dialect {name}{why}"
             )
-        except UnsupportedError:
-            raise unsupported from None
-        if f"{s.method.upper()} " not in text.upper() or f"({s.seed})" not in text:
-            raise unsupported
-        return node
+        return Printer(t.profile)
+
+    def table_sample(self, s: A.TableSample) -> Any:
+        """The native profile's declared sample clause, verbatim (FL506 if none)."""
+        return self.exp.Var(this=self._native_sampler(s.method).table_sample(s))
 
     def single_from(self, x: object) -> Any:
         e = self.exp
         if isinstance(x, A.TableName):
-            table = self.table(x.ref, x.alias)
+            table = self.table(x.ref, x.alias)  # the bridge's own identifier/part checks
             if x.sample is not None:
-                table.set("sample", self.table_sample(x.sample))
+                # the profile's sample_styles, spelled by the native printer for that profile
+                return e.Var(this=self._native_sampler(x.sample.method).from_item(x))
             return table
         if isinstance(x, A.SubqueryFrom):
             inner = (
@@ -522,8 +494,8 @@ class _Converter:
 
         def match(column: str, name: Ident) -> None:
             self.check_ident(name.text, name.quoted)
-            if p is None:
-                mode = "casefold"
+            if p is None:  # quoted names compare exactly, unquoted ones case-folded
+                mode = "exact" if name.quoted else "casefold"
             else:
                 mode = p.quoted_catalog_match if name.quoted else p.unquoted_catalog_match
             col = e.Column(this=e.Identifier(this=column))
@@ -673,7 +645,7 @@ def to_sqlglot(node: object, dialect: str | None = None) -> exp.Expression:
 
 
 def render_sqlglot(
-    plan: ProbePlan, dialect: str, *, max_table_parts: int | None = None
+    plan: ProbePlan, dialect: str | DialectProfile, *, max_table_parts: int | None = None
 ) -> RenderedProbe:
     """Lower ``plan`` and print it through sqlglot for ``dialect`` (tier ``best_effort``).
 
@@ -686,11 +658,12 @@ def render_sqlglot(
     conv = _Converter(target)
     sql = _generate(conv.statement(tree), target.sqlglot)
     guard(sql)
-    return RenderedProbe(sql, _ordered_params(sql, conv.params), plan.arity, plan, dialect, TIER)
+    params = _ordered_params(sql, conv.params)
+    return RenderedProbe(sql, params, plan.arity, plan, target.name, TIER)
 
 
 # The hook factlang.sql.registry.renderer_for calls: render(plan, dialect).
-render: Callable[[ProbePlan, str], RenderedProbe] = render_sqlglot
+render: Callable[..., RenderedProbe] = render_sqlglot
 
 
 def _fragment(text: str, conv: _Converter, dialect: str) -> RenderedFragment:
@@ -700,7 +673,7 @@ def _fragment(text: str, conv: _Converter, dialect: str) -> RenderedFragment:
 
 
 def render_filter_fragment(
-    node: A.Expr, dialect: str, *, table: TableRef | None = None
+    node: A.Expr, dialect: str | DialectProfile, *, table: TableRef | None = None
 ) -> RenderedFragment:
     """A lowered filter (boolean AST expression) as a bindable fragment for ``dialect``."""
     target = _target(dialect)
@@ -708,10 +681,12 @@ def render_filter_fragment(
     if table is not None:
         conv.table(table)  # FL502 / FL505
     conv.reserve(node)
-    return _fragment(_generate(conv.expr(node), target.sqlglot), conv, dialect)
+    return _fragment(_generate(conv.expr(node), target.sqlglot), conv, target.name)
 
 
-def render_join_fragment(from_: A.FromItem, where: A.Expr | None, dialect: str) -> RenderedFragment:
+def render_join_fragment(
+    from_: A.FromItem, where: A.Expr | None, dialect: str | DialectProfile
+) -> RenderedFragment:
     """``FROM a JOIN b ON … [WHERE …]`` for a lowered join path, bindable, for ``dialect``."""
     target = _target(dialect)
     conv = _Converter(target)
@@ -729,7 +704,7 @@ def render_join_fragment(from_: A.FromItem, where: A.Expr | None, dialect: str) 
     head = f"SELECT {_FRAGMENT_MARKER} "
     if not text.startswith(head) or not text[len(head) :].startswith("FROM "):
         raise RenderError(f"FL500 sqlglot spelled the join fragment unexpectedly: {text[:80]!r}")
-    return _fragment(text[len(head) :], conv, dialect)
+    return _fragment(text[len(head) :], conv, target.name)
 
 
 __all__ = [

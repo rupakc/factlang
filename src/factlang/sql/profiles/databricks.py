@@ -89,6 +89,8 @@ DATABRICKS = DialectProfile(
     keyhash_expr="MOD(MOD(xxhash64({s}), 1000000) + 1000000, 1000000)",
     default_schema_sql="current_schema()",
     default_catalog_sql="current_catalog()",
+    # a string literal escapes ' with a backslash only; '' is two adjacent literals
+    doubled_quote_escape=False,
 )
 
 __all__ = ["DATABRICKS"]

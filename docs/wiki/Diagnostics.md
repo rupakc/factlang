@@ -56,12 +56,13 @@
 
 | Code | Meaning |
 |---|---|
-| FL500 | primitive not renderable, or a literal that cannot be inlined safely |
+| FL500 | primitive not renderable |
 | FL502 | identifier not representable |
 | FL503 | cast not expressible |
 | FL504 | unknown dialect |
 | FL505 | too many table-name parts for the dialect |
 | FL506 | sample method not supported by the dialect |
+| FL507 | literal cannot be inlined safely (display SQL shows the `{{name}}` template instead) |
 
 ## FL6xx: contract completeness (test time)
 

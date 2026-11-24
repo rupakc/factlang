@@ -99,6 +99,8 @@ BIGQUERY = DialectProfile(
     sample_styles={"system": None, "bernoulli": None},
     # spec 19 keyhash ruling: FARM_FINGERPRINT is a signed INT64, folded with MOD(MOD(h,B)+B,B)
     keyhash_expr="MOD(MOD(FARM_FINGERPRINT({s}), 1000000) + 1000000, 1000000)",
+    # a string literal escapes ' with a backslash only; '' is two adjacent literals
+    doubled_quote_escape=False,
 )
 
 __all__ = ["BIGQUERY"]

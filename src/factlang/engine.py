@@ -53,13 +53,12 @@ from factlang.semantics.catalog import CachedCatalog, Catalog, NullCatalog
 from factlang.semantics.checked import CheckedClaim
 from factlang.sql import RenderedFragment, RenderedProbe, RenderError, renderer_for
 from factlang.sql.probe import ansi_quote
+from factlang.sql.registry import literal_style_for
 from factlang.syntax import ast, parse
 
 Prefer = Literal["native", "sqlglot"]
 _CODE = re.compile(r"^(FL\d{3})\b")
 _LEAD = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)")
-# dialects whose lexers do not read a doubled '' as a quote inside a string literal
-_NO_DOUBLED_QUOTE = frozenset({"bigquery", "databricks"})
 _NOT_OK = frozenset({Verdict.FAIL, Verdict.ERROR, Verdict.INVALID})
 
 
@@ -68,21 +67,22 @@ def string_quoter(dialect: str) -> Callable[[str], str]:
 
     Every dialect quotes by doubling ``'``; none relies on backslash escaping, so the
     literal cannot change meaning with server settings. Text holding a backslash or NUL is
-    refused with ``FL500``, and so is a ``'`` in a dialect whose lexer does not read ``''``
-    as a quote. Callers that only display SQL fall back to the template (``display_sql``).
+    refused with ``FL507``, and so is a ``'`` when the dialect, resolved as the renderer
+    resolves it, has a lexer that does not read ``''`` as a quote (a dialect nothing knows
+    counts as one). Callers that only display SQL fall back to the template (``display_sql``).
     """
-    if dialect in _NO_DOUBLED_QUOTE:
+    if literal_style_for(dialect).doubled_quote_escape:
+        return ansi_quote
 
-        def quote(text: str) -> str:
-            if "'" in text:
-                raise RenderError(
-                    f"FL500 cannot inline a string containing ' for {dialect}: its string "
-                    "literals have no doubled-quote form"
-                )
-            return ansi_quote(text)
+    def quote(text: str) -> str:
+        if type(text) is str and "'" in text:
+            raise RenderError(
+                f"FL507 cannot inline a string containing ' for {dialect!r}: its string "
+                "literals have no doubled-quote form"
+            )
+        return ansi_quote(text)
 
-        return quote
-    return ansi_quote
+    return quote
 
 
 def display_sql(
@@ -90,12 +90,17 @@ def display_sql(
 ) -> str:
     """Evidence SQL: literals inlined when that is safe, else the ``{{name}}`` template.
 
-    Inlining fails closed (``FL500``) for values it cannot render safely; evidence never
-    fails a check over that, it shows the template and the params are listed beside it.
+    A value that cannot be inlined safely (``FL507``), or whose conversion raises anything
+    other than a ``RenderError``, shows the template instead, with the params listed beside
+    it; evidence never fails a check over that. A genuine render bug (``FL500``) propagates.
     """
     try:
         return item.inline(quote)
-    except RenderError:
+    except RenderError as exc:
+        if str(exc).startswith("FL507"):
+            return item.sql_template
+        raise
+    except Exception:  # any conversion failure fails closed (FL507)
         return item.sql_template
 
 

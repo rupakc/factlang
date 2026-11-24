@@ -2,7 +2,7 @@
 
 The inline form is display-oriented, but a host may execute it when its driver cannot bind
 parameters. So every value either becomes a literal that means exactly that value in every
-native dialect, regardless of server settings, or is refused with ``FL500``.
+native dialect, regardless of server settings, or is refused with ``FL507``.
 """
 
 from __future__ import annotations
@@ -65,19 +65,19 @@ def probe(value: object, family: str, dialect: str = "duckdb") -> RenderedProbe:
 @pytest.mark.parametrize("dialect", NATIVE)
 @pytest.mark.parametrize("text", HOSTILE_STRINGS)
 def test_every_native_quoter_refuses_backslash_and_nul(dialect: str, text: str) -> None:
-    with pytest.raises(RenderError, match="FL500"):
+    with pytest.raises(RenderError, match="FL507"):
         string_quoter(dialect)(text)
-    with pytest.raises(RenderError, match=r"FL500 cannot inline .* parameter p1"):
+    with pytest.raises(RenderError, match=r"FL507 cannot inline .* parameter p1"):
         probe(text, "string", dialect).inline(string_quoter(dialect))
 
 
 @pytest.mark.parametrize("text", HOSTILE_STRINGS)
 def test_default_and_custom_quoters_cannot_bypass_the_refusal(text: str) -> None:
-    with pytest.raises(RenderError, match="FL500"):
+    with pytest.raises(RenderError, match="FL507"):
         ansi_quote(text)
-    with pytest.raises(RenderError, match=r"FL500 cannot inline .* parameter p1"):
+    with pytest.raises(RenderError, match=r"FL507 cannot inline .* parameter p1"):
         probe(text, "string").inline()
-    with pytest.raises(RenderError, match=r"FL500 cannot inline .* parameter p1"):
+    with pytest.raises(RenderError, match=r"FL507 cannot inline .* parameter p1"):
         probe(text, "string").inline(lambda s: "'" + s + "'")
 
 
@@ -87,7 +87,7 @@ def test_no_native_quoter_uses_backslash_escaping(dialect: str) -> None:
     try:
         out = quote("it's")
     except RenderError as exc:  # a dialect without '' doubling refuses instead
-        assert str(exc).startswith("FL500")
+        assert str(exc).startswith("FL507")
         return
     assert out == "'it''s'"
     assert "\\" not in out
@@ -112,7 +112,7 @@ def test_every_quoter_literal_parses_back_to_the_same_value(dialect: str) -> Non
 def test_non_scalar_values_are_refused(dialect: str, value: object) -> None:
     name = type(value).__name__
     for family in ("string", "integer", "decimal", "float", "boolean", "date", "timestamp"):
-        with pytest.raises(RenderError, match=f"FL500 cannot inline {name} parameter p1"):
+        with pytest.raises(RenderError, match=f"FL507 cannot inline {name} parameter p1"):
             probe(value, family, dialect).inline(string_quoter(dialect))
 
 
@@ -120,28 +120,28 @@ def test_non_scalar_values_are_refused(dialect: str, value: object) -> None:
 @pytest.mark.parametrize("value", NON_FINITE, ids=repr)
 def test_non_finite_floats_are_refused(dialect: str, value: float) -> None:
     for family in ("float", "decimal", "string"):
-        with pytest.raises(RenderError, match="FL500 cannot inline float parameter p1"):
+        with pytest.raises(RenderError, match="FL507 cannot inline float parameter p1"):
             probe(value, family, dialect).inline(string_quoter(dialect))
 
 
 @pytest.mark.parametrize("value", [Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")])
 def test_non_finite_decimals_are_refused(value: Decimal) -> None:
-    with pytest.raises(RenderError, match="FL500 cannot inline Decimal parameter p1"):
+    with pytest.raises(RenderError, match="FL507 cannot inline Decimal parameter p1"):
         probe(value, "decimal").inline()
 
 
 def test_boolean_family_takes_only_a_bool() -> None:
     assert probe(True, "boolean").inline().endswith("s = TRUE")
-    with pytest.raises(RenderError, match="FL500 cannot inline str parameter p1"):
+    with pytest.raises(RenderError, match="FL507 cannot inline str parameter p1"):
         probe("yes", "boolean").inline()
 
 
 def test_fragment_inline_fails_closed_too() -> None:
     frag = RenderedFragment("s = {{p1}}", (Param("p1", ["a"], "string"),), "duckdb", "verified")
-    with pytest.raises(RenderError, match="FL500 cannot inline list parameter p1"):
+    with pytest.raises(RenderError, match="FL507 cannot inline list parameter p1"):
         frag.inline()
     frag = RenderedFragment("s = {{p1}}", (Param("p1", "a\\b", "string"),), "duckdb", "verified")
-    with pytest.raises(RenderError, match="FL500"):
+    with pytest.raises(RenderError, match="FL507"):
         frag.inline()
 
 

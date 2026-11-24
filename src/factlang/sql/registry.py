@@ -16,7 +16,7 @@ from factlang.semantics.filters import FilterExpr
 from factlang.semantics.refs import EdgeRef, TableRef
 from factlang.sql.fragment import JoinEdge, RenderedFragment, lower_filter, lower_join
 from factlang.sql.printer import Printer, render
-from factlang.sql.probe import RenderedProbe, RenderError
+from factlang.sql.probe import LiteralStyle, RenderedProbe, RenderError
 from factlang.sql.profile import DialectProfile
 from factlang.sql.profiles import BUILTIN_PROFILES
 
@@ -117,6 +117,25 @@ def renderer_for(
         return result
 
     return render_bridged
+
+
+def literal_style_for(dialect: str) -> LiteralStyle:
+    """The inline-literal spellings of ``dialect``, resolved as :func:`renderer_for` resolves
+    it: the native profile registered under exactly that name, else the dialect the sqlglot
+    bridge resolves it to. A dialect neither knows gets ANSI spellings with no doubled-quote
+    form, so a string holding ``'`` is refused (fail closed)."""
+    profile = _PROFILES.get(dialect) if isinstance(dialect, str) else None
+    if profile is not None:
+        return profile.literal_style
+    bridge = _bridge()
+    if bridge is not None:
+        style: LiteralStyle | None = bridge.literal_style(dialect)
+        if style is not None:
+            return style
+    return _UNKNOWN_STYLE
+
+
+_UNKNOWN_STYLE = LiteralStyle(doubled_quote_escape=False)
 
 
 def _profile(dialect: str | DialectProfile) -> DialectProfile:
@@ -225,6 +244,7 @@ for _p in BUILTIN_PROFILES:
 __all__ = [
     "SQLGLOT_NAMES",
     "get_profile",
+    "literal_style_for",
     "native_dialects",
     "register_profile",
     "render_filter",

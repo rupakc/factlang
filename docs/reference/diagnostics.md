@@ -55,12 +55,13 @@ catalog holding `orders(id, customer_id, status)` and `customers(id, email)`.
 | <a id="fl313"></a>FL313 | analyser | info | names could not be verified: the catalog could not answer (reported once per claim) | *any claim checked with `NullCatalog`* |
 | <a id="fl404"></a>FL404 | planning | error | a contract's plan sets `sample`: claims are always measured exactly | *a contract returning `ColumnAggregate(…, sample=SampleSpec(…))`* |
 | <a id="fl405"></a>FL405 | planning | error | a `system`/`bernoulli` sample on a plan that reads the table more than once; use `keyhash` | *`ValueMembership(…, sample=SampleSpec("bernoulli", …))`* |
-| <a id="fl500"></a>FL500 | rendering | error | a primitive cannot be rendered: not registered, a bad lowering, or a rendered text that fails the guard; or `inline()` refuses a literal it cannot render safely | *`fl.measure` of an unregistered primitive* |
+| <a id="fl500"></a>FL500 | rendering | error | a primitive cannot be rendered: not registered, a bad lowering, or a rendered text that fails the guard | *`fl.measure` of an unregistered primitive* |
 | <a id="fl502"></a>FL502 | rendering | error | an identifier cannot be represented safely: NUL, newline, empty or longer than the dialect allows | *a 300-character quoted name on Snowflake* |
 | <a id="fl503"></a>FL503 | rendering | error | a cast to a type family the dialect cannot express | *`JOIN … CAST json` on Oracle* |
 | <a id="fl504"></a>FL504 | rendering | error | unknown dialect: no native profile and sqlglot not installed or unaware | *`fl.compile(…, dialect="nope")`* |
 | <a id="fl505"></a>FL505 | rendering | error | too many table-name parts for the dialect | *`ROWS a.b.c VALUE >= 1` on MySQL* |
 | <a id="fl506"></a>FL506 | rendering | error | the dialect cannot express the requested sample method; never a silent exact query or `LIMIT` | *a `system` sample on DuckDB* |
+| <a id="fl507"></a>FL507 | rendering | error | literal cannot be inlined safely: `inline()` refuses a value (non-scalar, a subclass of a scalar type, non-finite, too many digits, a backslash/NUL/lone surrogate, a `'` where the dialect has no doubled-quote form, or a type that does not match its family); display SQL falls back to the `{{name}}` template | *`probe.inline()` of `'a\b'`* |
 | <a id="fl600"></a>FL600 | contract | error | `decide` reads a fact `derive` never declares | *`.decide(Compare("max", …))` with `.facts("min")`* |
 | <a id="fl601"></a>FL601 | contract | error | `decide` reads an attribute the signature does not declare | *`Compare("x", ">", attr="LIMIT")` on a verb without `LIMIT`* |
 | <a id="fl602"></a>FL602 | contract | error | fewer than three valid and three invalid examples | *a verb with two examples* |

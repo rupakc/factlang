@@ -545,6 +545,12 @@ def test_new_profile_fields_are_validated() -> None:
         {"qualified_information_schema_sql": "SELECT 1 FROM {prefix}x WHERE {where}; x"},
         {"information_schema_scope": "table"},
         {"quoted_column_match": "sometimes"},
+        {"doubled_quote_escape": 1},
+        {"string_literal_prefix": "E"},  # only '' or N
+        {"boolean_literals": ("yes", "no")},
+        {"date_literal": "DATE '{date}' {time}"},  # exactly {date}
+        {"timestamp_literal": "TIMESTAMP '{date}'"},  # exactly {date} and {time}
+        {"timestamp_literal": "TIMESTAMP '{date} {time}'; x"},
     ]
     for change in bad:
         with pytest.raises(ValueError):

@@ -17,7 +17,14 @@ from factlang.semantics.refs import ColumnRef, EdgeRef, TableRef
 from factlang.semantics.types import TYPE_FAMILIES
 from factlang.sql.ast import Cast, Column, Compare, Expr, FromItem, Join, TableName
 from factlang.sql.lower import Lowerer, conj
-from factlang.sql.probe import bind_template, check_params, check_template, inline_template
+from factlang.sql.probe import (
+    LiteralStyle,
+    bind_template,
+    check_params,
+    check_template,
+    inline_template,
+    style_for,
+)
 
 _ALIAS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -40,8 +47,12 @@ class RenderedFragment:
     def bind(self, paramstyle: str) -> tuple[str, tuple[object, ...] | dict[str, object]]:
         return bind_template(self.sql_template, self.params, paramstyle)
 
-    def inline(self, quote_string: Callable[[str], str] | None = None) -> str:
-        return inline_template(self.sql_template, self.params, quote_string)
+    def inline(
+        self, quote_string: Callable[[str], str] | None = None, style: LiteralStyle | None = None
+    ) -> str:
+        """Display text with literals inlined for ``self.dialect`` (``FL507`` when unsafe)."""
+        spelling = style if style is not None else style_for(self.dialect)
+        return inline_template(self.sql_template, self.params, quote_string, spelling)
 
 
 @dataclass(frozen=True)

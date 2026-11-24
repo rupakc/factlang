@@ -109,6 +109,10 @@ ORACLE = DialectProfile(
     # spec 19 keyhash ruling: ORA_HASH is 32-bit and non-negative; the seed lives in s
     keyhash_expr="MOD(ORA_HASH({s}, 4294967295, 0), 1000000)",
     default_schema_sql="SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')",
+    # inlined literals: TRUE is an identifier before 23ai; an ANSI TIMESTAMP literal takes
+    # 'YYYY-MM-DD HH:MM:SS[.ffffff]' (no 'T', no offset)
+    boolean_literals=("1", "0"),
+    timestamp_literal="TIMESTAMP '{date} {time}'",
 )
 
 __all__ = ["ORACLE"]

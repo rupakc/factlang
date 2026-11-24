@@ -435,7 +435,7 @@ def test_evidence_inlines_with_the_dialect_string_quoter() -> None:
     assert string_quoter("duckdb")("it's") == "'it''s'"
     # no dialect escapes with a backslash any more: it doubles, or refuses
     assert string_quoter("mysql")("it's") == "'it''s'"
-    with pytest.raises(RenderError, match="FL500"):
+    with pytest.raises(RenderError, match="FL507"):
         string_quoter("mysql")("a\\b")
 
 

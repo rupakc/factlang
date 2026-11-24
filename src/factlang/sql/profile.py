@@ -34,6 +34,13 @@ the table rule), e.g. BigQuery tables are case-sensitive but its columns are not
 dialects where the plain doubling of the closing quote is wrong: in BigQuery a backslash and a
 backtick are each written after a backslash; in ClickHouse a backslash is an escape too. It
 must cover the closing quote.
+
+Inlined literals (display SQL only; bound parameters never use them): ``doubled_quote_escape``
+says the lexer reads ``''`` inside a string literal as one ``'`` (``False`` for BigQuery and
+Databricks, where a string holding ``'`` is then refused, ``FL507``); ``string_literal_prefix``
+is written before a quoted string (``N`` on T-SQL); ``boolean_literals`` is ``("TRUE",
+"FALSE")`` or ``("1", "0")`` (T-SQL, Oracle); ``date_literal`` (slot ``{date}``) and
+``timestamp_literal`` (slots ``{date}``, ``{time}``; UTC fields) are FactLang-owned templates.
 """
 
 from __future__ import annotations
@@ -47,6 +54,7 @@ from typing import Any, Literal
 
 from factlang.semantics.filters import PARAM_FAMILIES
 from factlang.semantics.types import TYPE_FAMILIES
+from factlang.sql.probe import LiteralStyle
 
 CountIfStyle = Literal["countif", "count_if", "sum_case", "filter"]
 LimitStyle = Literal["limit", "top", "fetch"]
@@ -62,6 +70,8 @@ QUOTE_CHARS: tuple[str, ...] = ('"', "`", "[")
 CATALOG_MATCHES: tuple[str, ...] = ("exact", "casefold", "lower", "upper")
 TABLE_SAMPLE_METHODS: tuple[str, ...] = ("system", "bernoulli")
 INT64 = (-(2**63), 2**63 - 1)
+STRING_LITERAL_PREFIXES: tuple[str, ...] = ("", "N")
+BOOLEAN_LITERALS: tuple[tuple[str, str], ...] = (("TRUE", "FALSE"), ("1", "0"))
 
 _SAMPLE_SLOTS = frozenset({"percent", "fraction", "seed"})
 
@@ -126,6 +136,12 @@ class DialectProfile:
     default_catalog_sql: str | None = None
     # appended to every full statement (ClickHouse ``SETTINGS …``); never to a fragment
     statement_suffix: str = ""
+    # inlined literals (display SQL, ``RenderedProbe.inline``): see ``LiteralStyle``
+    doubled_quote_escape: bool = True
+    string_literal_prefix: str = ""
+    boolean_literals: tuple[str, str] = ("TRUE", "FALSE")
+    date_literal: str = "DATE '{date}'"
+    timestamp_literal: str = "TIMESTAMP '{date}T{time}+00:00'"
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", self.name):
@@ -231,6 +247,21 @@ class DialectProfile:
                     f"DialectProfile.param_types must cover every parameter family when "
                     f"cast_params is set; missing {missing}"
                 )
+        if type(self.doubled_quote_escape) is not bool:
+            raise ValueError("DialectProfile.doubled_quote_escape must be a bool")
+        if self.string_literal_prefix not in STRING_LITERAL_PREFIXES:
+            raise ValueError(
+                f"DialectProfile.string_literal_prefix must be one of {STRING_LITERAL_PREFIXES}"
+            )
+        bools = tuple(self.boolean_literals)
+        if bools not in BOOLEAN_LITERALS:
+            raise ValueError(f"DialectProfile.boolean_literals must be one of {BOOLEAN_LITERALS}")
+        object.__setattr__(self, "boolean_literals", bools)
+        for name, slots in (("date_literal", {"date"}), ("timestamp_literal", {"date", "time"})):
+            template = getattr(self, name)
+            _no_semicolon(template, f"DialectProfile.{name}")
+            if _slots(template, name) != slots:
+                raise ValueError(f"DialectProfile.{name} must have exactly the slots {slots}")
         lo, hi = self.sample_seed_range
         if lo > hi:
             raise ValueError(
@@ -238,6 +269,19 @@ class DialectProfile:
             )
 
     # -- small decisions ----------------------------------------------------------------
+
+    @property
+    def literal_style(self) -> LiteralStyle:
+        """The spellings ``RenderedProbe.inline`` uses for this dialect."""
+        true, false = self.boolean_literals
+        return LiteralStyle(
+            doubled_quote_escape=self.doubled_quote_escape,
+            string_prefix=self.string_literal_prefix,
+            true_literal=true,
+            false_literal=false,
+            date_literal=self.date_literal,
+            timestamp_literal=self.timestamp_literal,
+        )
 
     @property
     def supports_filter_clause(self) -> bool:

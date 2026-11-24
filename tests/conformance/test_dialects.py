@@ -405,3 +405,35 @@ def test_sqlglot_names_cover_every_dialect_in_the_spec() -> None:
     }
     assert dict(SQLGLOT_NAMES) == expected
     assert set(PROFILES) <= set(SQLGLOT_NAMES)
+
+
+@pytest.mark.parametrize("name", PROFILES)
+def test_doubled_quote_escape_matches_the_dialects_lexer(name: str) -> None:
+    """``DialectProfile.doubled_quote_escape`` is what the dialect's own lexer does with ``''``
+    inside a string literal; a wrong ``True`` would let a ``'`` close an inlined literal."""
+    pytest.importorskip("sqlglot")
+    from sqlglot.dialects.dialect import Dialect
+
+    profile = get_profile(name)
+    assert profile is not None
+    tokenizer = type(Dialect.get_or_raise(SQLGLOT_NAMES[name])).tokenizer_class
+    assert profile.doubled_quote_escape is ("'" in tokenizer.STRING_ESCAPES), name
+
+
+@pytest.mark.parametrize("name", PROFILES)
+def test_inline_literal_spellings_parse_in_the_dialect(name: str) -> None:
+    """Every literal spelling a profile declares for inlining parses as one value."""
+    sqlglot = pytest.importorskip("sqlglot")
+    profile = get_profile(name)
+    assert profile is not None
+    style = profile.literal_style
+    spellings = [
+        style.true_literal,
+        style.false_literal,
+        style.date_literal.format(date="2025-01-31"),
+        style.timestamp_literal.format(date="2025-01-31", time="12:00:00.000001"),
+        style.string_prefix + "'it''s'" if style.doubled_quote_escape else "'its'",
+    ]
+    for text in spellings:
+        tree = sqlglot.parse_one(f"SELECT {text} AS x", read=SQLGLOT_NAMES[name])
+        assert len(tree.expressions) == 1, (name, text)

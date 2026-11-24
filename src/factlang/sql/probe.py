@@ -108,89 +108,219 @@ def bind_template(
     return sql, used
 
 
+# Python's default int <-> str conversion limit; also the bound for a Decimal's plain form, so
+# a value like Decimal("1E+100000000") is refused instead of rendering 100M digits.
+MAX_LITERAL_DIGITS = 4300
+
+
+@dataclass(frozen=True)
+class LiteralStyle:
+    """How a dialect spells inlined literals (display SQL; built from a ``DialectProfile``).
+
+    ``doubled_quote_escape``: the dialect's lexer reads ``''`` inside a string literal as one
+    ``'``; when it does not, a string holding ``'`` is refused (``FL507``).
+    ``string_prefix``: written before a quoted string (``N`` for T-SQL national literals).
+    ``true_literal``/``false_literal``: the boolean spellings.
+    ``date_literal``: template with a ``{date}`` slot (``YYYY-MM-DD``).
+    ``timestamp_literal``: template with ``{date}`` and ``{time}`` slots (UTC fields,
+    ``HH:MM:SS`` plus ``.ffffff`` when the microseconds are not zero).
+    Slots are filled with digits and separators only, never with a value's own text.
+    """
+
+    doubled_quote_escape: bool = True
+    string_prefix: str = ""
+    true_literal: str = "TRUE"
+    false_literal: str = "FALSE"
+    date_literal: str = "DATE '{date}'"
+    timestamp_literal: str = "TIMESTAMP '{date}T{time}+00:00'"
+
+
+ANSI_STYLE = LiteralStyle()
+
+
+def _unsafe(what: str, why: str) -> RenderError:
+    return RenderError(f"FL507 cannot inline {what}{why}")
+
+
 def _refuse_unsafe_text(text: str, what: str) -> None:
     """Refuse text whose meaning in a string literal depends on server settings."""
     if "\\" in text or "\x00" in text:
-        raise RenderError(
-            f"FL500 cannot inline {what}: it contains a backslash or NUL, whose meaning in a "
-            "string literal depends on the server; bind it as a parameter instead"
+        raise _unsafe(
+            what,
+            ": it contains a backslash or NUL, whose meaning in a string literal depends on "
+            "the server; bind it as a parameter instead",
         )
 
 
 def ansi_quote(text: str) -> str:
     """ANSI string literal: single quotes, inner quotes doubled.
 
-    Text holding a backslash or NUL is refused with ``FL500``: some servers (MySQL by
+    Text holding a backslash or NUL is refused with ``FL507``: some servers (MySQL by
     default, PostgreSQL with ``standard_conforming_strings`` off, BigQuery, Databricks,
     ClickHouse) read a backslash as an escape, so no single spelling is safe everywhere.
     """
+    if type(text) is not str:
+        raise _unsafe(f"a {type(text).__name__}", ": only an exact str is quoted")
     _refuse_unsafe_text(text, "a string")
-    return "'" + text.replace("'", "''") + "'"
+    return "'" + str.replace(text, "'", "''") + "'"
 
 
-def _refuse(p: Param, why: str = "") -> RenderError:
-    return RenderError(f"FL500 cannot inline {type(p.value).__name__} parameter {p.name}{why}")
+def _is(t: type, *types: type) -> bool:
+    # identity, never ``in``/``==``: a metaclass can make a class compare equal to ``int``
+    return any(t is k for k in types)
 
 
-def _inline_value(p: Param, quote_string: Callable[[str], str]) -> str:
-    """One literal that means exactly ``p.value`` in every native dialect, or ``FL500``.
+_SCALARS: tuple[type, ...] = (bool, int, float, Decimal, str, dt.date, dt.datetime)
+_NUMBERS: tuple[type, ...] = (int, float, Decimal)
+_FAMILY_TYPES: dict[str, tuple[type, ...]] = {
+    "boolean": (bool,),
+    "integer": _NUMBERS,
+    "decimal": _NUMBERS,
+    "float": _NUMBERS,
+    "string": (str,),
+    "date": (dt.date,),
+    "timestamp": (dt.datetime,),
+}
 
-    Only scalars are inlined: ``None``, ``bool``, ``int``, finite ``Decimal`` and ``float``,
-    ``date``/``datetime`` and ``str`` without a backslash or NUL. Everything else (lists,
-    dicts, sets, bytes, arbitrary objects, NaN and infinities) is refused, never stringified.
+
+def _date_text(d: dt.date) -> str:
+    return f"{d.year:04d}-{d.month:02d}-{d.day:02d}"
+
+
+def _time_text(t: dt.datetime) -> str:
+    text = f"{t.hour:02d}:{t.minute:02d}:{t.second:02d}"
+    return text + (f".{t.microsecond:06d}" if t.microsecond else "")
+
+
+def _trusted_tz(tz: object) -> bool:
+    if tz is None or type(tz) is dt.timezone:
+        return True
+    try:
+        import zoneinfo
+    except ImportError:  # pragma: no cover - stdlib since 3.9
+        return False
+    return type(tz) is zoneinfo.ZoneInfo
+
+
+def _inline_value(p: Param, quote_string: Callable[[str], str], style: LiteralStyle) -> str:
+    """One literal that means exactly ``p.value`` in the target dialect, or ``FL507``.
+
+    Only values of an exact built-in type are inlined, never a subclass (whose dunders could
+    say anything): ``None``, ``bool``, ``int``, ``float``, ``Decimal``, ``str``, ``date`` and
+    ``datetime``, each only in a matching parameter family, rendered through the base type's
+    own functions (``int.__repr__``, ``float.__repr__``, ``Decimal.__format__``) or from its
+    fields. Everything else is refused, never stringified.
     """
     v = p.value
     if v is None:
         return "NULL"
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-    if p.family == "boolean":
-        raise _refuse(p, ": the boolean family takes only True or False")
-    if isinstance(v, float):
+    t = type(v)
+    what = f"{t.__name__} parameter {p.name}"
+    if not _is(t, *_SCALARS):
+        raise _unsafe(
+            what,
+            ": only exact bool, int, float, Decimal, str, date and datetime values are "
+            "inlined (subclasses, enums and foreign scalar types are refused)",
+        )
+    if not _is(t, *_FAMILY_TYPES.get(p.family, ())):
+        raise _unsafe(what, f": its type does not match the {p.family} family")
+    if t is bool:
+        return style.true_literal if v else style.false_literal
+    if t is int:
+        assert isinstance(v, int)
+        if int.bit_length(v) > MAX_LITERAL_DIGITS * 4:  # cheap pre-check, then exact
+            raise _unsafe(what, f": more than {MAX_LITERAL_DIGITS} digits")
+        try:
+            text = int.__repr__(v)
+        except ValueError:  # the interpreter's digit limit is lower than ours
+            raise _unsafe(what, ": too many digits to convert") from None
+        if len(text.lstrip("-")) > MAX_LITERAL_DIGITS:
+            raise _unsafe(what, f": more than {MAX_LITERAL_DIGITS} digits")
+        return text
+    if t is float:
+        assert isinstance(v, float)
         if not math.isfinite(v):
-            raise _refuse(p, ": NaN and infinities have no portable literal")
-        return repr(v)
-    if isinstance(v, Decimal):
-        if not v.is_finite():
-            raise _refuse(p, ": NaN and infinities have no portable literal")
-        return format(v, "f")
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, dt.datetime) and p.family == "timestamp":
-        return "TIMESTAMP " + _quote(p, v.isoformat(), quote_string)
-    if isinstance(v, dt.date) and p.family == "date":
-        return "DATE " + _quote(p, v.isoformat(), quote_string)
-    if isinstance(v, (str, dt.date)):
-        return _quote(p, str(v), quote_string)
-    raise _refuse(p)
+            raise _unsafe(what, ": NaN and infinities have no portable literal")
+        return float.__repr__(v)
+    if t is Decimal:
+        assert isinstance(v, Decimal)
+        if not Decimal.is_finite(v):
+            raise _unsafe(what, ": NaN and infinities have no portable literal")
+        digits, exponent = Decimal.as_tuple(v)[1:]
+        assert isinstance(exponent, int)
+        if len(digits) + abs(exponent) > MAX_LITERAL_DIGITS:
+            raise _unsafe(what, f": its plain form has more than {MAX_LITERAL_DIGITS} digits")
+        return Decimal.__format__(v, "f")
+    if t is str:
+        assert isinstance(v, str)
+        _refuse_unsafe_text(v, what)
+        try:
+            str.encode(v, "utf-8")
+        except UnicodeEncodeError:
+            raise _unsafe(what, ": it is not encodable as UTF-8 (a lone surrogate)") from None
+        if not style.doubled_quote_escape and "'" in v:
+            raise _unsafe(
+                what,
+                ": it contains ' and the dialect's string literals have no doubled-quote form",
+            )
+        quoted = quote_string(v)
+        if type(quoted) is not str:
+            raise _unsafe(what, ": the quote function did not return a str")
+        return style.string_prefix + quoted
+    if t is dt.date:
+        assert isinstance(v, dt.date)
+        return style.date_literal.format(date=_date_text(v))
+    assert t is dt.datetime and isinstance(v, dt.datetime)
+    if not _trusted_tz(v.tzinfo):
+        raise _unsafe(what, ": only datetime.timezone and zoneinfo time zones are inlined")
+    aware = v if v.tzinfo is not None else dt.datetime.replace(v, tzinfo=dt.timezone.utc)
+    try:
+        utc = dt.datetime.astimezone(aware, dt.timezone.utc)
+    except (OverflowError, ValueError):
+        raise _unsafe(what, ": it is out of range in UTC") from None
+    return style.timestamp_literal.format(date=_date_text(utc), time=_time_text(utc))
 
 
-def _quote(p: Param, text: str, quote_string: Callable[[str], str]) -> str:
-    # checked here as well as in the quoter, so a host-supplied quoter cannot bypass it
-    _refuse_unsafe_text(text, f"{type(p.value).__name__} parameter {p.name}")
-    return quote_string(text)
+def style_for(dialect: str) -> LiteralStyle:
+    """The literal spellings of ``dialect`` as the renderer resolves it (registry lookup)."""
+    from factlang.sql.registry import literal_style_for  # registry imports this module
+
+    return literal_style_for(dialect)
 
 
 def inline_template(
     template: str,
     params: tuple[Param, ...],
     quote_string: Callable[[str], str] | None = None,
+    style: LiteralStyle | None = None,
 ) -> str:
     """Display-oriented SQL with every parameter inlined as a literal.
 
     FactLang never executes it, but it must be safe if a host does: each value either
     becomes a literal that means exactly that value regardless of server settings, or the
-    whole call fails closed with ``RenderError("FL500 cannot inline ...")``. Strings are
-    quoted by doubling ``'``; nothing ever relies on backslash escaping.
+    whole call fails closed with ``RenderError("FL507 cannot inline ...")``. Strings are
+    quoted by doubling ``'``; nothing ever relies on backslash escaping. ``style`` gives the
+    dialect's spellings (default: ANSI); any other exception raised while converting a value
+    (by a host quote function, say) is reported as ``FL507`` as well.
     """
     quote = quote_string if quote_string is not None else ansi_quote
+    spelling = style if style is not None else ANSI_STYLE
     by_name = {p.name: p for p in params}
 
     def sub(m: re.Match[str]) -> str:
         name = m.group(1)
         if name not in by_name:
             raise RenderError(f"FL500 template references unknown parameter {name!r}")
-        return _inline_value(by_name[name], quote)
+        p = by_name[name]
+        try:
+            return _inline_value(p, quote, spelling)
+        except RenderError:
+            raise
+        except Exception as exc:  # any conversion failure fails closed (FL507)
+            raise _unsafe(
+                f"{type(p.value).__name__} parameter {name}",
+                f": converting it raised {type(exc).__name__}",
+            ) from None
 
     return _TOKEN.sub(sub, template)
 
@@ -221,12 +351,20 @@ class RenderedProbe:
     def bind(self, paramstyle: str) -> tuple[str, tuple[object, ...] | dict[str, object]]:
         return bind_template(self.sql_template, self.params, paramstyle)
 
-    def inline(self, quote_string: Callable[[str], str] | None = None) -> str:
-        return inline_template(self.sql_template, self.params, quote_string)
+    def inline(
+        self, quote_string: Callable[[str], str] | None = None, style: LiteralStyle | None = None
+    ) -> str:
+        """Display SQL with literals inlined, spelled for ``self.dialect`` unless ``style``
+        says otherwise; ``FL507`` when a value cannot be inlined safely."""
+        spelling = style if style is not None else style_for(self.dialect)
+        return inline_template(self.sql_template, self.params, quote_string, spelling)
 
 
 __all__ = [
+    "ANSI_STYLE",
+    "MAX_LITERAL_DIGITS",
     "PARAMSTYLES",
+    "LiteralStyle",
     "RenderError",
     "RenderedProbe",
     "ansi_quote",
@@ -235,4 +373,5 @@ __all__ = [
     "check_template",
     "inline_template",
     "placeholder",
+    "style_for",
 ]

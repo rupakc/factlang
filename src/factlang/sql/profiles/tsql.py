@@ -121,6 +121,12 @@ TSQL = DialectProfile(
     string_concat="+",
     default_schema_sql="SCHEMA_NAME()",
     default_catalog_sql="DB_NAME()",
+    # inlined literals: N'…' (no code-page conversion of the text), BIT is 1/0 (TRUE is an
+    # identifier), and DATE/DATETIME2 casts read ISO text whatever DATEFORMAT/LANGUAGE is set
+    string_literal_prefix="N",
+    boolean_literals=("1", "0"),
+    date_literal="CAST('{date}' AS DATE)",
+    timestamp_literal="CAST('{date} {time}' AS DATETIME2)",
 )
 
 __all__ = ["TSQL"]

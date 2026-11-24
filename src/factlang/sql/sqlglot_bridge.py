@@ -34,6 +34,7 @@ native profile is ``FL506`` for every method: no engine verification exists for 
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import re
 from collections.abc import Callable
@@ -47,7 +48,7 @@ from factlang.sql import ast as A
 from factlang.sql.fragment import RenderedFragment
 from factlang.sql.lower import Lowerer
 from factlang.sql.printer import Printer, guard
-from factlang.sql.probe import RenderedProbe, RenderError, placeholder
+from factlang.sql.probe import ANSI_STYLE, LiteralStyle, RenderedProbe, RenderError, placeholder
 from factlang.sql.profile import DialectProfile
 from factlang.sql.registry import SQLGLOT_NAMES, get_profile, native_dialects
 
@@ -130,6 +131,34 @@ def supports_dialect(dialect: str) -> bool:
     if not isinstance(dialect, str):
         return False
     return _sqlglot_dialect(SQLGLOT_NAMES.get(dialect, dialect)) is not None
+
+
+def literal_style(dialect: str) -> LiteralStyle | None:
+    """Inline-literal spellings for a dialect sqlglot knows, or ``None`` when it knows none.
+
+    The quote form comes from the dialect's own lexer (``''`` is an escaped quote only when
+    sqlglot's tokenizer lists ``'`` among its string escapes); the other spellings come from
+    the nearest native profile in the dialect's class hierarchy (Fabric -> T-SQL,
+    Materialize -> Postgres), else ANSI.
+    """
+    if not isinstance(dialect, str):
+        return None
+    resolved = _sqlglot_dialect(SQLGLOT_NAMES.get(dialect, dialect))
+    if resolved is None:
+        return None
+    by_class: dict[type, DialectProfile] = {}
+    for name in native_dialects():
+        native = _sqlglot_dialect(SQLGLOT_NAMES.get(name, name))
+        profile = get_profile(name)
+        if native is not None and profile is not None:
+            by_class.setdefault(type(native), profile)
+    base = ANSI_STYLE
+    for cls in type(resolved).__mro__:
+        if cls in by_class:
+            base = by_class[cls].literal_style
+            break
+    doubled = "'" in type(resolved).tokenizer_class.STRING_ESCAPES
+    return dataclasses.replace(base, doubled_quote_escape=doubled)
 
 
 def _target(dialect: str | DialectProfile, max_table_parts: int | None = None) -> _Target:

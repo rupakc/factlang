@@ -93,3 +93,34 @@ def test_register_rejects_unregistered_value_type() -> None:
         r.register(spec("BAD", attrs=(AttrSpec("A", "NO_SUCH_TYPE"),)))
     assert r.get("BAD") is None
     r.register(spec("GOOD", attrs=(AttrSpec("A", "NUMBER"),)))  # control
+
+
+# --- exclusive / paired / cast_attr ----------------------------------------------------------
+
+
+def _attrs() -> tuple[AttrSpec, ...]:
+    return (AttrSpec("A", "RATIO"), AttrSpec("B", "NUMBER"), AttrSpec("C", "COLUMN_LIST"))
+
+
+def test_new_fields_default_empty() -> None:
+    v = spec()
+    assert v.exclusive == () and v.paired == () and v.cast_attr is None
+
+
+def test_new_fields_accept_declared_names() -> None:
+    v = spec(attrs=_attrs(), exclusive=(("A", "B"),), paired=(("C", "C"),), cast_attr="B")
+    assert v.exclusive == (("A", "B"),) and v.cast_attr == "B"
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"exclusive": (("A", "Z"),)},
+        {"exclusive": (("Z", "A"),)},
+        {"paired": (("A", "Z"),)},
+        {"cast_attr": "Z"},
+    ],
+)
+def test_new_fields_reject_undeclared_names(kw: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="undeclared attribute 'Z'"):
+        spec(attrs=_attrs(), **kw)

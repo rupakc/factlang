@@ -11,6 +11,7 @@ from factlang import ir
 from factlang.ir import ColumnAggregate, CompositeKeyAggregate, Metric
 from factlang.semantics.checked import CheckedClaim
 from factlang.semantics.refs import Ident
+from factlang.semantics.signature import AttrSpec
 
 ALL_OPS: tuple[str, ...] = ("==", "!=", "<", "<=", ">", ">=")
 
@@ -69,3 +70,32 @@ def as_utc(value: dt.date) -> dt.datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=dt.timezone.utc)
     return value.astimezone(dt.timezone.utc)
+
+
+def answer_attrs(value_type: str) -> tuple[AttrSpec, ...]:
+    """``VALUE`` (all six ops, required), ``TOLERANCE`` (relative) and ``ABS_TOLERANCE``
+    (absolute) of the answer-fact verbs (spec 6.4)."""
+    return (
+        AttrSpec("VALUE", value_type, required=True, ops=ALL_OPS, doc="the stated answer"),
+        AttrSpec("TOLERANCE", "RATIO", doc="relative band around VALUE (e.g. 1%)"),
+        AttrSpec("ABS_TOLERANCE", "NUMBER", doc="absolute band around VALUE"),
+    )
+
+
+ANSWER_EXCLUSIVE: tuple[tuple[str, str], ...] = (("TOLERANCE", "ABS_TOLERANCE"),)
+
+
+def answer_value(value: object, claim: CheckedClaim) -> object:
+    """A measured MIN/MAX value in the kind of the claim's ``VALUE``: numbers as exact
+    ``Decimal``; timestamps in UTC (naive = UTC); a DATE against a TIMESTAMP target is its
+    midnight UTC. Anything else is returned unchanged (a kind mismatch is judged as ERROR)."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+        return number(value)
+    target = claim.value("VALUE")
+    if isinstance(value, dt.datetime):
+        return as_utc(value)
+    if isinstance(value, dt.date) and isinstance(target, dt.datetime):
+        return as_utc(value)
+    return value

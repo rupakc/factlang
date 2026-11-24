@@ -32,6 +32,8 @@ SPEC = VerbSpec(
         AttrSpec("TO", "COLUMN_LIST", doc="matching further right key columns"),
     ),
     filterable=True,
+    paired=(("WITH", "TO"),),
+    cast_attr="CAST",
 )
 
 # CARD -> (left key bound, right key bound); ``None`` = unbounded.

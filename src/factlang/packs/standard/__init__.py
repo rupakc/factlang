@@ -23,6 +23,13 @@ _MODULES: tuple[str, ...] = (
     "range",
     "pattern",
     "fresh",
+    "count",
+    "distinct",
+    "sum",
+    "avg",
+    "min",
+    "max",
+    "note",
 )
 
 

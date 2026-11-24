@@ -44,4 +44,10 @@ def test_filterable_flags_follow_spec() -> None:
         "PATTERN",
         "FRESH",
         "JOIN",
+        "COUNT",
+        "DISTINCT",
+        "SUM",
+        "AVG",
+        "MIN",
+        "MAX",
     }

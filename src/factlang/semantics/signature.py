@@ -53,7 +53,13 @@ class AttrSpec:
 
 @dataclass(frozen=True)
 class VerbSpec:
-    """``requires`` holds ``(a, b)`` pairs: if attribute ``a`` is present, ``b`` is required."""
+    """``requires`` holds ``(a, b)`` pairs: if attribute ``a`` is present, ``b`` is required.
+
+    ``exclusive`` holds ``(a, b)`` pairs that may not both appear (FL309). ``paired`` holds
+    ``(a, b)`` pairs of COLUMN_LIST attributes (edge verbs) that must appear together and
+    list the same number of columns. ``cast_attr`` names the attribute whose presence
+    suppresses the cross-family FL312 warning on an edge verb.
+    """
 
     name: str
     summary: str
@@ -61,6 +67,9 @@ class VerbSpec:
     attrs: tuple[AttrSpec, ...] = ()
     filterable: bool = False
     requires: tuple[tuple[str, str], ...] = ()
+    exclusive: tuple[tuple[str, str], ...] = ()
+    paired: tuple[tuple[str, str], ...] = ()
+    cast_attr: str | None = None
 
     def __post_init__(self) -> None:
         if not _UPPER.fullmatch(self.name):
@@ -79,10 +88,19 @@ class VerbSpec:
         names = [o.name for o in self.operands]
         if len(set(names)) != len(names):
             raise ValueError(f"{self.name}: duplicate operand name")
-        for first, second in self.requires:
-            for n in (first, second):
-                if n not in seen:
-                    raise ValueError(f"{self.name}: requires names undeclared attribute {n!r}")
+        for field, pairs in (
+            ("requires", self.requires),
+            ("exclusive", self.exclusive),
+            ("paired", self.paired),
+        ):
+            for first, second in pairs:
+                for n in (first, second):
+                    if n not in seen:
+                        raise ValueError(f"{self.name}: {field} names undeclared attribute {n!r}")
+        if self.cast_attr is not None and self.cast_attr not in seen:
+            raise ValueError(
+                f"{self.name}: cast_attr names undeclared attribute {self.cast_attr!r}"
+            )
 
 
 class VerbRegistry:

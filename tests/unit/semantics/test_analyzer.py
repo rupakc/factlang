@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
 from decimal import Decimal
 
 from hypothesis import given, settings
@@ -39,13 +38,6 @@ CMP = (">=", "==", "<=", "<", ">")
 ALL = ("==", "!=", ">=", "<=", "<", ">")
 
 
-@dataclass(frozen=True)
-class XVerbSpec(VerbSpec):
-    """Stand-in for Task 12's ``VerbSpec.exclusive``."""
-
-    exclusive: tuple[tuple[str, str], ...] = ()
-
-
 def registry() -> VerbRegistry:
     reg = VerbRegistry()
     reg.register(
@@ -62,6 +54,8 @@ def registry() -> VerbRegistry:
                 AttrSpec("TO", "COLUMN_LIST"),
             ),
             filterable=True,
+            paired=(("WITH", "TO"),),
+            cast_attr="CAST",
         )
     )
     reg.register(
@@ -115,7 +109,7 @@ def registry() -> VerbRegistry:
         )
     )
     reg.register(
-        XVerbSpec(
+        VerbSpec(
             "SUM",
             "sum",
             (OperandSpec("column", OperandKind.COLUMN),),
@@ -609,3 +603,32 @@ def test_canonical_of_bool_is_explicit_true() -> None:
     # guard the dependency the hash test relies on
     t = Param("p1", True, "boolean")
     assert canonical(FBool(Ident("d"))) == canonical(FCompare(Ident("d"), "=", t))
+
+
+# --- spec-level pair fields ----------------------------------------------------------------
+
+
+def test_fl309_exclusive_names_both_attributes() -> None:
+    claims, bag = run("SUM orders.total VALUE ==1 TOLERANCE 1% ABS_TOLERANCE 2")
+    assert bag.codes() == ["FL309"] and claims == []
+    msg = next(iter(bag)).message
+    assert "TOLERANCE" in msg and "ABS_TOLERANCE" in msg
+    assert codes("SUM orders.total VALUE ==1 TOLERANCE 1%") == []
+    assert codes("SUM orders.total VALUE ==1 ABS_TOLERANCE 2") == []
+
+
+def test_pair_behaviour_is_keyed_on_the_spec_not_attr_names() -> None:
+    """An edge verb without ``paired``/``cast_attr`` gets neither check (negative control)."""
+    reg = VerbRegistry()
+    reg.register(
+        VerbSpec(
+            "LINK",
+            "edge",
+            (OperandSpec("edge", OperandKind.EDGE),),
+            (AttrSpec("WITH", "COLUMN_LIST"), AttrSpec("TO", "COLUMN_LIST")),
+        )
+    )
+    res = parse("LINK orders.id -> customers.id WITH [a]")
+    bag = DiagnosticBag()
+    claims = analyze(res.document, reg, bag=bag)
+    assert bag.codes() == [] and len(claims) == 1

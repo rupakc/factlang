@@ -48,10 +48,6 @@ LK = ast.LiteralKind
 Operand = TableRef | ColumnRef | EdgeRef
 _T = TypeVar("_T")
 
-# Edge verbs: `WITH [...]` lists further left-table key columns, `TO [...]` the matching
-# right-table ones, positionally (spec 6.3, Amendment A R3).
-_LEFT_LIST, _RIGHT_LIST = "WITH", "TO"
-_CAST_ATTR = "CAST"
 _MAX_TABLE_PARTS = 3
 
 
@@ -245,7 +241,7 @@ class _ClaimCheck:
             self.column_lists(spec, operands, attrs)
         flt = self.filter(spec)
         if operands is not None and self.catalog is not None:
-            self.catalog_checks(operands, attrs)
+            self.catalog_checks(spec, operands, attrs)
         if not self.ok or operands is None:
             return None
         return CheckedClaim(
@@ -411,7 +407,6 @@ class _ClaimCheck:
     def presence(self, spec: VerbSpec, attrs: dict[str, CheckedAttr]) -> None:
         c = self.claim
         written = {a.name: a for a in c.attributes}
-        declared = {a.name for a in spec.attrs}
         missing: set[str] = set()
 
         def need(name: str, why: str) -> None:
@@ -425,24 +420,22 @@ class _ClaimCheck:
         for first, second in spec.requires:
             if first in written and second not in written:
                 need(second, f"{first} requires {second}")
-        has_edge = any(o.kind is OperandKind.EDGE for o in spec.operands)
-        if has_edge and {_LEFT_LIST, _RIGHT_LIST} <= declared:
-            lw, rw = _LEFT_LIST in written, _RIGHT_LIST in written
+        for left_name, right_name in spec.paired:
+            lw, rw = left_name in written, right_name in written
             if lw != rw:
-                gone = _RIGHT_LIST if lw else _LEFT_LIST
-                need(gone, f"{_LEFT_LIST} and {_RIGHT_LIST} must appear together: missing {gone}")
-            left, right = attrs.get(_LEFT_LIST), attrs.get(_RIGHT_LIST)
+                gone = right_name if lw else left_name
+                need(gone, f"{left_name} and {right_name} must appear together: missing {gone}")
+            left, right = attrs.get(left_name), attrs.get(right_name)
             if left is not None and right is not None:
                 lv, rv = left.value, right.value
                 if isinstance(lv, tuple) and isinstance(rv, tuple) and len(lv) != len(rv):
                     self.error(
                         "FL309",
-                        f"{_LEFT_LIST} lists {len(lv)} column(s) but {_RIGHT_LIST} lists "
+                        f"{left_name} lists {len(lv)} column(s) but {right_name} lists "
                         f"{len(rv)}; they pair positionally and must have equal length",
-                        written[_RIGHT_LIST].span,
+                        written[right_name].span,
                     )
-        exclusive: tuple[tuple[str, str], ...] = getattr(spec, "exclusive", ())
-        for first, second in exclusive:
+        for first, second in spec.exclusive:
             if first in written and second in written:
                 self.error(
                     "FL309",
@@ -457,7 +450,7 @@ class _ClaimCheck:
         for name, attr in attrs.items():
             if attr.type != "COLUMN_LIST" or not isinstance(attr.value, tuple):
                 continue
-            key = self.key_column(name, operands)
+            key = self.key_column(name, operands, spec)
             key_text = key.text.lower() if key is not None else None
             seen: set[str] = set()
             for col in attr.value:
@@ -477,12 +470,12 @@ class _ClaimCheck:
                 seen.add(text)
 
     @staticmethod
-    def key_column(attr: str, operands: tuple[Operand, ...]) -> Ident | None:
+    def key_column(attr: str, operands: tuple[Operand, ...], spec: VerbSpec) -> Ident | None:
         for o in operands:
             if isinstance(o, ColumnRef):
                 return o.column
             if isinstance(o, EdgeRef):
-                return (o.right if attr == _RIGHT_LIST else o.left).column
+                return (o.right if attr in {right for _, right in spec.paired} else o.left).column
         return None
 
     # -- filter ------------------------------------------------------------------------
@@ -558,7 +551,9 @@ class _ClaimCheck:
 
     # -- catalog -----------------------------------------------------------------------
 
-    def catalog_checks(self, operands: tuple[Operand, ...], attrs: dict[str, CheckedAttr]) -> None:
+    def catalog_checks(
+        self, spec: VerbSpec, operands: tuple[Operand, ...], attrs: dict[str, CheckedAttr]
+    ) -> None:
         catalog = self.catalog
         if catalog is None:
             return
@@ -582,7 +577,7 @@ class _ClaimCheck:
         written = {a.name: a for a in c.attributes}
         for name, attr in attrs.items():
             if attr.type == "COLUMN_LIST" and isinstance(attr.value, tuple):
-                target = self.list_table(name, operands)
+                target = self.list_table(name, operands, spec)
                 if target is not None:
                     span = written[name].value.span
                     wanted[target].extend((i, span) for i in attr.value if isinstance(i, Ident))
@@ -627,7 +622,7 @@ class _ClaimCheck:
                         span,
                         hint=f"compare it explicitly, e.g. {col.text} IS NOT NULL",
                     )
-        if edge is not None and _CAST_ATTR not in attrs:
+        if edge is not None and (spec.cast_attr is None or spec.cast_attr not in attrs):
             lt = types.get((edge.left.table, edge.left.column))
             rt = types.get((edge.right.table, edge.right.column))
             lf = type_family(lt) if lt is not None else None
@@ -637,7 +632,8 @@ class _ClaimCheck:
                     "FL312",
                     f"join compares a {lf} column ({lt}) with a {rf} column ({rt})",
                     c.operands[0].span,
-                    hint=f"add {_CAST_ATTR} <family> to compare both sides as one type",
+                    hint=f"add {spec.cast_attr or 'a cast'} <family> to compare both sides "
+                    "as one type",
                 )
         if unknown:
             self.bag.info(
@@ -647,12 +643,12 @@ class _ClaimCheck:
             )
 
     @staticmethod
-    def list_table(attr: str, operands: tuple[Operand, ...]) -> TableRef | None:
+    def list_table(attr: str, operands: tuple[Operand, ...], spec: VerbSpec) -> TableRef | None:
         for o in operands:
             if isinstance(o, ColumnRef):
                 return o.table
             if isinstance(o, EdgeRef):
-                return (o.right if attr == _RIGHT_LIST else o.left).table
+                return (o.right if attr in {right for _, right in spec.paired} else o.left).table
         return None
 
     # -- canonical text ----------------------------------------------------------------

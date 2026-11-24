@@ -15,13 +15,13 @@
 - **Contract**: one object describing a verb completely. See [[Extending-Verbs]].
 - **Decide**: the predicate step that turns facts into pass or fail. See [[Judge]].
 - **Derive**: the step that computes facts from raw rows, returning `None` when undecidable. See [[Judge]].
-- **Dialect profile**: the small record of decisions that prints SQL for one warehouse. See [[Dialects]].
 - **Diagnostic**: a coded message with a span. See [[Diagnostics]].
+- **Dialect profile**: the small record of decisions that prints SQL for one warehouse. See [[Dialects]].
 - **Evidence**: the SQL, parameters, tier and timing behind a verdict. See [[Concepts]].
 - **Fact**: a named number computed from a measurement. See [[Judge]].
 - **Filter**: the trailing `WHERE` condition. See [[Language-Guide]].
-- **Fusion**: merging several measurements into one query. See [[Optimizer]].
 - **Fragment**: a rendered filter or join snippet, not a full statement. See [[Measurement-API]].
+- **Fusion**: merging several measurements into one query. See [[Optimizer]].
 - **IR**: the dialect-free list of measurement primitives. See [[IR]].
 - **Keyhash**: deterministic sampling by hashing a key, so samples repeat and joins align. See [[Measurement-API]].
 - **Layer**: a level in the import hierarchy; modules import only lower layers. See [[Architecture]].

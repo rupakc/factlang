@@ -12,9 +12,13 @@ These capabilities were added in Amendment A and B (see [[Design-Decisions]]) so
 
 ```python
 import factlang as fl
+from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 
-m = fl.measure(fl.ir.ValueMembership(table, column, declared=(), report_limit=20),
-               connector=conn)
+orders = TableRef(None, None, Ident("orders"))        # catalog, schema, table
+connector = fl.DBAPIConnector(conn, "duckdb")
+
+m = fl.measure(fl.ir.ValueMembership(orders, Ident("status"), declared=(), report_limit=20),
+               connector=connector)
 print(m.payload)   # {"rows": [...]}: summary row plus ranked top values
 print(m.error)     # None, or an FL700/FL701/FL702 Diagnostic; measure never raises
 ```
@@ -32,8 +36,9 @@ A `Measurement` holds `plan`, `payload`, `verdict_hint`, `evidence`, `error`. Th
 ## Estimating cost without running
 
 ```python
+checker = fl.Checker(connector)
 est = checker.estimate("JOIN orders.customer_id -> customers.id MATCH >=99%")
-# [CostEstimate(key, sql, bytes, method="dry_run" | "unknown")]
+# [CostEstimate(semantic_hash_or_plan_key, sql, bytes, method="dry_run" | "unknown")]  (`.key` is an alias)
 ```
 
 `estimate` accepts claim text or plans. Connectors without a dry run return `bytes=None, method="unknown"`; nothing is executed and nothing is guessed.
@@ -41,9 +46,14 @@ est = checker.estimate("JOIN orders.customer_id -> customers.id MATCH >=99%")
 ## Filter and join fragments
 
 ```python
+items = TableRef(None, None, Ident("order_items"))
+customers = TableRef(None, None, Ident("customers"))
+edge1 = EdgeRef(ColumnRef(items, Ident("order_id")), ColumnRef(orders, Ident("id")))
+edge2 = EdgeRef(ColumnRef(orders, Ident("customer_id")), ColumnRef(customers, Ident("id")))
+
 f, diags = fl.parse_filter("deleted IS NULL OR NOT deleted")
-frag = fl.sql.render_filter(f, table=t, dialect="snowflake")
-snippet = fl.sql.render_join([edge1, edge2], dialect="bigquery", filters={t1: f})
+frag = fl.sql.render_filter(f, table=orders, dialect="snowflake")
+snippet = fl.sql.render_join([edge1, edge2], dialect="bigquery", filters={items: f})
 print(frag.inline())      # display-only text, literals escaped
 ```
 
@@ -53,13 +63,22 @@ A `RenderedFragment` has `sql_template`, `params`, `bind(paramstyle)` and `inlin
 
 `fl.run_metadata(connector, sql, params=())` runs guarded catalog queries (FL703 on refusal). See [[Connectors]].
 
+```python
+rows = fl.run_metadata(connector, "SELECT table_name FROM information_schema.tables").rows
+```
+
 ## Sampled measurement (Amendment B)
 
 For terabyte tables an exact scan may be unaffordable. A `SampleSpec` lets `Checker.measure` run a primitive on a sample:
 
 ```python
-SampleSpec(method="keyhash" | "system" | "bernoulli",
-           fraction=Decimal("0.01"), seed=0, key=(...))
+from decimal import Decimal
+
+spec = fl.ir.SampleSpec(method="keyhash", fraction=Decimal("0.5"), seed=7,
+                        key=(Ident("id"),))   # method: "keyhash", "system" or "bernoulli"
+plan = fl.ir.ColumnAggregate(orders, None, [fl.Metric.ROW_COUNT], sample=spec)
+m = fl.measure(plan, connector=connector)
+print(m.payload, m.evidence.method)   # raw counts on the sample; method "sampled:keyhash:0.5:7"
 ```
 
 The rules that keep this safe:

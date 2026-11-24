@@ -20,7 +20,7 @@ ruff format --check
 mypy --strict src
 ```
 
-CI also runs the matrix on Python 3.10 to 3.13, integration tests on real engines (service containers), a coverage gate, and a package build.
+CI runs a fast matrix on every push and pull request (Python 3.10 to 3.13 on Ubuntu, plus 3.13 on Windows) and a full matrix of 3.10 to 3.13 on Ubuntu, macOS and Windows nightly, on manual dispatch and on version tags. It also runs integration tests on real engines (PostgreSQL, MySQL, ClickHouse, SQL Server and Trino service containers, plus DuckDB in process), enforces a 90% coverage gate, and builds and checks the package.
 
 ## The rules
 

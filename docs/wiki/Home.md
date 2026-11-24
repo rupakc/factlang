@@ -14,7 +14,7 @@ FactLang turns each statement into a **claim**: one line of text in a tiny langu
 JOIN orders.customer_id -> customers.id CARD N:1 MATCH >=99%
 NULLS orders.shipped_at RATE <=5%
 VALUES opportunities.stage IN ['Prospect', 'Won', 'Lost', 'Churned']
-COUNT opportunities WHERE stage = 'Churned' VALUE ==1717
+COUNT opportunities VALUE ==1717 WHERE stage = 'Churned'
 FRESH events.created_at WITHIN 24h
 ```
 
@@ -27,7 +27,7 @@ import factlang as fl
 
 # no warehouse needed: check the text and see the SQL it would run
 print(fl.lint("UNIQUE orders.id").render())
-probe = fl.compile("UNIQUE orders.id", dialect="snowflake")
+(probe,) = fl.compile("UNIQUE orders.id", dialect="snowflake")   # one probe per claim
 
 # with a warehouse: one call, one verdict
 outcome = fl.check("UNIQUE orders.id", connector=fl.DBAPIConnector(conn, "duckdb"))

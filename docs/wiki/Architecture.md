@@ -87,7 +87,7 @@ Every measurement primitive is first lowered into a small dialect-free SQL tree.
 
 ## Where the safety rules live
 
-- No raw SQL in claims: the grammar has no place to put it; every literal becomes a typed bind parameter ([[Dialects]]).
+- No raw SQL in claims: the grammar has no place to put it; every literal becomes a typed bind parameter ([[Language-Guide]], [[Dialects]]).
 - No sampling in verdicts: only `Checker.measure` can accept a sample ([[Measurement-API]]).
 - NULL handling: declared per metric in the IR, so every dialect inherits it ([[IR]]).
 - Judging never raises: one broken contract cannot sink a batch ([[Judge]]).

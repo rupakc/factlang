@@ -6,7 +6,7 @@
 
 ## What it does
 
-Given text, `tokenize(text)` returns tokens, each carrying its kind and its span (line, column, end column). It recognises:
+Given text and a diagnostic bag, `tokenize(source, bag)` returns tokens, each carrying its kind and its span (line, column, end column). It recognises:
 
 | Token | Example |
 |---|---|

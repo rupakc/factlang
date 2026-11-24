@@ -1,7 +1,7 @@
 # Dialects
 
 > A dialect profile is a small table of decisions (how to quote a name, how to count, what a table path looks like) that turns the shared SQL tree into one warehouse's SQL.
-> Twelve warehouses are covered natively, including Trino, and any other dialect sqlglot knows is available as best effort.
+> Eleven warehouses are covered natively, including Trino, and any other dialect sqlglot knows is available as best effort.
 > Every literal in the output is a typed bind parameter; nothing you write in a claim is ever pasted into SQL.
 
 ## Native profiles
@@ -39,7 +39,9 @@ The governing rule: **a claim identifier means exactly what the same identifier 
 A rendered probe (`RenderedProbe`) holds a neutral SQL template, an ordered tuple of typed parameters, the arity, the plan, the dialect and the tier. The parameter style (`qmark`, `numeric`, `named`, `format`, `pyformat`) is chosen at bind time, because one dialect can have drivers with different styles:
 
 ```python
-probe = fl.compile("COUNT orders WHERE status = 'shipped' VALUE >=1", dialect="postgres")
+import factlang as fl
+
+(probe,) = fl.compile("COUNT orders VALUE >=1 WHERE status = 'shipped'", dialect="postgres")
 sql, params = probe.bind("pyformat")   # what a driver wants
 print(probe.inline())                  # display-only text; never executed
 ```

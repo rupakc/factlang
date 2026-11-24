@@ -112,7 +112,7 @@ def test_architecture_has_ascii_and_mermaid_diagrams() -> None:
 
 
 def test_no_originating_names() -> None:
-    forbidden = ("dataguard",)
+    forbidden = ("dataguard", "claimlang")
     for name, path in _files().items():
         low = path.read_text(encoding="utf-8").lower()
         assert not [w for w in forbidden if w in low], name

@@ -24,7 +24,7 @@ An optional `AsyncConnector.aexecute` serves async code (`Checker.acheck`). A co
 |---|---|
 | `DBAPIConnector(conn, dialect)` | any PEP 249 connection: psycopg, duckdb, snowflake-connector, redshift_connector, databricks-sql, pymysql, oracledb, pyodbc, trino, clickhouse-connect |
 | `SQLAlchemyConnector(engine)` | you already have an engine; the dialect is inferred from it |
-| `BigQueryConnector(client, project, dataset?, maximum_bytes_billed?)` | BigQuery; uses query parameters and a dry-run cost check |
+| `BigQueryConnector(client, *, default_project=None, default_dataset=None, maximum_bytes_billed=None)` | BigQuery; uses query parameters and a dry-run cost check |
 | `CallableConnector(fn, dialect)` | your host runs the SQL itself |
 | `fl.connect(dsn)` | build a connector from a SQLAlchemy URL |
 

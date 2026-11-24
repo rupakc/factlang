@@ -27,7 +27,7 @@ Type families: `integer, decimal, float, string, boolean, date, timestamp, time,
 | `PATTERN` | `PATTERN customers.email LIKE '%@%.%' RATE >=99%` | matching share of non-NULL values satisfies the comparison |
 | `FRESH` | `FRESH events.created_at WITHIN 24h` | the newest value is no older than the window |
 
-All of these accept `WHERE`.
+All of these accept `WHERE` except `DEAD`.
 
 Details worth knowing:
 
@@ -52,7 +52,7 @@ Facts: `match_rate` (matched distinct left keys over distinct non-NULL left keys
 
 | Verb | Example |
 |---|---|
-| `COUNT` | `COUNT opportunities WHERE stage = 'Churned' VALUE ==1717` |
+| `COUNT` | `COUNT opportunities VALUE ==1717 WHERE stage = 'Churned'` |
 | `DISTINCT` | `DISTINCT orders.customer_id VALUE ==42` |
 | `SUM` | `SUM orders.amount VALUE ==1234.5 TOLERANCE 1%` |
 | `AVG` | `AVG orders.amount VALUE >=20` |
@@ -66,7 +66,7 @@ Facts: `match_rate` (matched distinct left keys over distinct non-NULL left keys
 
 ## Not filterable
 
-`EXISTS`, `TYPE`, `DEAD`, `NOTE`. A filter on them is FL308.
+`EXISTS`, `TYPE`, `DEAD`, `NOTE` (all other verbs accept `WHERE`). A filter on them is FL308.
 
 ## Listing them
 

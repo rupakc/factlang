@@ -46,10 +46,10 @@ It is built from each contract's spec and examples. Use a restricted pack ([[Ext
 With the extra `factlang[mcp]`:
 
 ```
-python -m factlang.agent.mcp --dsn postgresql://user@host/db
+factlang mcp [--dsn URL | --dialect D] [--timeout S] [--max-bytes N] [--name N]
 ```
 
-serves the same three tools over stdio. With `--dialect D` and no `--dsn`, `factlang_lint` and `factlang_explain` work and `factlang_check` reports that there is no connector. Options: `--timeout`, `--max-bytes`, `--name`.
+serves the same three tools over stdio. Give `--dsn` or `--dialect`; with neither the command exits 2. With `--dialect D` and no `--dsn`, `factlang_lint` and `factlang_explain` work and `factlang_check` reports that there is no connector. Without the extra it prints an install hint. `python -m factlang.agent.mcp` is the same server. Note that `--dsn` puts the password in the process list; only `factlang check` reads `FACTLANG_DSN` (see [[CLI]]), so give the MCP server a low-privilege read-only account.
 
 ## Safety for agents
 

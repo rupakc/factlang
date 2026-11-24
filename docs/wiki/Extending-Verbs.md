@@ -11,11 +11,12 @@ import factlang as fl
 
 pack = fl.standard_pack().extend("mine", "1.0")   # copy-on-write child pack
 
-@pack.verb("POSITIVE", operands=[fl.Operand.column()], filterable=True)
+@pack.verb("POSITIVE", summary="every value is above zero",
+           operands=[fl.Operand.column()], filterable=True)
 def positive(claim):
     # return the plan: what to measure
-    return fl.ir.ColumnAggregate(claim.table, claim.column, [fl.Metric.MIN_VALUE],
-                                 filter=claim.filter)   # a filterable verb must pass its filter on
+    return fl.ir.ColumnAggregate(claim.table, claim.column.column, [fl.Metric.MIN_VALUE],
+                                 filter=claim.filter)   # a filterable verb must pass its filter on (FL605)
 
 @positive.derive
 def _(payload, claim):
@@ -23,9 +24,16 @@ def _(payload, claim):
 
 positive.decide(fl.Compare("min", ">", value=0))        # a predicate over the facts
 
-positive.example("POSITIVE orders.amount", valid=True)
-positive.example("POSITIVE orders", valid=False, code="FL302")
 # a contract needs at least 3 valid and 3 invalid examples
+positive.example("POSITIVE orders.amount")
+positive.example("POSITIVE orders.amount WHERE status = 'paid'")
+positive.example("POSITIVE orders.id")
+positive.example("POSITIVE orders", valid=False, expect="FL302")
+positive.example("POSITIVE", valid=False, expect="FL301")
+positive.example("POSITIVE orders.amount BOGUS 1", valid=False, expect="FL303")
+
+outcome = fl.check("POSITIVE orders.amount", connector=fl.DBAPIConnector(conn, "duckdb"), pack=pack)
+print(outcome.verdict)
 ```
 
 Use it with `fl.Checker(connector, pack=pack)`.
@@ -53,8 +61,13 @@ On a `ContractPack`: `register(c)` (error on duplicate), `override(c)` (replace,
 ## New value types
 
 ```python
-fl.types.register(ValueType("EMAIL_DOMAIN",
-    accepts=frozenset({LiteralKind.STRING}), coerce=fn, validate=check))
+from factlang.syntax.ast import LiteralKind
+
+def only_lowercase(value):
+    return None if str(value) == str(value).lower() else "must be lower case"
+
+fl.types.register(fl.types.ValueType("EMAIL_DOMAIN", accepts=frozenset({LiteralKind.STRING}),
+                                     coerce=lambda lit: lit.value, validate=only_lowercase))
 ```
 
 ## New primitives

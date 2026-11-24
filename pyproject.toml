@@ -14,7 +14,9 @@ authors = [{ name = "Rupak Chakraborty" }]
 keywords = ["data-quality", "fact-checking", "sql", "data-warehouse", "claims", "llm-agents"]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Environment :: Console",
   "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -27,7 +29,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-sqlglot = ["sqlglot>=25"]
+sqlglot = ["sqlglot>=30,<31"]
 sqlalchemy = ["sqlalchemy>=2"]
 bigquery = ["google-cloud-bigquery>=3"]
 snowflake = ["snowflake-connector-python>=3"]
@@ -42,7 +44,7 @@ oracle = ["oracledb>=2"]
 trino = ["trino>=0.330"]
 mcp = ["mcp>=1.0,<3"]
 all = [
-  "sqlglot>=25",
+  "sqlglot>=30,<31",
   "sqlalchemy>=2",
   "google-cloud-bigquery>=3",
   "snowflake-connector-python>=3",
@@ -66,7 +68,7 @@ dev = [
   "build",
   "twine",
   "duckdb>=1.0",
-  "sqlglot>=25",
+  "sqlglot>=30,<31",
 ]
 docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5,<10", "mkdocstrings[python]>=0.26,<2"]
 
@@ -77,6 +79,8 @@ factlang = "factlang.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/rupakc/factlang"
+Documentation = "https://rupakc.github.io/factlang/"
+Source = "https://github.com/rupakc/factlang"
 Issues = "https://github.com/rupakc/factlang/issues"
 Changelog = "https://github.com/rupakc/factlang/blob/main/CHANGELOG.md"
 
@@ -87,7 +91,24 @@ path = "src/factlang/__about__.py"
 packages = ["src/factlang"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/factlang", "tests", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
+# Everything the test suite reads, so `pytest` runs from an unpacked sdist.
+include = [
+  "src/factlang",
+  "tests",
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "pyproject.toml",
+  "docs/*.md",
+  "docs/reference",
+  "docs/wiki",
+  "docs/guide",
+  "docs/extending",
+  "docs/overrides",
+  "scripts/gen_reference.py",
+  "site-playground/glue.py",
+]
+exclude = ["__pycache__", "*.pyc"]
 
 [tool.ruff]
 line-length = 100

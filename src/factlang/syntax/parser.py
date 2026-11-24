@@ -443,7 +443,7 @@ def _fallback_line_text(toks: list[Token]) -> str:
 def parse_tokens(tokens: list[Token], bag: DiagnosticBag, source: str = "") -> ast.Document:
     """Parse a token stream. A bad line is reported and skipped; the rest still parse."""
     src = source
-    if src.startswith("﻿"):
+    if src.startswith("\ufeff"):
         src = src[1:]
     src = src.replace("\r\n", "\n").replace("\r", "\n")
     src_lines = src.split("\n")

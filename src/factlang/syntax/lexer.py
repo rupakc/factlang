@@ -21,15 +21,6 @@ _PUNCT = {
     "(": TokenKind.LPAREN,
     ")": TokenKind.RPAREN,
 }
-# A '-' is a number sign only if the previous token is not one of these.
-_OPERAND_ENDERS = {
-    TokenKind.IDENT,
-    TokenKind.QIDENT,
-    TokenKind.NUMBER,
-    TokenKind.RBRACKET,
-    TokenKind.RPAREN,
-}
-_WIDE = decimal.Context(prec=60, Emax=decimal.MAX_EMAX, Emin=decimal.MIN_EMIN, traps=[])
 
 
 def _ident_start(c: str) -> bool:
@@ -40,9 +31,16 @@ def _ident_part(c: str) -> bool:
     return c in "_$" or c.isalpha() or c in _DIGITS
 
 
+def _percent(num: Decimal) -> Decimal:
+    """``num / 100`` exactly, by lowering the exponent (no rounding at any size)."""
+    sign, digits, exp = num.as_tuple()
+    assert isinstance(exp, int)  # a lexed number is always finite
+    return Decimal((sign, digits, exp - 2))
+
+
 def tokenize(source: str, bag: DiagnosticBag) -> list[Token]:
     """Tokenize ``source``; never raises, always ends with an EOF token."""
-    if source.startswith("﻿"):
+    if source.startswith("\ufeff"):
         source = source[1:]
     src = source.replace("\r\n", "\n").replace("\r", "\n")
     n = len(src)
@@ -138,12 +136,7 @@ def tokenize(source: str, bag: DiagnosticBag) -> list[Token]:
         ):
             emit(TokenKind.CARDINALITY, i, i + 3)
             i += 3
-        elif c in _DIGITS or (
-            c == "-"
-            and i + 1 < n
-            and src[i + 1] in _DIGITS
-            and not (tokens and tokens[-1].kind in _OPERAND_ENDERS)
-        ):
+        elif c in _DIGITS or (c == "-" and i + 1 < n and src[i + 1] in _DIGITS):
             neg = c == "-"
             d = i + 1 if neg else i
             j = d
@@ -171,7 +164,7 @@ def tokenize(source: str, bag: DiagnosticBag) -> list[Token]:
                 i = end
                 continue
             if end < n and src[end] == "%":
-                emit(TokenKind.PERCENT, i, end + 1, num.scaleb(-2, context=_WIDE))
+                emit(TokenKind.PERCENT, i, end + 1, _percent(num))
                 i = end + 1
             else:
                 emit(TokenKind.NUMBER, i, end, num)

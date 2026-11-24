@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import decimal
 from decimal import Decimal
 
 from factlang.diagnostics import DiagnosticBag
@@ -64,10 +65,19 @@ def test_negative_number() -> None:
     assert lex("= -2.5e1")[0][1].value == Decimal("-25")
 
 
-def test_minus_after_operand_is_not_a_sign() -> None:
+def test_minus_before_digit_is_always_a_sign() -> None:
     toks, bag = lex("5 -3")
-    assert [t.kind for t in toks][:-1] == [K.NUMBER, K.ERROR, K.NUMBER]
-    assert bag.codes() == ["FL102"]
+    assert [t.kind for t in toks][:-1] == [K.NUMBER, K.NUMBER]
+    assert toks[1].value == Decimal(-3) and len(bag) == 0
+    for src in ["x BETWEEN -1 AND 5", "ROWS t -5", "MIN -5", "a.b -2", "[1] -2", "(x) -2"]:
+        toks, bag = lex(src)
+        assert len(bag) == 0 and K.ERROR not in [t.kind for t in toks]
+    assert [t.value for t in lex("MIN -5")[0]][1] == Decimal(-5)
+
+
+def test_lone_minus_is_FL102() -> None:
+    toks, bag = lex("a - b")
+    assert bag.codes() == ["FL102"] and K.ERROR in [t.kind for t in toks]
 
 
 def test_percent_normalised() -> None:
@@ -149,7 +159,7 @@ def test_crlf_equivalent_to_lf() -> None:
 
 
 def test_bom_ignored() -> None:
-    toks, _ = lex("﻿A")
+    toks, _ = lex("\ufeffA")
     assert toks[0].kind is K.IDENT and toks[0].span.col == 1
 
 
@@ -170,3 +180,27 @@ def test_punctuation_and_idents() -> None:
 def test_huge_numbers_do_not_raise() -> None:
     toks, _ = lex("1e99999999999999999999999 " + "9" * 5000 + "h 5e999999%")
     assert toks[-1].kind is K.EOF
+
+
+def test_negative_percent_and_exponent_percent() -> None:
+    toks, _ = lex("-5%")
+    assert toks[0].kind is K.PERCENT and toks[0].value == Decimal("-0.05")
+    toks, _ = lex("1e5%")
+    assert toks[0].kind is K.PERCENT and toks[0].value == Decimal("1e3")
+
+
+def test_percent_exact_beyond_60_digits() -> None:
+    digits = "1" + "0" * 69 + "7"
+    toks, _ = lex(digits + "%")
+    assert toks[0].value == Decimal(digits).scaleb(-2, context=decimal.Context(prec=200))
+
+
+def test_unterminated_backtick_qident_FL101() -> None:
+    toks, bag = lex("`abc")
+    assert bag.codes() == ["FL101"] and toks[0].kind is K.ERROR
+
+
+def test_cardinality_only_before_non_identifier_char() -> None:
+    assert kinds("1:1x") == [K.NUMBER, K.ERROR, K.NUMBER, K.IDENT]
+    assert kinds("N:Mx") == [K.IDENT, K.ERROR, K.IDENT]
+    assert kinds("1:1)") == [K.CARDINALITY, K.RPAREN]

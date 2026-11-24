@@ -18,7 +18,7 @@ def test_tokenize_never_raises(source: str) -> None:
 @settings(max_examples=500, deadline=None)
 @given(st.text(alphabet=st.characters(), max_size=200))
 def test_spans_within_source(source: str) -> None:
-    src = source.removeprefix("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    src = source.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     lines = src.split("\n")
     for tok in tokenize(source, DiagnosticBag()):
         s = tok.span

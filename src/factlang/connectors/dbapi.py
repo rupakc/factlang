@@ -13,6 +13,7 @@ from typing import Any
 from factlang.connectors.base import (
     ExecutionError,
     QueryResult,
+    canonical_dialect,
     check_paramstyle,
     deadline,
     map_error,
@@ -55,7 +56,7 @@ class DBAPIConnector:
 
     def __init__(self, connection: Any, dialect: str, paramstyle: str | None = None) -> None:
         self.connection = connection
-        self.dialect = dialect
+        self.dialect = canonical_dialect(dialect)
         style = paramstyle if paramstyle is not None else driver_paramstyle(connection)
         self.paramstyle = check_paramstyle(style if style is not None else "qmark")
 

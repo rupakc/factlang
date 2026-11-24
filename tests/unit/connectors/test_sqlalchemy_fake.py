@@ -97,6 +97,8 @@ def fake_sqlalchemy(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     [
         ("postgresql", "postgres"),
         ("mssql", "tsql"),
+        ("sqlserver", "tsql"),
+        ("fabric", "tsql"),
         ("mariadb", "mysql"),
         ("mysql", "mysql"),
         ("snowflake", "snowflake"),
@@ -143,6 +145,7 @@ def test_colons_are_escaped_for_text(fake_sqlalchemy: types.ModuleType) -> None:
         "SELECT {{t}}{{u}} AS row_count",
         "SELECT x::{{t}} AS row_count",
         "SELECT x:{{t}} AS row_count",
+        "SELECT x\\{{t}} AS row_count",
     ],
 )
 def test_glued_tokens_are_refused(fake_sqlalchemy: types.ModuleType, template: str) -> None:
@@ -196,8 +199,20 @@ def test_real_sqlalchemy_keeps_colons_in_literals() -> None:
     sa = pytest.importorskip("sqlalchemy")
     engine = sa.create_engine("sqlite://")
     c = SQLAlchemyConnector(engine)
-    result = run_metadata(c, "SELECT 'a:b' AS x, {{p}} AS y", {"p": "q:r"})
-    assert result.rows == [{"x": "a:b", "y": "q:r"}]
+    colons = RenderedProbe(
+        "SELECT 'a:b' AS x, {{p}} AS y",
+        (Param("p", "q:r", "string"),),
+        probe().arity,
+        None,
+        "sqlite",
+        "best_effort",
+    )
+    assert c.execute(colons, timeout_s=None).rows == [{"x": "a:b", "y": "q:r"}]
+    # sqlite has no native profile: run_metadata fails closed to the T-SQL rules (no quotes)
+    with pytest.raises(ExecutionError) as info:
+        run_metadata(c, "SELECT 'a:b' AS x")
+    assert info.value.code == "FL703"
+    assert run_metadata(c, "SELECT {{p}} AS y", {"p": "q:r"}).rows == [{"y": "q:r"}]
     upper = RenderedProbe(
         "SELECT 'a:b' AS ROW_COUNT", (), probe().arity, probe().plan, "sqlite", "best_effort"
     )

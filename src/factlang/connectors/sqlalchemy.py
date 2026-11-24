@@ -14,6 +14,7 @@ from typing import Any
 from factlang.connectors.base import (
     ExecutionError,
     QueryResult,
+    canonical_dialect,
     deadline,
     map_error,
     normalise_rows,
@@ -36,9 +37,9 @@ def _sqlalchemy() -> ModuleType:
         ) from exc
 
 
-# a token right after ':' or a word character, right before a word character, or two
+# a token right after ':', '\\' or a word character, right before a word character, or two
 # tokens back to back: text() cannot see ':name' as a bind there
-_GLUED_TOKEN = re.compile(r"[:\w]\{\{|\}\}\w|\}\}\{\{")
+_GLUED_TOKEN = re.compile(r"[:\\\w]\{\{|\}\}\w|\}\}\{\{")
 
 
 def escape_colons(template: str) -> str:
@@ -63,13 +64,13 @@ class SQLAlchemyConnector:
     def __init__(self, engine: Any) -> None:
         self.engine = engine
         name = str(engine.dialect.name)
-        self.dialect = DIALECT_NAMES.get(name, name)
+        self.dialect = canonical_dialect(DIALECT_NAMES.get(name, name))
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
         sa = _sqlalchemy()
         if _GLUED_TOKEN.search(probe.sql_template):
             raise ExecutionError(
-                "a {{name}} parameter glued to ':', a word character or another parameter "
+                "a {{name}} parameter glued to ':', '\\', a word character or another parameter "
                 "cannot be bound through SQLAlchemy text(); separate them with a space",
                 code="FL700",
             )

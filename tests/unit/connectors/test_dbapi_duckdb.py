@@ -357,3 +357,25 @@ def test_trino_dbapi_paramstyle(monkeypatch: pytest.MonkeyPatch) -> None:
     c.execute(count_where("paid"), timeout_s=None)
     sql, params = conn.log[0]
     assert "?" in sql and params == ["paid"]
+
+
+def test_mssql_label_gets_tsql_rules() -> None:
+    conn = FakeConn()
+    c = DBAPIConnector(conn, "mssql")
+    assert c.dialect == "tsql"
+    with pytest.raises(ExecutionError) as info:
+        run_metadata(c, "SELECT 1 SELECT 2")
+    assert info.value.code == "FL703"
+    run_metadata(c, "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES")
+    assert conn.log[-1][0] == (
+        "SELECT * FROM (SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES) AS fl_meta_q"
+    )
+
+
+def test_unknown_label_gets_tsql_rules() -> None:
+    conn = FakeConn()
+    c = DBAPIConnector(conn, "vertica")
+    with pytest.raises(ExecutionError) as info:
+        run_metadata(c, "SHOW TABLES")
+    assert info.value.code == "FL703"
+    assert conn.log == []

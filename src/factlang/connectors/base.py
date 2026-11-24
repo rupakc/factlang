@@ -233,11 +233,42 @@ FORBIDDEN_WORDS: frozenset[str] = frozenset(
         *("DISABLE", "ENABLE", "RAISERROR", "WAITFOR", "SETUSER", "REVERT", "OPEN"),
         *("CLOSE", "FETCH", "DEALLOCATE", "SEND", "RECEIVE", "MOVE", "BULK"),
         *("WRITETEXT", "UPDATETEXT", "GOTO", "THROW"),
+        # rowset functions that reach other servers or files, and ALTER … ADD
+        *("OPENQUERY", "OPENROWSET", "OPENDATASOURCE", "OPENXML", "ADD"),
+        # T-SQL lock hints
+        *("TABLOCK", "TABLOCKX", "XLOCK", "UPDLOCK", "HOLDLOCK", "PAGLOCK", "ROWLOCK"),
+        *("SERIALIZABLE", "REPEATABLEREAD", "READCOMMITTEDLOCK"),
     )
 )
 _TOKEN = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}")
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ORACLE_QUOTE = re.compile(r"(?<![A-Za-z0-9_])n?q'", re.IGNORECASE)
+
+
+# Labels hosts use for SQL Server family engines; all of them are the ``tsql`` profile.
+TSQL_ALIASES: frozenset[str] = frozenset(
+    {"tsql", "mssql", "sqlserver", "sql_server", "synapse", "fabric", "azuresql"}
+)
+
+
+def canonical_dialect(dialect: str) -> str:
+    """The profile name for a connector's dialect label: SQL Server aliases become ``tsql``
+    (case-insensitive); any other label is returned unchanged. Every connector that takes
+    a label from the host passes it through here."""
+    return "tsql" if dialect.strip().lower() in TSQL_ALIASES else dialect
+
+
+def uses_tsql_rules(dialect: str | None) -> bool:
+    """Whether metadata SQL for ``dialect`` gets the strict T-SQL rules.
+
+    Fails closed: ``tsql`` (or an alias), and any label with no registered native profile,
+    since an unknown engine may run statements without a separator. ``None`` (no dialect
+    given to :func:`check_metadata_sql`) checks the generic rules only.
+    """
+    if dialect is None:
+        return False
+    name = canonical_dialect(dialect)
+    return name == "tsql" or get_profile(name) is None
 
 
 def _refuse(reason: str) -> ExecutionError:
@@ -302,7 +333,8 @@ def check_metadata_sql(sql: str, dialect: str | None = None) -> None:
     """
     if not isinstance(sql, str):
         raise TypeError(f"metadata SQL must be a string, got {type(sql).__name__}")
-    allowed = TSQL_METADATA_KEYWORDS if dialect == "tsql" else METADATA_KEYWORDS
+    strict = uses_tsql_rules(dialect)
+    allowed = TSQL_METADATA_KEYWORDS if strict else METADATA_KEYWORDS
     first = _WORD.match(sql.lstrip(" \t\r\n"))
     if first is None or first.group(0).upper() not in allowed:
         raise _refuse(f"the statement must start with one of {', '.join(allowed)}")
@@ -317,7 +349,7 @@ def check_metadata_sql(sql: str, dialect: str | None = None) -> None:
     bad = sorted({w.upper() for w in _WORD.findall(text)} & FORBIDDEN_WORDS)
     if bad:
         raise _refuse(f"keyword(s) {', '.join(bad)} not allowed (bind values as {{{{name}}}})")
-    if dialect == "tsql":
+    if strict:
         _check_tsql(text)
 
 
@@ -369,7 +401,9 @@ def run_metadata(
     (``a{{t}}``, ``{{t}}b``) or to another token (``{{a}}{{b}}``). SQLAlchemyConnector
     refuses those with ``FL700`` before executing; separate them with a space.
 
-    **T-SQL** (``connector.dialect == "tsql"``), where statements need no separator: only a
+    **T-SQL** (``tsql`` or an alias such as ``mssql``/``sqlserver``/``synapse``/``fabric``,
+    and, failing closed, **any dialect with no native profile**), where statements may need
+    no separator: only a
     ``SELECT`` is accepted, and it runs wrapped as ``SELECT * FROM (<sql>) AS fl_meta_q``.
     So there is no ``WITH``/``SHOW``, no ``ORDER BY`` without ``TOP`` (SQL Server rejects it
     in a derived table), every result column needs a distinct name, and no quote character
@@ -377,7 +411,7 @@ def run_metadata(
     values, and compare odd names, as parameters.
     """
     check_metadata_sql(sql, connector.dialect)
-    if connector.dialect == "tsql":
+    if uses_tsql_rules(connector.dialect):
         sql = TSQL_WRAPPER.format(sql=sql)
     if isinstance(params, Mapping):
         bound = tuple(_infer_param(k, v) for k, v in params.items())
@@ -405,6 +439,7 @@ __all__ = [
     "FORBIDDEN_SEQUENCES",
     "FORBIDDEN_WORDS",
     "METADATA_KEYWORDS",
+    "TSQL_ALIASES",
     "TSQL_FORBIDDEN_CHARS",
     "TSQL_METADATA_KEYWORDS",
     "TSQL_WRAPPER",
@@ -413,6 +448,7 @@ __all__ = [
     "ExecutionError",
     "QueryResult",
     "aexecute",
+    "canonical_dialect",
     "check_metadata_sql",
     "check_paramstyle",
     "deadline",
@@ -422,4 +458,5 @@ __all__ = [
     "normalise_rows",
     "rows_from_cursor",
     "run_metadata",
+    "uses_tsql_rules",
 ]

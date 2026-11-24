@@ -8,6 +8,7 @@ from typing import Any
 from factlang.connectors.base import (
     ExecutionError,
     QueryResult,
+    canonical_dialect,
     check_paramstyle,
     map_error,
     normalise_rows,
@@ -27,7 +28,7 @@ class CallableConnector:
 
     def __init__(self, fn: HostFn, dialect: str, paramstyle: str = "qmark") -> None:
         self.fn = fn
-        self.dialect = dialect
+        self.dialect = canonical_dialect(dialect)
         self.paramstyle = check_paramstyle(paramstyle)
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:

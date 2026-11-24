@@ -10,13 +10,14 @@ import pytest
 
 from factlang.connectors import (
     METADATA_KEYWORDS,
+    CallableConnector,
     Connector,
     ExecutionError,
     QueryResult,
     check_metadata_sql,
     run_metadata,
 )
-from factlang.connectors.base import FORBIDDEN_WORDS
+from factlang.connectors.base import FORBIDDEN_WORDS, canonical_dialect, uses_tsql_rules
 from factlang.ir import Arity
 from factlang.semantics.filters import Param
 from factlang.sql import RenderedProbe
@@ -531,3 +532,79 @@ def test_other_dialects_are_not_wrapped() -> None:
     rec = Recorder()
     run_metadata(rec, "SELECT 1 AS a")
     assert rec.calls[0][0].sql_template == "SELECT 1 AS a"
+
+
+# -- round 4: fail closed on dialect labels; rowset functions and lock hints ----------------
+
+ROUND_FOUR_WORDS = [
+    *("OPENQUERY", "OPENROWSET", "OPENDATASOURCE", "OPENXML", "ADD", "TABLOCK", "TABLOCKX"),
+    *("XLOCK", "UPDLOCK", "HOLDLOCK", "PAGLOCK", "ROWLOCK", "SERIALIZABLE", "REPEATABLEREAD"),
+    "READCOMMITTEDLOCK",
+]
+
+
+@pytest.mark.parametrize("word", ROUND_FOUR_WORDS)
+def test_rowset_functions_and_lock_hints_are_refused(word: str) -> None:
+    assert word in FORBIDDEN_WORDS
+    for dialect in (None, "duckdb", "tsql"):
+        with pytest.raises(ExecutionError) as info:
+            check_metadata_sql(
+                f"SELECT a FROM t WITH ({word.lower()}) WHERE b = {{{{p}}}}", dialect
+            )
+        assert info.value.code == "FL703"
+
+
+def test_openrowset_call_is_refused() -> None:
+    _refused("SELECT a FROM OPENROWSET({{p}}, {{q}}, {{r}}) AS x")
+
+
+@pytest.mark.parametrize(
+    "label", ["tsql", "mssql", "MSSQL", "sqlserver", "sql_server", "synapse", "fabric", "azuresql"]
+)
+def test_sql_server_aliases_are_canonical(label: str) -> None:
+    assert canonical_dialect(label) == "tsql"
+    assert CallableConnector(lambda s, p: [], label).dialect == "tsql"
+
+
+def test_other_labels_are_unchanged() -> None:
+    assert canonical_dialect("postgres") == "postgres"
+    assert canonical_dialect("teradata") == "teradata"
+
+
+def test_unknown_and_tsql_labels_use_the_strict_rules() -> None:
+    assert uses_tsql_rules("tsql") and uses_tsql_rules("mssql")
+    assert uses_tsql_rules("teradata")  # no native profile: fail closed
+    assert not uses_tsql_rules("duckdb") and not uses_tsql_rules("postgres")
+    assert not uses_tsql_rules(None)
+
+
+MISLABELLED_BYPASSES = [
+    "SELECT 1 SELECT 2",
+    "SELECT 1 FROM t) q SELECT * FROM (SELECT 1",
+    "SELECT name FROM [sys].[tables]",
+    "WITH x AS (SELECT 1 AS a) SELECT a FROM x",
+]
+
+
+@pytest.mark.parametrize("label", ["mssql", "sqlserver", "synapse", "teradata", "SQL_Server"])
+@pytest.mark.parametrize("sql", MISLABELLED_BYPASSES)
+def test_mislabelled_tsql_bypasses_are_refused(label: str, sql: str) -> None:
+    seen: list[str] = []
+    conn = CallableConnector(lambda s, p: seen.append(s) or [], label)  # type: ignore[func-returns-value]
+    with pytest.raises(ExecutionError) as info:
+        run_metadata(conn, sql)
+    assert info.value.code == "FL703"
+    assert seen == []
+
+
+def test_unknown_dialect_runs_wrapped() -> None:
+    seen: list[str] = []
+
+    def fn(sql: str, params: object) -> list[dict[str, Any]]:
+        seen.append(sql)
+        return [{"a": 1}]
+
+    run_metadata(
+        CallableConnector(fn, "teradata"), "SELECT a FROM dbc.tables WHERE b = {{p}}", {"p": 1}
+    )  # type: ignore[arg-type]
+    assert seen == ["SELECT * FROM (SELECT a FROM dbc.tables WHERE b = ?) AS fl_meta_q"]

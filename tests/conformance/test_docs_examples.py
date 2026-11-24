@@ -4,6 +4,8 @@
   page, against an in-memory DuckDB (the brief requires getting-started and extending/verbs;
   the other pages are held to the same standard).
 - Every ```factlang block anywhere on the site lints without errors.
+- ``README.md`` is held to the same standard: its python blocks run, in order, and every
+  claim in its verb table lints cleanly.
 - The landing page's ledger shows real outcomes of the getting-started shop.
 - ``docs/reference/verbs.md`` is what ``scripts/gen_reference.py`` generates.
 """
@@ -75,8 +77,10 @@ def _restore_global_registries() -> Iterator[None]:
     PRIMITIVE_LOWERINGS.update(lowerings)
 
 
-def _run_page(page: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    blocks = _PYTHON.findall((DOCS / page).read_text(encoding="utf-8"))
+def _run_page(
+    page: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root: Path = DOCS
+) -> dict[str, Any]:
+    blocks = _PYTHON.findall((root / page).read_text(encoding="utf-8"))
     assert blocks, f"{page} has no python blocks"
     monkeypatch.chdir(tmp_path)
     ns: dict[str, Any] = {"__name__": f"docs:{page}"}
@@ -93,6 +97,24 @@ def test_required_pages_are_executed() -> None:
 def test_python_blocks_run(page: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("duckdb")
     _run_page(page, tmp_path, monkeypatch)
+
+
+def test_readme_python_blocks_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("duckdb")
+    ns = _run_page("README.md", tmp_path, monkeypatch, root=ROOT)
+    assert ns["report"].outcomes  # the thirty-second example really checked something
+
+
+_VERB_ROW = re.compile(r"^\| `([A-Z]+)` \| `(.*?)` \|", re.M)
+
+
+def test_readme_verb_table_is_the_standard_pack_and_lints() -> None:
+    rows = _VERB_ROW.findall((ROOT / "README.md").read_text(encoding="utf-8"))
+    assert sorted(verb for verb, _ in rows) == sorted(fl.standard_pack().names())
+    for verb, claim in rows:
+        assert claim.split()[0] == verb, claim
+        bag = fl.lint(claim)
+        assert not bag.has_errors, f"{claim}\n{bag.render()}"
 
 
 @pytest.mark.parametrize("page", _site_pages(), ids=lambda p: p.relative_to(DOCS).as_posix())

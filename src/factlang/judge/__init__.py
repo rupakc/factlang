@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from factlang.judge.outcome import Evidence, Outcome, Verdict, json_safe
 from factlang.judge.predicate import (
+    Always,
     And,
     Compare,
     CompareUsingClaimOp,
@@ -14,10 +15,11 @@ from factlang.judge.predicate import (
     Within,
     compare,
 )
-from factlang.judge.run import NO_ROWS, Derive, decide_facts, payload_for
+from factlang.judge.run import NO_ROWS, Derive, decide_facts, judge_rows, payload_for
 
 __all__ = [
     "NO_ROWS",
+    "Always",
     "And",
     "Compare",
     "CompareUsingClaimOp",
@@ -33,5 +35,6 @@ __all__ = [
     "compare",
     "decide_facts",
     "json_safe",
+    "judge_rows",
     "payload_for",
 ]

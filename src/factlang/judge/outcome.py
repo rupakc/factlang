@@ -52,7 +52,8 @@ class Outcome:
         """JSON-safe dict: Decimal -> str, temporals -> ISO-8601 (datetimes in UTC),
         tuples -> lists, enums -> their value."""
         out = json_safe({f.name: getattr(self, f.name) for f in dataclasses.fields(self)})
-        assert isinstance(out, dict)
+        if not isinstance(out, dict):  # pragma: no cover - json_safe maps a dict to a dict
+            raise TypeError("Outcome.to_dict produced a non-dict")
         return out
 
 

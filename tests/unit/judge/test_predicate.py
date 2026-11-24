@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 import pytest
 
 from factlang.diagnostics import Span
 from factlang.judge import (
+    Always,
     And,
     Compare,
     CompareUsingClaimOp,
@@ -136,6 +138,33 @@ def test_non_numeric_compare() -> None:
         Compare("x", "<", value=1).evaluate({"x": "a"}, NOCLAIM)
 
 
+_UTC = dt.timezone.utc
+_INCOMPATIBLE = [
+    ("a", 1),
+    (1, "a"),
+    (True, 1),
+    (Decimal(1), True),
+    ("2026-01-01", dt.date(2026, 1, 1)),
+    (dt.date(2026, 1, 1), dt.datetime(2026, 1, 1)),
+    (dt.datetime(2026, 1, 1), dt.datetime(2026, 1, 1, tzinfo=_UTC)),
+    ("true", True),
+    (float("nan"), 1),
+]
+
+
+@pytest.mark.parametrize(("a", "b"), _INCOMPATIBLE)
+@pytest.mark.parametrize("op", ["==", "!=", "<", "<=", ">", ">="])
+def test_incompatible_kinds_raise_for_every_op(a: object, b: object, op: str) -> None:
+    with pytest.raises(TypeError):
+        Compare("x", op, value=b).evaluate({"x": a}, NOCLAIM)
+
+
+def test_same_kind_temporals_compare() -> None:
+    aware = dt.datetime(2026, 1, 1, 1, tzinfo=dt.timezone(dt.timedelta(hours=1)))
+    assert ev(Compare("x", "==", value=dt.datetime(2026, 1, 1, tzinfo=_UTC)), {"x": aware}) is True
+    assert ev(Compare("x", "<", value=dt.datetime(2026, 1, 2)), {"x": dt.datetime(2026, 1, 1)})
+
+
 # --- CompareUsingClaimOp --------------------------------------------------------------
 
 
@@ -161,26 +190,93 @@ def test_within_exact_without_tolerance() -> None:
     assert p.reads() == ({"value"}, {"VALUE", "TOLERANCE", "ABS_TOLERANCE"})
 
 
-def test_within_relative_tolerance() -> None:
-    c = claim(VALUE=("==", Decimal(1000)), TOLERANCE=(None, Decimal("0.005")))
+def test_within_bare_op_is_equality() -> None:
     p = Within("value", "VALUE")
-    assert p.evaluate({"value": 1005}, c)[0] is True  # boundary is inclusive
-    assert p.evaluate({"value": 995}, c)[0] is True
-    assert p.evaluate({"value": Decimal("1005.01")}, c)[0] is False
-    assert p.evaluate({"value": 994}, c)[0] is False
-    neg = claim(VALUE=("==", Decimal(-1000)), TOLERANCE=(None, Decimal("0.01")))
-    assert p.evaluate({"value": -1010}, neg)[0] is True
-    assert p.evaluate({"value": -989}, neg)[0] is False
+    assert p.evaluate({"value": 5}, claim(VALUE=(None, Decimal(5))))[0] is True
+    assert p.evaluate({"value": 6}, claim(VALUE=(None, Decimal(5))))[0] is False
 
 
-def test_within_absolute_tolerance() -> None:
+# (op, actual, want) for target 100; without tolerance, then with a band of 5
+_EXACT = [
+    ("==", 100, True),
+    ("==", 101, False),
+    ("!=", 100, False),
+    ("!=", 101, True),
+    (">=", 100, True),
+    (">=", 99, False),
+    (">", 100, False),
+    (">", 101, True),
+    ("<=", 100, True),
+    ("<=", 101, False),
+    ("<", 100, False),
+    ("<", 99, True),
+]
+_BAND5 = [
+    ("==", 105, True),
+    ("==", 95, True),
+    ("==", Decimal("105.01"), False),
+    ("!=", 105, False),
+    ("!=", Decimal("94.99"), True),
+    (">=", 95, True),
+    (">=", Decimal("94.99"), False),
+    (">", 95, False),
+    (">", Decimal("95.01"), True),
+    ("<=", 105, True),
+    ("<=", Decimal("105.01"), False),
+    ("<", 105, False),
+    ("<", Decimal("104.99"), True),
+]
+
+
+@pytest.mark.parametrize(("op", "actual", "want"), _EXACT)
+def test_within_honours_claim_op_exact(op: str, actual: object, want: bool) -> None:
+    c = claim(VALUE=(op, Decimal(100)))
+    assert Within("value", "VALUE").evaluate({"value": actual}, c)[0] is want
+
+
+@pytest.mark.parametrize(("op", "actual", "want"), _BAND5)
+def test_within_honours_claim_op_relative(op: str, actual: object, want: bool) -> None:
+    c = claim(VALUE=(op, Decimal(100)), TOLERANCE=(None, Decimal("0.05")))
+    assert Within("value", "VALUE").evaluate({"value": actual}, c)[0] is want
+
+
+@pytest.mark.parametrize(("op", "actual", "want"), _BAND5)
+def test_within_honours_claim_op_absolute(op: str, actual: object, want: bool) -> None:
+    c = claim(VALUE=(op, Decimal(100)), ABS_TOLERANCE=(None, Decimal(5)))
+    assert Within("value", "VALUE").evaluate({"value": actual}, c)[0] is want
+
+
+def test_within_not_equal_on_equal_value_fails() -> None:
+    ok, why = Within("value", "VALUE").evaluate({"value": 5}, claim(VALUE=("!=", Decimal(5))))
+    assert ok is False and "value 5" in why and "5" in why
+
+
+def test_within_band_is_the_larger_of_relative_and_absolute() -> None:
+    both = claim(
+        VALUE=("==", Decimal(100)),
+        TOLERANCE=(None, Decimal("0.01")),
+        ABS_TOLERANCE=(None, Decimal(3)),
+    )
+    p = Within("value", "VALUE")
+    assert p.evaluate({"value": 103}, both)[0] is True  # abs 3 > rel 1
+    assert p.evaluate({"value": 104}, both)[0] is False
+
+
+def test_within_float_fact_with_tolerance() -> None:
+    c = claim(VALUE=("==", Decimal("0.3")), ABS_TOLERANCE=(None, Decimal("0.01")))
+    p = Within("value", "VALUE")
+    assert p.evaluate({"value": 0.1 + 0.2}, c)[0] is True
+    assert p.evaluate({"value": 0.311}, c)[0] is False
+    r = claim(VALUE=("<=", Decimal(1000)), TOLERANCE=(None, Decimal("0.005")))
+    assert p.evaluate({"value": 1004.9}, r)[0] is True
+    assert p.evaluate({"value": 1005.1}, r)[0] is False
+
+
+def test_within_explanation_names_actual_op_target_and_band() -> None:
     c = claim(VALUE=("==", Decimal("12.5")), ABS_TOLERANCE=(None, Decimal("0.01")))
-    p = Within("value", "VALUE")
-    assert p.evaluate({"value": Decimal("12.51")}, c)[0] is True
-    assert p.evaluate({"value": Decimal("12.49")}, c)[0] is True
-    assert p.evaluate({"value": Decimal("12.511")}, c)[0] is False
-    ok, why = p.evaluate({"value": Decimal("13")}, c)
-    assert ok is False and "13" in why and "12.5" in why and "0.01" in why
+    ok, why = Within("value", "VALUE").evaluate({"value": Decimal("13")}, c)
+    assert ok is False
+    assert why == "value 13 violates == 12.5 (band 0.01)"
 
 
 def test_within_relative_zero_target_is_exact() -> None:
@@ -188,6 +284,12 @@ def test_within_relative_zero_target_is_exact() -> None:
     p = Within("value", "VALUE")
     assert p.evaluate({"value": 0}, c)[0] is True
     assert p.evaluate({"value": Decimal("0.0001")}, c)[0] is False
+
+
+def test_within_tolerance_on_non_number_raises() -> None:
+    c = claim(VALUE=("==", "a"), TOLERANCE=(None, Decimal("0.01")))
+    with pytest.raises(TypeError):
+        Within("value", "VALUE").evaluate({"value": "a"}, c)
 
 
 # --- And / Or / Not truth tables -----------------------------------------------------
@@ -240,8 +342,17 @@ def test_when_claim_has() -> None:
     assert p.evaluate({"coverage": Decimal("0.4"), "t": 1}, with_cov)[0] is False
     assert p.evaluate({"coverage": Decimal("0.4"), "t": 1}, NOCLAIM)[0] is True
     assert p.reads() == ({"coverage", "t"}, {"COVERAGE"})
-    bare = WhenClaimHas("COVERAGE", Compare("coverage", ">=", attr="COVERAGE"))
-    assert bare.evaluate({}, NOCLAIM)[0] is True
+    opt = WhenClaimHas("COVERAGE", Compare("coverage", ">=", attr="COVERAGE"), Always())
+    assert opt.evaluate({}, NOCLAIM)[0] is True
+    assert opt.reads() == ({"coverage"}, {"COVERAGE"})
+    with pytest.raises(TypeError):
+        WhenClaimHas("COVERAGE", TRUE)  # type: ignore[call-arg]
+
+
+def test_always() -> None:
+    assert Always().evaluate({}, NOCLAIM)[0] is True
+    assert Always().reads() == (set(), set())
+    assert ev(And(Always(), NONE)) is None
 
 
 def test_predicates_are_frozen_and_hashable() -> None:

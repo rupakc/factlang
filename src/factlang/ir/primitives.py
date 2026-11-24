@@ -80,6 +80,22 @@ def _own_column(obj: ColumnAggregate | ValueMembership | PatternCoverage | Metad
         raise TypeError(f"{type(obj).__name__}.column must be an Ident, got {column!r}")
 
 
+def _check_common(obj: object, *, tables: tuple[str, ...] = ("table",)) -> None:
+    """``table`` is a TableRef; every filter is a FilterExpr or None; every sample a SampleSpec."""
+    owner = type(obj).__name__
+    for name in tables:
+        if not isinstance(getattr(obj, name), TableRef):
+            raise TypeError(f"{owner}.{name} must be a TableRef, got {getattr(obj, name)!r}")
+    for name in ("filter", "right_filter"):
+        value = getattr(obj, name, None)
+        if value is not None and not isinstance(value, _FILTER_TYPES):
+            raise TypeError(f"{owner}.{name} must be a FilterExpr or None, got {value!r}")
+    for name in ("sample", "right_sample"):
+        value = getattr(obj, name, None)
+        if value is not None and not isinstance(value, SampleSpec):
+            raise TypeError(f"{owner}.{name} must be a SampleSpec or None, got {value!r}")
+
+
 def _metrics(obj: object) -> tuple[Metric, ...]:
     owner = type(obj).__name__
     metrics = _as_tuple(obj, "metrics")
@@ -143,6 +159,7 @@ class ColumnAggregate:
     sample: SampleSpec | None = None
 
     def __post_init__(self) -> None:
+        _check_common(self)
         _own_column(self)
         metrics = _metrics(self)
         if self.column is None:
@@ -164,6 +181,7 @@ class CompositeKeyAggregate:
     sample: SampleSpec | None = None
 
     def __post_init__(self) -> None:
+        _check_common(self)
         columns = _as_tuple(self, "columns")
         if not columns:
             raise ValueError("CompositeKeyAggregate needs at least one key column")
@@ -192,6 +210,7 @@ class ValueMembership:
     sample: SampleSpec | None = None
 
     def __post_init__(self) -> None:
+        _check_common(self)
         _own_column(self)
         if self.column is None:
             raise TypeError("ValueMembership needs a column")
@@ -229,6 +248,8 @@ def _key_side(obj: object, name: str) -> tuple[ColumnRef, ...]:
         refs.append(c)
     if len({c.table for c in refs}) != 1:
         raise ValueError(f"KeyOverlap.{name} columns must all be on one table")
+    if len(set(refs)) != len(refs):
+        raise ValueError(f"KeyOverlap.{name} has a duplicate column")
     return tuple(refs)
 
 
@@ -248,6 +269,7 @@ class KeyOverlap:
 
     def __post_init__(self) -> None:
         left, right = _key_side(self, "left"), _key_side(self, "right")
+        _check_common(self, tables=())
         if len(left) != len(right):
             raise ValueError(
                 f"KeyOverlap key length mismatch: {len(left)} left vs {len(right)} right"
@@ -294,6 +316,7 @@ class PatternCoverage:
     sample: SampleSpec | None = None
 
     def __post_init__(self) -> None:
+        _check_common(self)
         _own_column(self)
         if self.column is None:
             raise TypeError("PatternCoverage needs a column")
@@ -317,6 +340,7 @@ class MetadataQuery:
     column: Ident | None = None
 
     def __post_init__(self) -> None:
+        _check_common(self)
         _own_column(self)
 
     def result_columns(self) -> tuple[str, ...]:

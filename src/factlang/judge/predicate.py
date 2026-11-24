@@ -7,9 +7,11 @@ Numbers are compared as ``Decimal`` (ints and Decimals exactly; a float via
 ``Decimal(str(x))``). When either side is a float, equality is
 ``math.isclose(rel_tol=1e-9, abs_tol=1e-9)``, and the ordering operators agree with it
 (``<=`` holds for close values, ``<`` does not), so ``a == b`` and ``not (a < b or a > b)``
-never disagree. Non-numbers (text, dates, booleans) compare natively; comparing values of
-incompatible kinds raises ``TypeError``, which the judge reports as ``ERROR`` (a contract
-defect, not an absence of data).
+never disagree. Non-numbers compare natively within one kind (text, boolean, date, naive
+timestamp, aware timestamp, ...). Values of incompatible kinds -- a number against a
+non-number, a date against a timestamp, a naive against an aware timestamp, text against
+anything else -- raise ``TypeError`` for EVERY operator, ``==`` and ``!=`` included; the
+judge reports that as ``ERROR`` (a contract defect, not an absence of data).
 """
 
 from __future__ import annotations
@@ -79,6 +81,21 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
 
 
+def _kind(value: object) -> str:
+    """Comparison kind: values of different kinds are never compared."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, dt.datetime):
+        return "timestamp" if value.tzinfo is None else "timestamp_tz"
+    if isinstance(value, dt.date):
+        return "date"
+    if isinstance(value, dt.time):
+        return "time" if value.tzinfo is None else "time_tz"
+    return type(value).__name__
+
+
 def compare(actual: object, op: str, target: object) -> bool:
     """``actual <op> target`` under the module's numeric rules. Raises ``TypeError``."""
     op = _norm_op(op)
@@ -97,8 +114,8 @@ def compare(actual: object, op: str, target: object) -> bool:
             ">": sign > 0,
             ">=": sign >= 0,
         }[op]
-    if _is_number(actual) or _is_number(target):
-        # a number against a non-number (or a non-finite float): a defect, never "unequal"
+    if _is_number(actual) or _is_number(target) or _kind(actual) != _kind(target):
+        # incompatible kinds: a defect, never "unequal" -- for every operator
         raise TypeError(f"cannot compare {actual!r} with {target!r}")
     if op == "==":
         return bool(actual == target)
@@ -173,11 +190,13 @@ class CompareUsingClaimOp:
 
 @dataclass(frozen=True)
 class Within:
-    """Answer verbs (spec 6.4): ``fact`` equals ``claim[attr]`` within the claim's tolerance.
+    """Answer verbs (spec 6.4): ``fact <op> claim[attr]`` with the claim's tolerance band.
 
-    ``TOLERANCE`` (a ratio) is relative: ``|actual - target| <= tol * |target|``;
-    ``ABS_TOLERANCE`` is absolute: ``|actual - target| <= tol``; both inclusive. Neither
-    present means exact (``==``, with ``math.isclose`` when a float is involved).
+    ``op`` is the operator the author wrote on ``attr`` (bare: ``==``). The band is
+    ``max(TOLERANCE * |target|, ABS_TOLERANCE)`` over the attributes present (0 when neither
+    is: exact, ``math.isclose`` when a float is involved). With a band ``b``:
+    ``==`` |a-t| <= b; ``!=`` |a-t| > b; ``>=`` a >= t-b; ``>`` a > t-b; ``<=`` a <= t+b;
+    ``<`` a < t+b. Arithmetic is in ``Decimal`` (a float via ``Decimal(str(x))``).
     """
 
     fact: str
@@ -190,30 +209,43 @@ class Within:
         if missing is not None:
             return missing
         actual, target = facts[self.fact], claim.value(self.attr)
-        if claim.has(self.tolerance_attr):
-            rel = claim.number(self.tolerance_attr)
-            a, t = _to_decimal(actual), _to_decimal(target)
-            if a is None or t is None:
-                raise TypeError(f"cannot apply a tolerance to {actual!r} and {target!r}")
-            bound, label = rel * abs(t), f"{fmt(rel * 100)}%"
-        elif claim.has(self.abs_attr):
-            bound = claim.number(self.abs_attr)
-            a, t = _to_decimal(actual), _to_decimal(target)
-            if a is None or t is None:
-                raise TypeError(f"cannot apply a tolerance to {actual!r} and {target!r}")
-            label = fmt(bound)
-        else:
-            return _compare_result(self.fact, actual, "==", target)
+        op = _norm_op(claim.op(self.attr) or "==")
+        has_rel, has_abs = claim.has(self.tolerance_attr), claim.has(self.abs_attr)
+        if not (has_rel or has_abs):
+            return _compare_result(self.fact, actual, op, target)
+        a, t = _to_decimal(actual), _to_decimal(target)
+        if a is None or t is None:
+            raise TypeError(f"cannot apply a tolerance to {actual!r} and {target!r}")
+        band = Decimal(0)
+        if has_rel:
+            band = max(band, claim.number(self.tolerance_attr) * abs(t))
+        if has_abs:
+            band = max(band, claim.number(self.abs_attr))
         diff = abs(a - t)
-        ok = diff <= bound
-        word = "within" if ok else "not within"
-        return ok, (
-            f"{self.fact} {fmt(actual)} {word} {label} of {fmt(target)} "
-            f"(|diff| {fmt(diff)} {'<=' if ok else '>'} {fmt(bound)})"
-        )
+        ok = {
+            "==": diff <= band,
+            "!=": diff > band,
+            ">=": a >= t - band,
+            ">": a > t - band,
+            "<=": a <= t + band,
+            "<": a < t + band,
+        }[op]
+        verdict = "satisfies" if ok else "violates"
+        return ok, f"{self.fact} {fmt(actual)} {verdict} {op} {fmt(target)} (band {fmt(band)})"
 
     def reads(self) -> tuple[set[str], set[str]]:
         return {self.fact}, {self.attr, self.tolerance_attr, self.abs_attr}
+
+
+@dataclass(frozen=True)
+class Always:
+    """Always true; reads nothing (e.g. the ``otherwise`` of an optional check)."""
+
+    def evaluate(self, facts: Facts, claim: CheckedClaim) -> Result:
+        return True, "always"
+
+    def reads(self) -> tuple[set[str], set[str]]:
+        return set(), set()
 
 
 def _union(items: tuple[Predicate, ...]) -> tuple[set[str], set[str]]:
@@ -290,22 +322,19 @@ class Not:
 
 @dataclass(frozen=True)
 class WhenClaimHas:
-    """``then`` when the claim carries ``attr``, else ``otherwise`` (absent: vacuously true)."""
+    """``then`` when the claim carries ``attr``, else ``otherwise`` (use ``Always()``)."""
 
     attr: str
     then: Predicate
-    otherwise: Predicate | None = None
+    otherwise: Predicate
 
     def evaluate(self, facts: Facts, claim: CheckedClaim) -> Result:
         if claim.has(self.attr):
             return self.then.evaluate(facts, claim)
-        if self.otherwise is None:
-            return True, f"no {self.attr} given"
         return self.otherwise.evaluate(facts, claim)
 
     def reads(self) -> tuple[set[str], set[str]]:
-        parts = (self.then,) if self.otherwise is None else (self.then, self.otherwise)
-        facts, attrs = _union(parts)
+        facts, attrs = _union((self.then, self.otherwise))
         return facts, attrs | {self.attr}
 
 
@@ -313,6 +342,7 @@ __all__ = [
     "ABS_TOL",
     "OPS",
     "REL_TOL",
+    "Always",
     "And",
     "Compare",
     "CompareUsingClaimOp",

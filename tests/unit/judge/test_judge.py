@@ -13,6 +13,7 @@ from factlang.judge import (
     Outcome,
     Verdict,
     decide_facts,
+    judge_rows,
     payload_for,
 )
 from factlang.semantics.checked import CheckedClaim
@@ -50,10 +51,27 @@ def test_verdict_values() -> None:
 
 def test_payload_for() -> None:
     rows = [{"a": 1}, {"a": 2}]
-    assert payload_for(Arity.SINGLE_ROW, rows) == {"a": 1}
     assert payload_for(Arity.ROW_SET, rows) == {"rows": rows}
     assert payload_for(Arity.SINGLE_ROW, []) is None
     assert payload_for(Arity.ROW_SET, []) is None
+    assert payload_for(Arity.SINGLE_ROW, rows[:1]) == {"a": 1}
+
+
+def test_payload_for_single_row_with_many_rows_raises() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="expected one row, got 2"):
+        payload_for(Arity.SINGLE_ROW, [{"a": 1}, {"a": 2}])
+
+
+def test_judge_rows_maps_shape_error_to_error() -> None:
+    rows = [{"max_rows_per_key": 1}, {"max_rows_per_key": 2}]
+    v, why, facts = judge_rows(Arity.SINGLE_ROW, rows, derive, DECIDE, CLAIM)
+    assert v is Verdict.ERROR and "expected one row, got 2" in why and facts == {}
+    v, _, _ = judge_rows(Arity.SINGLE_ROW, rows[:1], derive, DECIDE, CLAIM)
+    assert v is Verdict.PASS
+    v, _, _ = judge_rows(Arity.SINGLE_ROW, [], derive, DECIDE, CLAIM)
+    assert v is Verdict.NO_DATA
 
 
 def test_decide_pass_fail_no_data() -> None:

@@ -337,3 +337,40 @@ def test_register_primitive() -> None:
 
     with pytest.raises(TypeError, match="arity"):
         register_primitive(NoArity, lower=lower)
+
+
+def test_every_primitive_checks_table_filter_and_sample_kinds() -> None:
+    bad_filter = "status = 1"
+    builders = [
+        lambda t, f: ColumnAggregate(t, C, (Metric.ROW_COUNT,), filter=f),
+        lambda t, f: CompositeKeyAggregate(t, (C,), (Metric.NON_NULL,), filter=f),
+        lambda t, f: ValueMembership(t, C, (), filter=f),
+        lambda t, f: PatternCoverage(t, C, "a%", filter=f),
+    ]
+    for build in builders:
+        build(T, flt())
+        build(T, None)
+        with pytest.raises(TypeError, match="table"):
+            build("orders", None)
+        with pytest.raises(TypeError, match="filter"):
+            build(T, bad_filter)
+    with pytest.raises(TypeError, match="table"):
+        MetadataQuery("orders")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="sample"):
+        ColumnAggregate(T, C, (Metric.ROW_COUNT,), sample="10%")  # type: ignore[arg-type]
+    k = (col(T, "cid"),), (col(U, "id"),)
+    with pytest.raises(TypeError, match="filter"):
+        KeyOverlap(*k, filter=bad_filter)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="right_filter"):
+        KeyOverlap(*k, right_filter=bad_filter)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="right_sample"):
+        KeyOverlap(*k, right_sample=0.1)  # type: ignore[arg-type]
+
+
+def test_key_overlap_rejects_a_duplicate_column_within_a_side() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        KeyOverlap((col(T, "a"), col(T, "a")), (col(U, "x"), col(U, "y")))
+    with pytest.raises(ValueError, match="duplicate"):
+        KeyOverlap((col(T, "a"), col(T, "b")), (col(U, "x"), col(U, "x")))
+    # the same column name on the two sides is fine
+    KeyOverlap((col(T, "id"),), (col(U, "id"),))

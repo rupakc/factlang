@@ -18,7 +18,7 @@ from factlang.ir import (
     ValueMembership,
 )
 from factlang.semantics.filters import FCompare, Param
-from factlang.semantics.refs import ColumnRef, Ident, TableRef
+from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 from factlang.sql import (
     SQLGLOT_NAMES,
     DialectProfile,
@@ -88,14 +88,18 @@ def test_register_profile_refuses_duplicates_unless_replace() -> None:
         register_profile("duckdb")  # type: ignore[arg-type]
 
 
-def test_renderer_for_native_and_unknown() -> None:
+def test_renderer_for_native_and_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,))
     probe = renderer_for("postgres")(plan)
     assert probe.dialect == "postgres"
+    # with or without the bridge, a name neither native nor sqlglot's is FL504 up front
     with pytest.raises(RenderError, match="FL504") as err:
         renderer_for("no_such_dialect")
     msg = str(err.value)
     assert "duckdb" in msg and "postgres" in msg and "pip install factlang[sqlglot]" in msg
+    monkeypatch.setattr(registry, "_bridge", lambda: None)
+    with pytest.raises(RenderError, match="FL504"):
+        renderer_for("no_such_dialect")
     # forcing the bridge when it is absent says so, not "unknown dialect"
     with pytest.raises(RenderError, match="sqlglot bridge not installed") as forced:
         renderer_for("duckdb", prefer="sqlglot")
@@ -114,10 +118,58 @@ def test_renderer_for_uses_the_bridge_when_present(monkeypatch: pytest.MonkeyPat
             calls.append(dialect)
             return "bridged"
 
+        @staticmethod
+        def supports_dialect(dialect: str) -> bool:
+            return dialect != "nope"
+
     monkeypatch.setattr(registry, "_bridge", lambda: Bridge)
     assert renderer_for("teradata")(ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,))) == "bridged"
     renderer_for("duckdb", prefer="sqlglot")(ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,)))
     assert calls == ["teradata", "duckdb"]
+    with pytest.raises(RenderError, match="FL504"):
+        renderer_for("nope")
+
+
+def test_fragments_route_to_the_bridge_by_the_resolution_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class Bridge:
+        @staticmethod
+        def supports_dialect(dialect: str) -> bool:
+            return dialect != "nope"
+
+        @staticmethod
+        def render_filter_fragment(node: object, dialect: str, *, table: object = None) -> str:
+            calls.append(("filter", dialect))
+            return "bridged"
+
+        @staticmethod
+        def render_join_fragment(from_: object, where: object, dialect: str) -> str:
+            calls.append(("join", dialect))
+            return "bridged"
+
+    f = FCompare(Ident("status"), "=", Param("p1", "paid", "string"))
+    items = TableRef(None, None, Ident("order_items"))
+    edge = [EdgeRef(ColumnRef(items, Ident("order_id")), ColumnRef(ORDERS, Ident("id")))]
+    monkeypatch.setattr(registry, "_bridge", lambda: Bridge)
+    assert render_filter(f, dialect="duckdb").tier == "verified"  # native wins
+    assert render_filter(f, dialect=DUCK).tier == "verified"
+    assert render_filter(f, dialect="hive") == "bridged"
+    assert render_filter(f, dialect=DUCK, prefer="sqlglot") == "bridged"
+    assert render_join(edge, "duckdb", prefer="sqlglot") == "bridged"
+    assert render_join(edge, "hive") == "bridged"
+    assert calls == [("filter", "hive"), ("filter", "duckdb"), ("join", "duckdb"), ("join", "hive")]
+    with pytest.raises(RenderError, match="FL504"):
+        render_filter(f, dialect="nope")
+    with pytest.raises(ValueError, match="prefer"):
+        render_filter(f, dialect="duckdb", prefer="other")  # type: ignore[arg-type]
+    monkeypatch.setattr(registry, "_bridge", lambda: None)
+    with pytest.raises(RenderError, match="FL504 unknown dialect"):
+        render_filter(f, dialect="hive")
+    with pytest.raises(RenderError, match="bridge not installed"):
+        render_join(edge, "duckdb", prefer="sqlglot")
 
 
 def test_bridge_import_errors_other_than_a_missing_module_propagate(

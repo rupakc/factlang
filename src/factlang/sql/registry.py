@@ -108,6 +108,8 @@ def renderer_for(
                 f"cannot render {dialect!r} through it"
             )
         raise _unknown(dialect)
+    if not bridge.supports_dialect(dialect):
+        raise _unknown(dialect)
     bridge_render: Any = bridge.render
 
     def render_bridged(plan: ProbePlan) -> RenderedProbe:
@@ -126,6 +128,31 @@ def _profile(dialect: str | DialectProfile) -> DialectProfile:
     return profile
 
 
+def _fragment_bridge(
+    dialect: str | DialectProfile, prefer: Literal["native", "sqlglot"]
+) -> ModuleType | None:
+    """The bridge when a fragment for ``dialect`` goes through it (spec 8.3 order), else None."""
+    if prefer not in ("native", "sqlglot"):
+        raise ValueError(f"prefer must be 'native' or 'sqlglot', got {prefer!r}")
+    if isinstance(dialect, DialectProfile):
+        if prefer == "native":
+            return None
+        dialect = dialect.name
+    if prefer == "native" and dialect in _PROFILES:
+        return None
+    bridge = _bridge()
+    if bridge is None:
+        if prefer == "sqlglot":
+            raise RenderError(
+                "FL504 sqlglot bridge not installed (pip install factlang[sqlglot]); "
+                f"cannot render {dialect!r} through it"
+            )
+        raise _unknown(dialect)
+    if not bridge.supports_dialect(dialect):
+        raise _unknown(dialect)
+    return bridge
+
+
 def _fragment(text: str, printer: Printer, profile: DialectProfile) -> RenderedFragment:
     if ";" in text:
         raise RenderError(f"FL500 rendered fragment failed the guard: {text[:80]!r}")
@@ -139,12 +166,20 @@ def render_filter(
     table: TableRef | None = None,
     alias: str | None = None,
     param_prefix: str = "p",
+    prefer: Literal["native", "sqlglot"] = "native",
 ) -> RenderedFragment:
     """A resolved filter as a bindable boolean expression (R6), columns qualified by ``alias``.
 
     ``table`` (optional) is checked against the dialect's identifier rules and table-part
-    limit (FL502/FL505). Parameters are named ``<param_prefix>1``, ….
+    limit (FL502/FL505). Parameters are named ``<param_prefix>1``, …. A dialect without a
+    native profile (or ``prefer="sqlglot"``) goes through the sqlglot bridge.
     """
+    bridge = _fragment_bridge(dialect, prefer)
+    if bridge is not None:
+        name = dialect.name if isinstance(dialect, DialectProfile) else dialect
+        node = lower_filter(filter, alias, param_prefix=param_prefix)
+        bridged: RenderedFragment = bridge.render_filter_fragment(node, name, table=table)
+        return bridged
     profile = _profile(dialect)
     printer = Printer(profile)
     if table is not None:
@@ -160,14 +195,21 @@ def render_join(
     filters: Mapping[TableRef, FilterExpr] | None = None,
     aliases: Mapping[TableRef, str] | None = None,
     param_prefix: str = "p",
+    prefer: Literal["native", "sqlglot"] = "native",
 ) -> RenderedFragment:
     """``FROM a JOIN b ON … [WHERE …]`` for a join path (R6), bindable, never executed here.
 
     The left-most table's filter is the ``WHERE``; every other table's filter is ANDed into
     the ``ON`` of the join that brings it in (see :func:`~factlang.sql.fragment.lower_join`).
+    A dialect without a native profile (or ``prefer="sqlglot"``) goes through the bridge.
     """
-    profile = _profile(dialect)
+    bridge = _fragment_bridge(dialect, prefer)
     from_, where = lower_join(edges, filters, aliases, param_prefix=param_prefix)
+    if bridge is not None:
+        name = dialect.name if isinstance(dialect, DialectProfile) else dialect
+        bridged: RenderedFragment = bridge.render_join_fragment(from_, where, name)
+        return bridged
+    profile = _profile(dialect)
     printer = Printer(profile)
     text = "FROM " + printer.from_clause(from_)
     if where is not None:

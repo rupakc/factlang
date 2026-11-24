@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -321,7 +322,7 @@ def test_python_dash_m(tmp_path: Path) -> None:
         [sys.executable, "-m", "factlang", "lint", f],
         capture_output=True,
         text=True,
-        env={"PYTHONPATH": src},
+        env={**os.environ, "PYTHONPATH": src},  # keep SYSTEMROOT etc. (Windows)
         check=False,
     )
     assert proc.returncode == 2 and "FL300" in proc.stdout

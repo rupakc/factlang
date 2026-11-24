@@ -26,7 +26,7 @@ target warehouse, runs it (or hands the SQL to the host to run), and returns a
 JOIN orders.customer_id -> customers.id CARD N:1 MATCH >=99%
 NULLS orders.shipped_at RATE <=5%
 VALUES opportunities.stage IN ['Prospect', 'Won', 'Lost', 'Churned']
-COUNT opportunities WHERE stage = 'Churned' VALUE ==1717
+COUNT opportunities VALUE ==1717 WHERE stage = 'Churned'
 FRESH events.created_at WITHIN 24h
 ```
 
@@ -446,9 +446,9 @@ are cast to that type family.
 ### 6.4 Answer facts (what agents state in answers)
 | Verb | Form | Primitive | Facts |
 |---|---|---|---|
-| `COUNT` | `COUNT t [WHERE …] VALUE ==1717 [TOLERANCE 0.5%]` | ColumnAggregate(ROW_COUNT) | `value` |
-| `DISTINCT` | `DISTINCT t.c [WHERE …] VALUE ==42` | ColumnAggregate(DISTINCT_KEYS) | `value` |
-| `SUM` `AVG` `MIN` `MAX` | `SUM t.c [WHERE …] VALUE ==1234.5 [TOLERANCE 1%]` | ColumnAggregate(SUM/AVG/MIN_VALUE/MAX_VALUE) | `value` |
+| `COUNT` | `COUNT t VALUE ==1717 [TOLERANCE 0.5%] [WHERE …]` | ColumnAggregate(ROW_COUNT) | `value` |
+| `DISTINCT` | `DISTINCT t.c VALUE ==42 [WHERE …]` | ColumnAggregate(DISTINCT_KEYS) | `value` |
+| `SUM` `AVG` `MIN` `MAX` | `SUM t.c VALUE ==1234.5 [TOLERANCE 1%] [WHERE …]` | ColumnAggregate(SUM/AVG/MIN_VALUE/MAX_VALUE) | `value` |
 
 `TOLERANCE` and `ABS_TOLERANCE` are mutually exclusive (`VerbSpec.exclusive`, FL309). `TOLERANCE` is relative when a percent/ratio is given with `%` (`1%`), absolute when
 given with attribute `ABS_TOLERANCE 0.01`; both absent = exact (`==` uses

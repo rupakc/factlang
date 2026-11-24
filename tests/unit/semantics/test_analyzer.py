@@ -495,6 +495,26 @@ def test_unhashable_attribute_value_is_fl305() -> None:
     assert claims == [] and bag.codes() == ["FL305"]
 
 
+def test_non_finite_attribute_value_is_fl305() -> None:
+    from factlang.semantics.types import ValueType, register_type
+    from factlang.syntax.ast import LiteralKind
+
+    for name, bad in (("NAN_T", Decimal("NaN")), ("INF_T", Decimal("-Infinity"))):
+        register_type(
+            ValueType(name, frozenset({LiteralKind.STRING}), lambda lit, b=bad: b),
+            replace=True,
+        )
+        reg = VerbRegistry()
+        reg.register(
+            VerbSpec(
+                "ODD", "odd", (OperandSpec("table", OperandKind.TABLE),), (AttrSpec("V", name),)
+            )
+        )
+        bag = DiagnosticBag()
+        claims = analyze(parse("ODD t V 'x'").document, reg, bag=bag)
+        assert claims == [] and bag.codes() == ["FL305"], name
+
+
 def test_fl313_once_per_claim_when_catalog_cannot_answer() -> None:
     _, bag = run(
         "JOIN orders.a -> customers.b WITH [x] TO [y] MATCH >=1% WHERE z = 1", NullCatalog()

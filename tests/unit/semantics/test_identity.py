@@ -128,7 +128,18 @@ def test_value_text_rejects_unsupported_types() -> None:
 
     from factlang.semantics.identity import value_text
 
-    for bad in ({1, 2}, {"a": 1}, None, object()):
+    for bad in (
+        {1, 2},
+        {"a": 1},
+        None,
+        object(),
+        Decimal("NaN"),
+        Decimal("sNaN"),
+        Decimal("Infinity"),
+        float("nan"),
+        float("-inf"),
+        (Decimal(1), Decimal("NaN")),
+    ):
         with pytest.raises(TypeError):
             value_text(bad)
     with pytest.raises(TypeError):

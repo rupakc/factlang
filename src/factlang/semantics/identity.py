@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 from collections.abc import Mapping
 from decimal import Decimal
 
@@ -59,6 +60,8 @@ def value_text(value: object) -> str:
     """
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, Decimal) and not value.is_finite():
+        raise TypeError(f"non-finite number {value} has no canonical text")
     if isinstance(value, (int, Decimal)):
         return format_number(Decimal(value))
     if isinstance(value, dt.datetime):
@@ -71,6 +74,8 @@ def value_text(value: object) -> str:
     if isinstance(value, (tuple, list)):
         return "[" + ",".join(value_text(v) for v in value) + "]"
     if isinstance(value, float):
+        if not math.isfinite(value):
+            raise TypeError(f"non-finite number {value} has no canonical text")
         return repr(value)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)

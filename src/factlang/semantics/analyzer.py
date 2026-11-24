@@ -384,7 +384,7 @@ class _ClaimCheck:
                 continue
             try:
                 value_text(value)
-            except TypeError:
+            except Exception:  # unsupported or non-finite: no canonical form
                 self.error(
                     "FL305",
                     f"{a.name}: value type {aspec.type} produced a "

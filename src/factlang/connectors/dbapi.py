@@ -9,12 +9,15 @@ from __future__ import annotations
 import contextlib
 import sys
 import threading
+import time
+import weakref
 from collections.abc import Callable
 from typing import Any
 
 from factlang.connectors.base import (
     ExecutionError,
     QueryResult,
+    _canceller,
     canonical_dialect,
     check_paramstyle,
     deadline,
@@ -74,6 +77,33 @@ def driver_threadsafety(connection: object) -> int | None:
     return level if isinstance(level, int) else None
 
 
+# Drivers whose ``cursor()`` returns an independent duplicate connection, so threads never
+# share a statement stream whatever ``threadsafety`` says (duckdb declares 1).
+_INDEPENDENT_CURSORS = frozenset({"duckdb", "_duckdb"})
+
+# One lock per underlying connection object, shared by every DBAPIConnector wrapping it.
+_LOCKS: weakref.WeakKeyDictionary[Any, threading.Lock] = weakref.WeakKeyDictionary()
+# Fallback for connections that cannot be weakly referenced: id -> (connection, lock); the
+# connection is kept alive so its id cannot be reused by another object.
+_LOCKS_BY_ID: dict[int, tuple[Any, threading.Lock]] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def connection_lock(connection: Any) -> threading.Lock:
+    """The lock serialising statements on ``connection`` (one per connection object)."""
+    with _LOCKS_GUARD:
+        try:
+            lock = _LOCKS.get(connection)
+            if lock is None:
+                lock = _LOCKS[connection] = threading.Lock()
+            return lock
+        except TypeError:  # not weak-referenceable (or unhashable)
+            entry = _LOCKS_BY_ID.get(id(connection))
+            if entry is None:
+                entry = _LOCKS_BY_ID[id(connection)] = (connection, threading.Lock())
+            return entry[1]
+
+
 class DBAPIConnector:
     """Executes probes on a PEP 249 connection.
 
@@ -82,11 +112,14 @@ class DBAPIConnector:
     through the cursor's ``interrupt()``/``cancel()`` (duckdb, pyodbc), else the connection's
     (sqlite3, psycopg), when the driver has one, and reported as ``FL702``.
 
-    ``Checker`` runs probes from several threads. Unless the driver declares PEP 249
-    ``threadsafety`` >= 2 (threads may share a connection: psycopg, trino),
-    statements on the connection are serialised by a lock: a level-1 driver (pymysql, pyodbc,
-    duckdb; clickhouse-connect, which overstates its level) would otherwise interleave two
-    statements on one connection.
+    ``Checker`` runs probes from several threads. Statements on one connection run
+    concurrently only when that is safe: duckdb (``cursor()`` is an independent duplicate
+    connection), or a driver declaring PEP 249 ``threadsafety`` >= 2 whose cursors have their
+    own cancel hook (trino). Otherwise they are serialised by one lock per connection object,
+    shared by every connector wrapping it: a level-1 driver (pymysql, pyodbc; clickhouse-connect,
+    which overstates its level) would interleave two statements, and with only a
+    connection-level cancel (psycopg) one probe's timeout would cancel another's statement.
+    Waiting for the lock counts against ``timeout_s``; running out while waiting is ``FL702``.
     """
 
     def __init__(self, connection: Any, dialect: str, paramstyle: str | None = None) -> None:
@@ -94,22 +127,39 @@ class DBAPIConnector:
         self.dialect = canonical_dialect(dialect)
         style = paramstyle if paramstyle is not None else driver_paramstyle(connection)
         self.paramstyle = check_paramstyle(style if style is not None else "qmark")
-        level = driver_threadsafety(connection)
-        self._lock: threading.Lock | None = (
-            None if level is not None and level >= 2 else threading.Lock()
-        )
+        if (type(connection).__module__ or "").split(".")[0] in _INDEPENDENT_CURSORS:
+            self._may_share = True
+        else:
+            level = driver_threadsafety(connection)
+            self._may_share = level is not None and level >= 2
+        # decided on the first cursor (does it carry its own cancel hook?); None = not yet
+        self._concurrent: bool | None = None if self._may_share else False
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
-        if self._lock is None:
-            return self._execute(probe, timeout_s)
-        with self._lock:
-            return self._execute(probe, timeout_s)
-
-    def _execute(self, probe: RenderedProbe, timeout_s: float | None) -> QueryResult:
-        sql, params = probe.bind(self.paramstyle)
-        bound: Any = params if isinstance(params, dict) else list(params)
-        cursor = self.connection.cursor()
+        if self._concurrent:
+            return self._execute(self.connection.cursor(), probe, timeout_s)
+        lock = connection_lock(self.connection)
+        started = time.monotonic()
+        if not lock.acquire(timeout=-1 if timeout_s is None else max(timeout_s, 0.0)):
+            raise ExecutionError(
+                f"query timed out after {timeout_s:g}s (waiting for the connection)",
+                code="FL702",
+            )
         try:
+            remaining = (
+                None if timeout_s is None else max(timeout_s - (time.monotonic() - started), 0.0)
+            )
+            cursor = self.connection.cursor()
+            if self._concurrent is None:
+                self._concurrent = _canceller((cursor,)) is not None
+            return self._execute(cursor, probe, remaining)
+        finally:
+            lock.release()
+
+    def _execute(self, cursor: Any, probe: RenderedProbe, timeout_s: float | None) -> QueryResult:
+        try:
+            sql, params = probe.bind(self.paramstyle)
+            bound: Any = params if isinstance(params, dict) else list(params)
             with deadline(timeout_s, (cursor, self.connection)) as fired:
                 try:
                     cursor.execute(sql, bound)
@@ -127,4 +177,4 @@ class DBAPIConnector:
         return QueryResult(normalise_rows(probe, rows))
 
 
-__all__ = ["DBAPIConnector", "driver_paramstyle", "driver_threadsafety"]
+__all__ = ["DBAPIConnector", "connection_lock", "driver_paramstyle", "driver_threadsafety"]

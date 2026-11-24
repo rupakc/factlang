@@ -646,3 +646,46 @@ def test_bridged_quoting_honours_quote_escapes(name: str) -> None:
             assert native.sql_template.count(spelled) == bridged.sql_template.count(spelled)
     frag = render_filter(FIsNull(weird), table=table, dialect=name, prefer="sqlglot")
     assert profile.quote_ident(weird.text) in frag.sql_template
+
+
+# -- ClickHouse parity with the native profile (Task 20 review) -------------------------------
+
+
+def _bridged_clickhouse(plan: Any) -> str:
+    return renderer_for("clickhouse", prefer="sqlglot")(plan).sql_template
+
+
+def test_bridged_clickhouse_ends_with_the_profiles_statement_suffix() -> None:
+    text = _bridged_clickhouse(ValueMembership(ORDERS, Ident("value"), ("1",)))
+    assert text.endswith(" SETTINGS prefer_column_name_to_alias = 1")
+    assert text.count("prefer_column_name_to_alias") == 1
+
+
+def test_bridged_clickhouse_aggregates_of_no_rows_are_null() -> None:
+    metrics = (Metric.MIN_VALUE, Metric.MAX_VALUE, Metric.SUM, Metric.AVG, Metric.ROW_COUNT)
+    text = _bridged_clickhouse(ColumnAggregate(ORDERS, V, metrics))
+    for fn in ("minOrNull(v)", "maxOrNull(v)", "sumOrNull(v)", "avgOrNull(v)"):
+        assert fn in text, text
+    assert "COUNT(*)" in text
+    fan = _bridged_clickhouse(ColumnAggregate(ORDERS, ID, (Metric.MAX_PER_KEY,)))
+    assert "maxOrNull(" in fan and "MAX(" not in fan.upper().replace("MAXORNULL(", "")
+
+
+def test_bridged_clickhouse_left_join_uses_nulls() -> None:
+    plan = KeyOverlap((c(ORDERS, "customer_id"),), (ColumnRef(CUSTOMERS, ID),))
+    text = _bridged_clickhouse(plan)
+    assert "LEFT JOIN" in text
+    assert text.count("SETTINGS join_use_nulls = 1)") == 1, text
+    other = renderer_for("duckdb", prefer="sqlglot")(plan).sql_template
+    assert "join_use_nulls" not in other and "OrNull" not in other
+
+
+def test_bridged_clickhouse_typed_nulls_are_bare() -> None:
+    text = _bridged_clickhouse(ValueMembership(ORDERS, Ident("status"), ("paid",)))
+    assert "CAST(NULL" not in text and "NULL AS non_null" in text
+    assert (
+        "CAST(NULL"
+        in renderer_for("duckdb", prefer="sqlglot")(
+            ValueMembership(ORDERS, Ident("status"), ("paid",))
+        ).sql_template
+    )

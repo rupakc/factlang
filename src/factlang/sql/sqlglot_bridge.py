@@ -285,6 +285,10 @@ class _Converter:
                 break
         return self.param(Param(name, value, "string"))
 
+    @property
+    def _clickhouse(self) -> bool:
+        return self.target is not None and self.target.sqlglot == "clickhouse"
+
     def _derived_alias(self) -> Any:
         self._derived += 1
         return self.exp.TableAlias(this=self.exp.Identifier(this=f"fl_d{self._derived}"))
@@ -326,6 +330,10 @@ class _Converter:
         if isinstance(x, A.Like):
             return e.Like(this=self.expr(x.e), expression=self.expr(x.pattern))
         if isinstance(x, A.Cast):
+            if self._clickhouse and isinstance(x.e, A.Literal) and x.e.value is None:
+                # as the native profile: Nullable(Nothing) unifies with UInt64 counts in a
+                # UNION ALL, Nullable(Int64) does not (NO_COMMON_TYPE)
+                return e.Null()
             return e.Cast(this=self.expr(x.e), to=self.cast_type(x.family))
         if isinstance(x, A.Coalesce):
             first, *rest = (self.expr(i) for i in x.items)
@@ -374,8 +382,11 @@ class _Converter:
         arg = self.expr(x.arg)
         if x.fn == "COUNT":
             return e.Count(this=e.Distinct(expressions=[arg]) if x.distinct else arg)
-        cls = {"SUM": e.Sum, "AVG": e.Avg, "MIN": e.Min, "MAX": e.Max}[x.fn]
         inner = e.Distinct(expressions=[arg]) if x.distinct else arg
+        if self._clickhouse:
+            # as the native profile: of no rows these give 0/nan over a non-Nullable input
+            return e.Anonymous(this=f"{x.fn.lower()}OrNull", expressions=[inner])
+        cls = {"SUM": e.Sum, "AVG": e.Avg, "MIN": e.Min, "MAX": e.Max}[x.fn]
         return cls(this=inner)
 
     def split_prefix(self, x: A.SplitPrefix) -> Any:
@@ -468,6 +479,15 @@ class _Converter:
             inner = (
                 self.union(x.select) if isinstance(x.select, A.UnionAll) else self.select(x.select)
             )
+            if (
+                self._clickhouse
+                and isinstance(x.select, A.Select)
+                and _has_left_join(x.select.from_)
+            ):
+                # as the native profile: a LEFT JOIN fills unmatched columns with type
+                # defaults (0, '') unless join_use_nulls, so orphans would read as matched
+                one = e.EQ(this=e.var("join_use_nulls"), expression=e.Literal.number(1))
+                inner.set("settings", [one])
             return e.Subquery(this=inner, alias=e.TableAlias(this=self.alias(x.alias)))
         if isinstance(x, A.CatalogColumns):
             inner = self.catalog_columns(x)
@@ -623,6 +643,12 @@ class _Converter:
                 sel.append("joins", j)
             return sel
         return self.expr(node)
+
+
+def _has_left_join(item: object) -> bool:
+    if isinstance(item, A.Join):
+        return item.kind == "LEFT" or _has_left_join(item.left) or _has_left_join(item.right)
+    return False
 
 
 # -- generation and assembly -------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 Parametrised over ``duckdb`` and the service-container engines of ``engines.py`` (postgres,
 mysql, clickhouse, tsql, trino). The shop fixture and the expectations are the DuckDB ones
-(``conftest.make_shop``, ``expectations.py``): a verified engine must reach the same verdicts
+(``shop.make_shop``, ``expectations.py``): a verified engine must reach the same verdicts
 and the same facts. An engine that is not reachable is skipped, unless
 ``FACTLANG_REQUIRE_ENGINES`` names it (CI), when the test fails instead.
 """
@@ -15,9 +15,9 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from conftest import BIG, make_shop
 from engines import ENGINE_NAMES, Style, open_engine
 from expectations import CASES, COMPOSITE_JOIN, COVERAGE_FAIL, ENGINE_CASES, Case
+from shop import BIG, make_shop
 
 from factlang.connectors import DBAPIConnector, QueryResult, run_metadata
 from factlang.engine import Checker
@@ -234,15 +234,53 @@ _METADATA_SQL = "SELECT table_name AS tname FROM information_schema.tables WHERE
 
 
 def test_run_metadata_reads_information_schema(shop: Shop) -> None:
-    # on T-SQL this runs wrapped in a derived table (spec 9.1); a bound value, never spliced
-    result = run_metadata(shop.connector, _METADATA_SQL, {"t": "orders"}, timeout_s=60)
+    # unwrapped host SQL with a bound value; on T-SQL the connector runs it wrapped as
+    # ``SELECT * FROM (<sql>) AS fl_meta_q`` (spec 9.1), which must work on the view
+    logged = Logged(shop.connector)
+    result = run_metadata(logged, _METADATA_SQL, {"t": "orders"}, timeout_s=60)
     names = {str(next(iter(r.values()))) for r in result.rows}
     assert names == {"orders"}, result.rows
+    (probe,) = logged.executed
+    assert "orders" not in probe.sql_template  # bound, never spliced
     if shop.name == "tsql":
-        # the wrapped shape itself (``SELECT * FROM (<sql>) AS fl_meta_q``) runs on the view
-        wrapped = f"SELECT * FROM ({_METADATA_SQL}) AS fl_meta_q"
-        again = run_metadata(shop.connector, wrapped, {"t": "orders"}, timeout_s=60)
-        assert [dict(r) for r in again.rows] == [dict(r) for r in result.rows]
+        assert probe.sql_template.startswith("SELECT * FROM (SELECT table_name")
+        assert probe.sql_template.endswith(") AS fl_meta_q"), probe.sql_template
+
+
+# -- the sqlglot bridge on ClickHouse (best_effort, parity with the native traps) -----------------
+
+BRIDGED_CLICKHOUSE = tuple(
+    c
+    for c in ALL_CASES
+    if c.claim
+    in {
+        "UNIQUE all_null_t.v",
+        "FANOUT empty_t.id MAX_PER_KEY <= 3",
+        "UNIQUE empty_nn.id",
+        "FANOUT empty_nn.id MAX_PER_KEY <= 3",
+        "SUM empty_nn.v VALUE == 0",
+        "MAX empty_nn.d VALUE == 0",
+        "AVG empty_nn.v VALUE == 0",
+        "JOIN orders.customer_id -> customers.id MATCH >= 80%",
+        "JOIN orders.customer_id -> customers.id MATCH >= 99%",
+        "VALUES tags.value IN [1, 2, 3]",
+        "VALUES tags.label IN ['a', 'b', 'c'] SPLIT ':'",
+        "VALUES tags.label IN ['a', 'b']",
+    }
+)
+
+
+assert len(BRIDGED_CLICKHOUSE) == 12  # every named claim exists in the shared table
+
+
+@pytest.mark.parametrize("case", BRIDGED_CLICKHOUSE, ids=[c.claim for c in BRIDGED_CLICKHOUSE])
+def test_bridged_clickhouse_matches_expectations(shop: Shop, case: Case) -> None:
+    if shop.name != "clickhouse":
+        pytest.skip("the bridged path is exercised on ClickHouse")
+    logged = Logged(shop.connector)
+    (outcome,) = Checker(logged, prefer="sqlglot").check(case.claim).outcomes
+    _assert_case(outcome, case, "clickhouse (sqlglot)")
+    assert outcome.evidence is not None and outcome.evidence.tier == "best_effort"
 
 
 # -- keyhash sampling (spec 19 B4) ----------------------------------------------------------------

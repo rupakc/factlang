@@ -2,7 +2,7 @@
 
 Each :class:`Engine` knows how to reach one engine (a DSN in ``FACTLANG_<NAME>_DSN``), how to
 spell the shop fixture's DDL and literals in its dialect (:class:`Style`) and how to give the
-fixture a clean place to live. ``make_shop`` (``conftest.py``) writes the same rows on every
+fixture a clean place to live. ``make_shop`` (``shop.py``) writes the same rows on every
 engine, so ``expectations.py`` holds for all of them: dialect type differences (T-SQL has no
 ``BOOLEAN`` and spells it ``BIT``, ``TIMESTAMP`` is a row version there and ``DATETIME2`` is
 used; ClickHouse needs ``Nullable(...)`` for a column that holds NULL) never change a verdict.
@@ -26,7 +26,7 @@ import datetime as dt
 import os
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -135,29 +135,9 @@ CLICKHOUSE_STYLE = Style(
 # -- connections ------------------------------------------------------------------------------
 
 
-@dataclass
-class Live:
-    """An engine connection with the shop fixture built in it."""
-
-    name: str
-    connection: Any
-    style: Style
-    now: dt.datetime | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
-
-    def scalar(self, sql: str) -> Any:
-        cur = self.connection.cursor()
-        try:
-            cur.execute(sql)
-            return cur.fetchall()[0][0]
-        finally:
-            close = getattr(cur, "close", None)
-            if close is not None:
-                close()
-
-
-def _url(dsn: str) -> Any:
-    return urlsplit(dsn)
+# Every engine gets a database (schema) of its own, created afresh: the DSN's database is only
+# where the connection lands and is never dropped.
+SHOP_DB = "fl_shop"
 
 
 def _connect_postgres(dsn: str) -> Any:
@@ -166,53 +146,47 @@ def _connect_postgres(dsn: str) -> Any:
     conn = psycopg.connect(dsn, autocommit=True)
     # a schema of its own on the search_path: unqualified refs then resolve through
     # current_schemas(false), never through a hard-coded "public"
-    conn.execute("DROP SCHEMA IF EXISTS fl_shop CASCADE")
-    conn.execute("CREATE SCHEMA fl_shop")
-    conn.execute("SET search_path TO fl_shop")
+    conn.execute(f"DROP SCHEMA IF EXISTS {SHOP_DB} CASCADE")
+    conn.execute(f"CREATE SCHEMA {SHOP_DB}")
+    conn.execute(f"SET search_path TO {SHOP_DB}")
     return conn
 
 
 def _connect_mysql(dsn: str) -> Any:
     import pymysql
 
-    u = _url(dsn)
-    db = (u.path or "/").lstrip("/") or "factlang"
+    u = urlsplit(dsn)
     conn = pymysql.connect(
         host=u.hostname or "localhost",
         port=u.port or 3306,
         user=unquote(u.username or "root"),
         password=unquote(u.password or ""),
+        database=(u.path or "/").lstrip("/") or None,
         autocommit=True,
     )
     with conn.cursor() as cur:
-        cur.execute(f"DROP DATABASE IF EXISTS {_bq(db)}")
-        cur.execute(f"CREATE DATABASE {_bq(db)}")
-        cur.execute(f"USE {_bq(db)}")
+        cur.execute(f"DROP DATABASE IF EXISTS {_bq(SHOP_DB)}")
+        cur.execute(f"CREATE DATABASE {_bq(SHOP_DB)}")
+        cur.execute(f"USE {_bq(SHOP_DB)}")
     return conn
 
 
 def _connect_clickhouse(dsn: str) -> Any:
     from clickhouse_connect import dbapi
 
-    u = _url(dsn)
-    db = (u.path or "/").lstrip("/") or "factlang"
-    boot = dbapi.connect(
-        host=u.hostname or "localhost",
-        port=u.port or 8123,
-        username=unquote(u.username or "default"),
-        password=unquote(u.password or ""),
-    )
+    u = urlsplit(dsn)
+    server = {
+        "host": u.hostname or "localhost",
+        "port": u.port or 8123,
+        "username": unquote(u.username or "default"),
+        "password": unquote(u.password or ""),
+    }
+    boot = dbapi.connect(**server, database=(u.path or "/").lstrip("/") or "default")
     cur = boot.cursor()
-    cur.execute(f"DROP DATABASE IF EXISTS {_dq(db)}")
-    cur.execute(f"CREATE DATABASE {_dq(db)}")
+    cur.execute(f"DROP DATABASE IF EXISTS {_dq(SHOP_DB)}")
+    cur.execute(f"CREATE DATABASE {_dq(SHOP_DB)}")
     boot.close()
-    return dbapi.connect(
-        host=u.hostname or "localhost",
-        port=u.port or 8123,
-        username=unquote(u.username or "default"),
-        password=unquote(u.password or ""),
-        database=db,
-    )
+    return dbapi.connect(**server, database=SHOP_DB)
 
 
 def _connect_tsql(dsn: str) -> Any:
@@ -220,9 +194,9 @@ def _connect_tsql(dsn: str) -> Any:
 
     conn = pyodbc.connect(dsn, autocommit=True)
     cur = conn.cursor()
-    cur.execute("IF DB_ID('fl_shop') IS NOT NULL DROP DATABASE fl_shop")
-    cur.execute("CREATE DATABASE fl_shop")
-    cur.execute("USE fl_shop")
+    cur.execute(f"IF DB_ID('{SHOP_DB}') IS NOT NULL DROP DATABASE {SHOP_DB}")
+    cur.execute(f"CREATE DATABASE {SHOP_DB}")
+    cur.execute(f"USE {SHOP_DB}")
     cur.close()
     return conn
 
@@ -230,7 +204,7 @@ def _connect_tsql(dsn: str) -> Any:
 def _connect_trino(dsn: str) -> Any:
     import trino
 
-    u = _url(dsn)
+    u = urlsplit(dsn)
     parts = [p for p in (u.path or "").split("/") if p]
     catalog = parts[0] if parts else "memory"
     schema = parts[1] if len(parts) > 1 else "default"
@@ -308,10 +282,10 @@ __all__ = [
     "MYSQL_STYLE",
     "POSTGRES_STYLE",
     "REQUIRE_ENV",
+    "SHOP_DB",
     "TRINO_STYLE",
     "TSQL_STYLE",
     "Engine",
-    "Live",
     "Style",
     "open_engine",
     "required_engines",

@@ -81,6 +81,7 @@ jobs:
   # The verb matrix on every `verified` engine (spec 8.5, 13, 14.2): service containers for
   # postgres, mysql, clickhouse, sql server and trino, plus duckdb in-process. Every engine is
   # required here, so one that cannot be reached fails the job instead of being skipped.
+  # Images are pinned (bump deliberately): SQL Server 2022 CU28, Trino 484.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -117,7 +118,7 @@ jobs:
           --health-cmd "clickhouse-client --user factlang --password factlang -q 'SELECT 1'"
           --health-interval 5s --health-timeout 5s --health-retries 30
       mssql:
-        image: mcr.microsoft.com/mssql/server:2022-latest
+        image: mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04
         env:
           ACCEPT_EULA: "Y"
           MSSQL_SA_PASSWORD: FactLang-Pass-2026
@@ -126,7 +127,7 @@ jobs:
           --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P FactLang-Pass-2026 -Q 'SELECT 1'"
           --health-interval 10s --health-timeout 10s --health-retries 30
       trino:
-        image: trinodb/trino:latest
+        image: trinodb/trino:484
         ports: ["8080:8080"]
         options: >-
           --health-cmd "trino --execute 'SELECT 1'" --health-interval 10s

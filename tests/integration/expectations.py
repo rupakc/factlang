@@ -287,7 +287,7 @@ def _exact(text: str) -> Approx:
 
 
 # Task 20: the engine traps reviews carried to the verified-engine matrix, on ``tags``
-# (``conftest.TAGS_ROWS``): a NULL among split / membership values (ClickHouse ``Nullable``
+# (``shop.TAGS_ROWS``): a NULL among split / membership values (ClickHouse ``Nullable``
 # split, NULL in the ValueMembership UNION), a user column named ``value`` (the membership
 # alias), an integer AVG that must not truncate (T-SQL ``AVG(x + 0.0)``), bare boolean filter
 # atoms over a BOOLEAN (BIT on T-SQL) column.

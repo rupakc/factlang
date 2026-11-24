@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from factlang.semantics.types import get_type
+
 _UPPER = re.compile(r"[A-Z][A-Z0-9_]*")
 
 
@@ -74,6 +76,13 @@ class VerbRegistry:
     def register(self, spec: VerbSpec) -> None:
         if spec.name in self._verbs:
             raise ValueError(f"verb {spec.name} is already registered")
+        for a in spec.attrs:
+            try:
+                get_type(a.type)
+            except KeyError:
+                raise ValueError(
+                    f"{spec.name}: attribute {a.name} names unregistered value type {a.type!r}"
+                ) from None
         self._verbs[spec.name] = spec
 
     def get(self, name: str) -> VerbSpec | None:

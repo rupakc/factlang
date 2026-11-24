@@ -54,7 +54,8 @@ def value_text(value: object) -> str:
 
     Numbers print without exponent or trailing zeros (``0.990`` and ``99%`` agree), strings
     are JSON-quoted (so ``'1'`` differs from ``1``), names are ``[text, quoted]``, temporals
-    ISO-8601 (timestamps in UTC) and sequences ``[item,item]``.
+    ISO-8601 (timestamps in UTC) and sequences ``[item,item]``. Any other type raises
+    ``TypeError``: a hash must never depend on an object's ``str``/``repr``.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -71,7 +72,9 @@ def value_text(value: object) -> str:
         return "[" + ",".join(value_text(v) for v in value) + "]"
     if isinstance(value, float):
         return repr(value)
-    return json.dumps(str(value), ensure_ascii=False)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    raise TypeError(f"value of type {type(value).__name__} has no canonical text")
 
 
 def _op(op: str | None) -> str | None:

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
 from typing import TypeVar
@@ -38,7 +37,7 @@ from factlang.semantics.filters import (
     FOr,
     Param,
 )
-from factlang.semantics.identity import semantic_hash
+from factlang.semantics.identity import semantic_hash, value_text
 from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 from factlang.semantics.signature import OperandKind, OperandSpec, VerbRegistry, VerbSpec
 from factlang.semantics.types import MAX_EXPONENT, Invalid, ValueType, get_type
@@ -97,11 +96,36 @@ def _directive(
     return current
 
 
-def _safe(fn: Callable[[TableRef], _T | None], ref: TableRef) -> _T | None:
+def _exists(catalog: Catalog, ref: TableRef) -> bool | None:
+    """``table_exists`` with anything but ``True``/``False`` (or an exception) as unknown."""
     try:
-        return fn(ref)
+        answer: object = catalog.table_exists(ref)
     except Exception:  # a failing catalog knows nothing
         return None
+    return answer if isinstance(answer, bool) else None
+
+
+def _columns(catalog: Catalog, ref: TableRef) -> dict[str, str] | None:
+    """``columns`` validated to ``dict[str, str]``; any other shape (or an exception) is unknown."""
+    try:
+        answer: object = catalog.columns(ref)
+    except Exception:
+        return None
+    if not isinstance(answer, dict):
+        return None
+    out: dict[str, str] = {}
+    for name, typ in answer.items():
+        if not isinstance(name, str) or not isinstance(typ, str):
+            return None
+        out[name] = typ
+    return out
+
+
+def _unquoted(ref: TableRef) -> TableRef:
+    def u(i: Ident | None) -> Ident | None:
+        return None if i is None else Ident(i.text)
+
+    return TableRef(u(ref.catalog), u(ref.schema), Ident(ref.table.text))
 
 
 # --- native type -> family (best effort; None = unknown, never a diagnostic) ----------
@@ -138,6 +162,13 @@ _FAMILY_RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 )
 
 
+# Families whose values can never be a boolean. Integer-like types (``tinyint(1)``, ``UInt8``,
+# ``NUMBER(1,0)``) often hold flags and, like unrecognised types, count as unknown.
+_NEVER_BOOLEAN = frozenset(
+    {"string", "date", "timestamp", "time", "json", "array", "struct", "bytes", "decimal", "float"}
+)
+
+
 def type_family(native: str) -> str | None:
     """Family of a catalog type name (spec 6.1 families), or ``None`` when unrecognised."""
     text = native.strip().lower()
@@ -153,11 +184,13 @@ def type_family(native: str) -> str | None:
 
 
 def _lookup(cols: dict[str, str], col: Ident) -> str | None:
-    """Type of ``col`` in ``cols``; quoted names match exactly, bare names in any case."""
+    """Type of ``col`` in ``cols``: exact name first, then any case variant.
+
+    The analyser knows no dialect, so quoted and bare names alike match case-insensitively;
+    a column is absent (FL311) only when no case variant exists.
+    """
     if col.text in cols:
         return cols[col.text]
-    if col.quoted:
-        return None
     lower = col.text.lower()
     for name, typ in cols.items():
         if name.lower() == lower:
@@ -347,8 +380,19 @@ class _ClaimCheck:
                 )
                 continue
             value = self.coerce(vt, a)
-            if value is not None:
-                out[a.name] = CheckedAttr(op, value, aspec.type)
+            if value is None:
+                continue
+            try:
+                value_text(value)
+            except TypeError:
+                self.error(
+                    "FL305",
+                    f"{a.name}: value type {aspec.type} produced a "
+                    f"{type(value).__name__}, which has no canonical form",
+                    a.value.span,
+                )
+                continue
+            out[a.name] = CheckedAttr(op, value, aspec.type)
         return out
 
     def coerce(self, vt: ValueType, a: ast.Attribute) -> object | None:
@@ -414,21 +458,23 @@ class _ClaimCheck:
             if attr.type != "COLUMN_LIST" or not isinstance(attr.value, tuple):
                 continue
             key = self.key_column(name, operands)
-            seen: set[Ident] = set()
+            key_text = key.text.lower() if key is not None else None
+            seen: set[str] = set()
             for col in attr.value:
                 if not isinstance(col, Ident):
                     continue
-                if col in seen:
+                text = col.text.lower()  # no dialect known: case variants are the same column
+                if text in seen:
                     self.error(
                         "FL307", f"{name} lists column {col.text} twice", written[name].value.span
                     )
-                elif key is not None and col == key:
+                elif text == key_text:
                     self.error(
                         "FL307",
                         f"{name} repeats the key column {col.text}; list only further key columns",
                         written[name].value.span,
                     )
-                seen.add(col)
+                seen.add(text)
 
     @staticmethod
     def key_column(attr: str, operands: tuple[Operand, ...]) -> Ident | None:
@@ -502,8 +548,7 @@ class _ClaimCheck:
             return Param(name, lit.value, "boolean")
         if lit.kind in (LK.DATE, LK.TIMESTAMP):
             coerce = get_type("TEMPORAL").coerce
-            assert coerce is not None
-            value = coerce(lit)
+            value = coerce(lit) if coerce is not None else Invalid("no temporal coercion")
             if isinstance(value, Invalid):
                 self.error("FL309", value.message, lit.span)
                 return None
@@ -515,7 +560,8 @@ class _ClaimCheck:
 
     def catalog_checks(self, operands: tuple[Operand, ...], attrs: dict[str, CheckedAttr]) -> None:
         catalog = self.catalog
-        assert catalog is not None
+        if catalog is None:
+            return
         c = self.claim
         # table -> [(column, span)], in claim order; the first table is the filter's table
         wanted: dict[TableRef, list[tuple[Ident, Span]]] = {}
@@ -528,8 +574,7 @@ class _ClaimCheck:
             elif isinstance(o, ColumnRef):
                 wanted.setdefault(o.table, []).append((o.column, node.span))
                 table_span.setdefault(o.table, node.span)
-            else:
-                assert isinstance(node, ast.Edge)
+            elif isinstance(node, ast.Edge):
                 edge = o
                 for side, ref in ((o.left, node.left), (o.right, node.right)):
                     wanted.setdefault(side.table, []).append((side.column, ref.span))
@@ -548,29 +593,33 @@ class _ClaimCheck:
         unknown = False
         types: dict[tuple[TableRef, Ident], str] = {}
         for table, cols in wanted.items():
-            exists = _safe(catalog.table_exists, table)
+            probe = table
+            exists = _exists(catalog, probe)
+            if exists is False and any(p.quoted for p in table.parts()):
+                probe = _unquoted(table)  # a case variant of a quoted name also counts
+                exists = _exists(catalog, probe)
             if exists is False:
                 self.error("FL311", f"no such table {_show(table)}", table_span[table])
                 continue
-            known = _safe(catalog.columns, table)
+            known = _columns(catalog, probe)
             if exists is None or known is None:
                 unknown = True
             if known is None:
                 continue
-            reported: set[Ident] = set()
+            reported: set[str] = set()
             for col, span in cols:
                 typ = _lookup(known, col)
                 if typ is not None:
                     types[(table, col)] = typ
-                elif col not in reported:
-                    reported.add(col)
+                elif col.text.lower() not in reported:
+                    reported.add(col.text.lower())
                     self.error("FL311", f"no such column {col.text} in {_show(table)}", span)
 
         if main is not None:
             for col, span in self.bool_cols:
                 typ = types.get((main, col))
                 fam = type_family(typ) if typ is not None else None
-                if fam is not None and fam != "boolean":
+                if fam in _NEVER_BOOLEAN:
                     self.error(
                         "FL305",
                         f"{col.text} is a {fam} column ({typ}), not boolean; "

@@ -118,6 +118,23 @@ def test_hash_ignores_comment_whitespace_attr_order_numeric_spelling() -> None:
     assert h("ROWS orders VALUE ==1 WHERE x = 1.0") == h("ROWS orders VALUE ==1 WHERE x == 1")
 
 
+def test_no_case_folding_in_filter_identity() -> None:
+    assert h("ROWS orders VALUE >=1 WHERE Deleted") != h("ROWS orders VALUE >=1 WHERE deleted")
+    assert h("ROWS orders VALUE >=1 WHERE deleted") == h("ROWS orders VALUE >=1 WHERE deleted")
+
+
+def test_value_text_rejects_unsupported_types() -> None:
+    import pytest
+
+    from factlang.semantics.identity import value_text
+
+    for bad in ({1, 2}, {"a": 1}, None, object()):
+        with pytest.raises(TypeError):
+            value_text(bad)
+    with pytest.raises(TypeError):
+        semantic_hash("X", (), {"A": CheckedAttr(None, frozenset({1}), "T")}, None)
+
+
 def test_hash_ignores_filter_order_and_param_names() -> None:
     assert h("ROWS orders VALUE >=1 WHERE a = 1 AND b = 'x'") == h(
         "ROWS orders VALUE >=1 WHERE b = 'x' AND a = 1"

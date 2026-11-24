@@ -120,7 +120,7 @@ def _param(p: Param) -> str:
 def _col(c: Ident) -> str:
     if c.quoted:
         return '"' + c.text.replace('"', '""') + '"'
-    return c.text.lower()
+    return c.text
 
 
 def _flatten(expr: FAnd | FOr) -> list[FilterExpr]:

@@ -45,8 +45,9 @@ def test_negative_control_different_value_differs() -> None:
     assert canonical(eq("a", 1)) != canonical(eq("a", 1, "decimal"))
 
 
-def test_independent_of_param_name_and_column_case() -> None:
-    assert canonical(eq("A", 1, name="p1")) == canonical(eq("a", 1, name="zz"))
+def test_independent_of_param_name_not_column_case() -> None:
+    assert canonical(eq("a", 1, name="p1")) == canonical(eq("a", 1, name="zz"))
+    assert canonical(eq("A", 1)) != canonical(eq("a", 1))  # no case folding in identity
     assert canonical(FCompare(Ident("A", True), "=", P(1, "integer"))) != canonical(eq("a", 1))
 
 

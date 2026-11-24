@@ -85,3 +85,11 @@ def test_requires_must_name_declared_attrs() -> None:
 def test_duplicate_operand_names() -> None:
     with pytest.raises(ValueError, match="operand"):
         VerbSpec("JOIN", "s", (T, OperandSpec("t", OperandKind.COLUMN)))
+
+
+def test_register_rejects_unregistered_value_type() -> None:
+    r = VerbRegistry()
+    with pytest.raises(ValueError, match="NO_SUCH_TYPE"):
+        r.register(spec("BAD", attrs=(AttrSpec("A", "NO_SUCH_TYPE"),)))
+    assert r.get("BAD") is None
+    r.register(spec("GOOD", attrs=(AttrSpec("A", "NUMBER"),)))  # control

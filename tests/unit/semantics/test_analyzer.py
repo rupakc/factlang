@@ -316,6 +316,8 @@ def test_fl306_operator_rules() -> None:
 def test_fl307_column_list_repeats_key_column() -> None:
     assert codes("UNIQUE orders.id WITH [shop_id, id]") == ["FL307"]
     assert codes("UNIQUE orders.id WITH [shop_id, shop_id]") == ["FL307"]
+    assert codes('UNIQUE orders.id WITH [shop_id, "ID"]') == ["FL307"]  # case-insensitive
+    assert codes('UNIQUE orders.id WITH [shop_id, "Shop_Id"]') == ["FL307"]
     assert codes("JOIN o.a -> c.b WITH [a] TO [x] MATCH >=1%") == ["FL307"]
     assert codes("JOIN o.a -> c.b WITH [x] TO [b] MATCH >=1%") == ["FL307"]
     assert codes("JOIN o.a -> c.b WITH [b] TO [a] MATCH >=1%") == []
@@ -418,8 +420,79 @@ def test_fl311_definite_absence() -> None:
         "USE shop.public\nJOIN orders.id -> customers.id WITH [shop_id] TO [nope] MATCH >=1%",
         SHOP,
     ) == ["FL311"]
-    assert codes("USE shop.public\nNULLS orders.ID RATE <=1%", SHOP) == []  # unquoted: any case
-    assert codes('USE shop.public\nNULLS orders."ID" RATE <=1%', SHOP) == ["FL311"]
+    # the analyser knows no dialect: any case variant counts, quoted or not
+    assert codes("USE shop.public\nNULLS orders.ID RATE <=1%", SHOP) == []
+    assert codes('USE shop.public\nNULLS orders."ID" RATE <=1%', SHOP) == []
+    assert codes('USE shop.public\nNULLS orders."IDX" RATE <=1%', SHOP) == ["FL311"]
+
+
+def test_fl305_bare_boolean_only_on_types_that_cannot_be_boolean() -> None:
+    cat = StaticCatalog(
+        {
+            "t": {
+                "tiny": "tinyint(1)",
+                "u8": "UInt8",
+                "n1": "NUMBER(1,0)",
+                "odd": "geography",
+                "f": "double",
+                "d": "date",
+                "s": "Nullable(String)",
+            }
+        }
+    )
+    for col in ("tiny", "u8", "n1", "odd"):
+        assert codes(f"ROWS t VALUE >=1 WHERE {col}", cat) == [], col
+    for col in ("f", "d", "s"):
+        assert codes(f"ROWS t VALUE >=1 WHERE {col}", cat) == ["FL305"], col
+
+
+def test_fl312_only_when_both_families_known() -> None:
+    cat = StaticCatalog({"a": {"x": "geography", "i": "int"}, "b": {"y": "varchar"}})
+    assert codes("JOIN a.x -> b.y MATCH >=1%", cat) == []
+    assert codes("JOIN a.i -> b.y MATCH >=1%", cat) == ["FL312"]
+
+
+def test_misbehaving_catalog_answers_count_as_unknown() -> None:
+    class Weird:
+        def __init__(self, exists: object, cols: object) -> None:
+            self.e, self.c = exists, cols
+
+        def table_exists(self, ref: TableRef) -> bool | None:
+            return self.e  # type: ignore[return-value]
+
+        def columns(self, ref: TableRef) -> dict[str, str] | None:
+            return self.c  # type: ignore[return-value]
+
+    for exists, cols in [
+        ("yes", ["id"]),
+        (1, {1: "int"}),
+        (True, {"id": 5}),
+        (True, "id"),
+        (None, {"id": None}),
+    ]:
+        assert codes("NULLS t.id RATE <=1% WHERE deleted", Weird(exists, cols)) == ["FL313"]
+
+
+def test_unhashable_attribute_value_is_fl305() -> None:
+    from factlang.semantics.types import ValueType, register_type
+    from factlang.syntax.ast import LiteralKind
+
+    register_type(
+        ValueType("WEIRD_SET", frozenset({LiteralKind.STRING}), lambda lit: {lit.value}),
+        replace=True,
+    )
+    reg = VerbRegistry()
+    reg.register(
+        VerbSpec(
+            "ODD",
+            "odd",
+            (OperandSpec("table", OperandKind.TABLE),),
+            (AttrSpec("V", "WEIRD_SET"),),
+        )
+    )
+    bag = DiagnosticBag()
+    claims = analyze(parse("ODD t V 'x'").document, reg, bag=bag)
+    assert claims == [] and bag.codes() == ["FL305"]
 
 
 def test_fl313_once_per_claim_when_catalog_cannot_answer() -> None:
@@ -485,7 +558,11 @@ _claims = st.builds(
     st.lists(_attrs, max_size=4, unique=True),
     _filters,
 )
-_lines = st.one_of(_claims, st.sampled_from(["USE shop.public", "USE x", "USE a.b.c"]))
+_lines = st.one_of(
+    _claims,
+    st.sampled_from(["USE shop.public", "USE x", "USE a.b.c"]),
+    st.text(max_size=40),
+)
 
 
 class _Flaky:

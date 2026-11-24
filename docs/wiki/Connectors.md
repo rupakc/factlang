@@ -40,7 +40,7 @@ Connectors that can price a query without running it (BigQuery) enable the `max_
 
 `fl.run_metadata(connector, sql, params=(), timeout_s=None)` runs host-written catalog queries (system views, `INFORMATION_SCHEMA`, `SHOW`, `DESCRIBE`) through any connector, with the same timeout, binding and error mapping. It is not a claim and gives no `Outcome`.
 
-A guard (FL703, raised before anything executes) allows a single statement beginning with `SELECT WITH SHOW DESCRIBE DESC EXPLAIN` and refuses `;`, comments, quoting tricks, `EXPLAIN ANALYZE`, and any write, DDL or control keyword. It is deliberately over-strict and not a sandbox; the connection's own credentials are the real security boundary. On `tsql` only `SELECT` is accepted and it is wrapped in a subquery. Pass values as bound parameters.
+A guard (FL703, raised before anything executes) allows a single statement beginning with `SELECT WITH SHOW DESCRIBE DESC EXPLAIN` and refuses `;`, comments, quoting tricks, `EXPLAIN ANALYZE`, and any write, DDL or control keyword (the read-only row limits `FETCH FIRST|NEXT <n> ROWS ONLY` and `OFFSET <n> ROWS` are allowed, `<n>` a number or one `{{param}}`; any other `FETCH` is refused). It is deliberately over-strict and not a sandbox; the connection's own credentials are the real security boundary. On `tsql` only `SELECT` is accepted and it is wrapped in a subquery. Pass values as bound parameters.
 
 ## Installing drivers
 

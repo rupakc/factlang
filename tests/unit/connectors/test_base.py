@@ -608,3 +608,61 @@ def test_unknown_dialect_runs_wrapped() -> None:
         CallableConnector(fn, "teradata"), "SELECT a FROM dbc.tables WHERE b = {{p}}", {"p": 1}
     )  # type: ignore[arg-type]
     assert seen == ["SELECT * FROM (SELECT a FROM dbc.tables WHERE b = ?) AS fl_meta_q"]
+
+
+# -- FETCH FIRST / OFFSET row limiting -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT owner, table_name FROM all_tables ORDER BY table_name FETCH FIRST {{n}} ROWS ONLY",
+        "SELECT table_name FROM all_tables ORDER BY table_name FETCH NEXT 5 ROW ONLY",
+        "SELECT table_name FROM all_tables ORDER BY 1 OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY",
+        "SELECT table_name FROM all_tables ORDER BY 1 offset {{o}} row fetch first 1 rows only",
+        "SELECT table_name FROM t ORDER BY 1\nFETCH\tFIRST  5\nROWS ONLY",
+    ],
+)
+def test_row_limiting_phrases_are_admitted(sql: str) -> None:
+    check_metadata_sql(sql)
+    check_metadata_sql(sql, "oracle")
+
+
+def test_oracle_row_limit_through_run_metadata() -> None:
+    rec = Recorder()
+    sql = "SELECT owner, table_name FROM all_tables ORDER BY table_name FETCH FIRST {{n}} ROWS ONLY"
+    run_metadata(rec, sql, {"n": 10})
+    assert rec.calls[0][0].params[0].value == 10
+
+
+def test_row_limit_inside_the_tsql_wrapper() -> None:
+    rec = TsqlRecorder()
+    sql = (
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1"
+        " OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY"
+    )
+    run_metadata(rec, sql)
+    assert rec.calls[0][0].sql_template == f"SELECT * FROM ({sql}) AS fl_meta_q"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT a FROM t FETCH NEXT FROM c",
+        "SELECT a FROM t FETCH FIRST 5 ROWS ONLY; DROP TABLE t",
+        "SELECT a FROM t FETCH FIRST 5 ROWS ONLY DELETE",
+        "SELECT a FROM t FETCH FIRST 5 ROWS",
+        "SELECT a FROM t FETCH FIRST n ROWS ONLY",
+        "SELECT a FROM t FETCH FIRST {{a}}{{b}} ROWS ONLY",
+        "SELECT a FROM t FETCH FIRST 5 PERCENT ROWS ONLY",
+        "SELECT a FROM t FETCH FIRST 5 ROWS WITH TIES",
+        "SELECT a FROM t FETCH ABSOLUTE 5 FROM c",
+        "SELECT a FROM t FETCH" + chr(0x00A0) + "FIRST 5 ROWS ONLY",
+        "SELECT a FROM t FETCH FIRST " + chr(0x0665) + " ROWS ONLY",
+        "FETCH FIRST 5 ROWS ONLY",
+    ],
+)
+def test_other_fetch_uses_are_refused(sql: str) -> None:
+    with pytest.raises(ExecutionError) as info:
+        check_metadata_sql(sql)
+    assert info.value.code == "FL703"

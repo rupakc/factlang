@@ -241,6 +241,16 @@ FORBIDDEN_WORDS: frozenset[str] = frozenset(
     )
 )
 _TOKEN = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}")
+# The read-only SQL:2008 row-limiting phrases (Oracle 12c+, Db2, …), admitted verbatim before
+# the forbidden-word scan: ``FETCH FIRST|NEXT <n> ROW|ROWS ONLY`` and ``OFFSET <n> ROW|ROWS``,
+# ``<n>`` an ASCII number or one ``{{token}}``, words separated by ASCII whitespace. Any other
+# FETCH (a T-SQL cursor ``FETCH NEXT FROM c``) is still refused.
+_COUNT = r"(?:[0-9]+|\{\{[A-Za-z_][A-Za-z0-9_]*\}\})"
+_ROW_LIMIT = re.compile(
+    rf"(?<![A-Za-z0-9_])(?:FETCH[ \t\r\n]+(?:FIRST|NEXT)[ \t\r\n]+{_COUNT}[ \t\r\n]+ROWS?"
+    rf"[ \t\r\n]+ONLY|OFFSET[ \t\r\n]+{_COUNT}[ \t\r\n]+ROWS?)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ORACLE_QUOTE = re.compile(r"(?<![A-Za-z0-9_])n?q'", re.IGNORECASE)
 
@@ -316,7 +326,10 @@ def check_metadata_sql(sql: str, dialect: str | None = None) -> None:
       ``$`` ``\\``) anywhere;
     - an Oracle alternative-quote prefix (``q'``, ``nq'``, any case) starting a token;
     - any of :data:`FORBIDDEN_WORDS` (write, DDL, control and T-SQL statement keywords) as
-      a whole word anywhere, case-insensitive;
+      a whole word anywhere, case-insensitive. The read-only row-limiting phrases
+      ``FETCH FIRST|NEXT <n> ROW|ROWS ONLY`` and ``OFFSET <n> ROW|ROWS`` (``<n>`` a number or
+      one ``{{name}}`` token, ASCII whitespace between the words) are removed before this
+      scan, so Oracle 12c+/Db2 can limit rows; any other ``FETCH`` is refused;
     - on ``tsql`` (statements need no separator): any of ``'`` ``"`` ``[`` ``]``,
       parentheses that do not balance (or close below depth 0), and a second ``SELECT`` at
       parenthesis depth 0 (put a ``UNION`` inside a derived table).
@@ -338,7 +351,7 @@ def check_metadata_sql(sql: str, dialect: str | None = None) -> None:
     first = _WORD.match(sql.lstrip(" \t\r\n"))
     if first is None or first.group(0).upper() not in allowed:
         raise _refuse(f"the statement must start with one of {', '.join(allowed)}")
-    text = _TOKEN.sub(" ", sql)
+    text = _TOKEN.sub(" ", _ROW_LIMIT.sub(" ", sql))
     if not text.isascii():
         raise _refuse("non-ASCII characters are not allowed (bind such values as params)")
     for seq in FORBIDDEN_SEQUENCES:

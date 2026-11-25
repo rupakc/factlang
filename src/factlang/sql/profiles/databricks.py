@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from factlang.sql import ast as A
 from factlang.sql.profile import DialectProfile
-from factlang.sql.profiles._shared import derived_union_subquery
+from factlang.sql.profiles._shared import _UTC_TIMESTAMP_LITERAL, derived_union_subquery
 
 # Spark SQL keywords reserved under ANSI mode (quoting a non-reserved word is harmless:
 # Databricks identifiers are case-insensitive, quoted or not).
@@ -91,8 +91,10 @@ DATABRICKS = DialectProfile(
     default_catalog_sql="current_catalog()",
     # a string literal escapes ' with a backslash only; '' is two adjacent literals
     doubled_quote_escape=False,
-    # a naive TIMESTAMP literal holding UTC wall-clock time, as on Oracle
-    timestamp_literal="TIMESTAMP '{date} {time}'",
+    # a zone-less TIMESTAMP literal is read in spark.sql.session.timeZone (Spark >= 3.0
+    # semantics), so it would name another instant under a non-UTC session: explicit UTC,
+    # as on Trino
+    timestamp_literal=_UTC_TIMESTAMP_LITERAL,
 )
 
 __all__ = ["DATABRICKS"]

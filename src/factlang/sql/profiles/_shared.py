@@ -14,6 +14,12 @@ from factlang.sql.printer import Printer
 
 Override = Callable[..., str]
 
+# The inline spelling for an engine whose TIMESTAMP is zone-aware or reads a zone-less literal
+# in a session time zone: the explicit UTC zone makes the literal the UTC instant whatever the
+# session zone (space separator, no 'T'). Internal; shared by the Trino and Databricks
+# profiles and the bridged Presto/Athena/Spark entries.
+_UTC_TIMESTAMP_LITERAL = "TIMESTAMP '{date} {time} UTC'"
+
 
 def derived_union_subquery(printer: Printer, x: A.SubqueryFrom) -> str:
     """A ``SubqueryFrom``; a UNION ALL branch with ORDER BY/LIMIT becomes a derived table.

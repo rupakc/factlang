@@ -9,6 +9,7 @@ keyhash is supported.
 from __future__ import annotations
 
 from factlang.sql.profile import DialectProfile
+from factlang.sql.profiles._shared import _UTC_TIMESTAMP_LITERAL
 
 # Trino reserved keywords (SQL language reference, "Reserved keywords").
 _RESERVED_WORDS = """
@@ -88,7 +89,7 @@ TRINO = DialectProfile(
     default_catalog_sql="current_catalog",
     # inlined literals: timestamps are timestamp(6) with time zone; the explicit UTC zone
     # makes the literal the UTC instant whatever the session zone (no 'T' separator)
-    timestamp_literal="TIMESTAMP '{date} {time} UTC'",
+    timestamp_literal=_UTC_TIMESTAMP_LITERAL,
 )
 
 __all__ = ["TRINO"]

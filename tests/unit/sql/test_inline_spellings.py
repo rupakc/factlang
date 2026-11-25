@@ -27,6 +27,10 @@ WHOLE = dt.datetime(2025, 1, 31, 12)  # naive = UTC, no microseconds
 
 UTC_FORM = ("TIMESTAMP '2019-12-31 19:00:00.000250 UTC'", "TIMESTAMP '2025-01-31 12:00:00 UTC'")
 NAIVE_FORM = ("TIMESTAMP '2019-12-31 19:00:00.000250'", "TIMESTAMP '2025-01-31 12:00:00'")
+CAST_Z_FORM = (
+    "CAST('2019-12-31 19:00:00.000250Z' AS TIMESTAMP)",
+    "CAST('2025-01-31 12:00:00Z' AS TIMESTAMP)",
+)
 ANSI_FORM = (
     "TIMESTAMP '2019-12-31T19:00:00.000250+00:00'",
     "TIMESTAMP '2025-01-31T12:00:00+00:00'",
@@ -36,10 +40,13 @@ TIMESTAMP_SPELLINGS = {
     "presto": UTC_FORM,
     "athena": UTC_FORM,
     "dune": UTC_FORM,  # a sqlglot Trino subclass: the ancestor walk, no table entry
-    "databricks": NAIVE_FORM,
+    # 0.1.4: a zone-less literal is read in the session time zone (Spark >= 3.0, Databricks)
+    # or the JVM default zone (Spark 2.x), so the zone is explicit
+    "databricks": UTC_FORM,
+    "spark": UTC_FORM,
+    "spark2": CAST_Z_FORM,  # Spark 2.x's TIMESTAMP '...' literal rejects a zone suffix
+    # zone-less (local date-time) TIMESTAMP types: a naive UTC wall-clock is the right value
     "hive": NAIVE_FORM,
-    "spark": NAIVE_FORM,
-    "spark2": NAIVE_FORM,
     "teradata": NAIVE_FORM,
     "exasol": NAIVE_FORM,
 }
@@ -53,6 +60,12 @@ def probe(value: object, family: str, dialect: str = "duckdb") -> RenderedProbe:
 
 def inline(value: object, family: str, dialect: str = "duckdb") -> str:
     return probe(value, family, dialect).inline(string_quoter(dialect))
+
+
+def quoted_text(timestamp_literal: str) -> str:
+    """The string inside a ``TIMESTAMP '...'`` or ``CAST('...' AS TIMESTAMP)`` literal."""
+    start = timestamp_literal.index("'") + 1
+    return timestamp_literal[start : timestamp_literal.index("'", start)]
 
 
 def literal(sql: str) -> str:
@@ -82,18 +95,128 @@ def test_every_new_timestamp_spelling_round_trips_through_sqlglot(dialect: str) 
 
     for value in (AWARE, WHOLE):
         sql = inline(value, "timestamp", dialect)
-        text = literal(sql)[len("TIMESTAMP '") : -1]
+        text = quoted_text(literal(sql))
         tree = sqlglot.parse_one(sql, read=dialect)
         node = tree.expressions[0].this
         assert isinstance(node, exp.Cast), (dialect, sql, repr(node))
         assert node.this.is_string and node.this.this == text
         assert node.to.is_type(*exp.DataType.TEMPORAL_TYPES), node.to
         tz_typed = node.to.this in (exp.DataType.Type.TIMESTAMPTZ,)
-        if text.endswith(" UTC"):
+        if text.endswith((" UTC", "Z")):
             assert tz_typed, (dialect, node.to.sql(dialect))
         again = sqlglot.parse_one(tree.sql(dialect=dialect), read=dialect).expressions[0].this
         assert isinstance(again, exp.Cast) and again.this.this == text
         assert again.to.this is node.to.this
+
+
+SESSION_LOCAL = ("databricks", "spark")  # 0.1.4: Spark >= 3.0 semantics, explicit UTC
+ZONE_LESS = ("hive", "teradata", "exasol")  # naive UTC wall-clock, unchanged
+# 0.1.4 exact spellings: (value, databricks/spark text, spark2 text)
+EDGE_TIMESTAMPS = [
+    (
+        dt.datetime(2025, 1, 31, 12),
+        "TIMESTAMP '2025-01-31 12:00:00 UTC'",
+        "CAST('2025-01-31 12:00:00Z' AS TIMESTAMP)",
+    ),
+    (
+        dt.datetime(2025, 1, 31, 12, 0, 0, 1),
+        "TIMESTAMP '2025-01-31 12:00:00.000001 UTC'",
+        "CAST('2025-01-31 12:00:00.000001Z' AS TIMESTAMP)",
+    ),
+    (
+        dt.datetime(1, 1, 1),
+        "TIMESTAMP '0001-01-01 00:00:00 UTC'",
+        "CAST('0001-01-01 00:00:00Z' AS TIMESTAMP)",
+    ),
+    (
+        dt.datetime(9999, 12, 31, 23, 59, 59, 999999),
+        "TIMESTAMP '9999-12-31 23:59:59.999999 UTC'",
+        "CAST('9999-12-31 23:59:59.999999Z' AS TIMESTAMP)",
+    ),
+    (  # +05:00 converted to UTC
+        AWARE,
+        "TIMESTAMP '2019-12-31 19:00:00.000250 UTC'",
+        "CAST('2019-12-31 19:00:00.000250Z' AS TIMESTAMP)",
+    ),
+    (  # -07:00 converted to UTC
+        dt.datetime(2025, 6, 1, 1, 30, tzinfo=dt.timezone(dt.timedelta(hours=-7))),
+        "TIMESTAMP '2025-06-01 08:30:00 UTC'",
+        "CAST('2025-06-01 08:30:00Z' AS TIMESTAMP)",
+    ),
+]
+
+
+@pytest.mark.parametrize("dialect", SESSION_LOCAL)
+@pytest.mark.parametrize(("value", "text", "_spark2"), EDGE_TIMESTAMPS, ids=str)
+def test_session_local_dialects_inline_an_explicit_utc_zone(
+    dialect: str, value: dt.datetime, text: str, _spark2: str
+) -> None:
+    if dialect != "databricks":
+        pytest.importorskip("sqlglot")
+    assert literal(inline(value, "timestamp", dialect)) == text
+
+
+@pytest.mark.parametrize(("value", "_spark3", "text"), EDGE_TIMESTAMPS, ids=str)
+def test_spark2_inlines_a_cast_of_a_z_suffixed_string(
+    value: dt.datetime, _spark3: str, text: str
+) -> None:
+    pytest.importorskip("sqlglot")
+    assert literal(inline(value, "timestamp", "spark2")) == text
+
+
+@pytest.mark.parametrize("dialect", SESSION_LOCAL)
+def test_session_local_spelling_is_the_trino_spelling(dialect: str) -> None:
+    pytest.importorskip("sqlglot")
+    from factlang.sql.registry import literal_style_for
+
+    trino = literal_style_for("trino").timestamp_literal
+    assert trino == "TIMESTAMP '{date} {time} UTC'"
+    assert literal_style_for(dialect).timestamp_literal == trino
+
+
+@pytest.mark.parametrize(
+    ("dialect", "zone"), [("databricks", " UTC"), ("spark", " UTC"), ("spark2", "Z")]
+)
+def test_sqlglot_keeps_the_utc_zone_in_the_literal_text(dialect: str, zone: str) -> None:
+    sqlglot = pytest.importorskip("sqlglot")
+    from sqlglot import exp
+
+    for value in (AWARE, WHOLE, dt.datetime(1, 1, 1), dt.datetime(9999, 12, 31, 23, 59, 59)):
+        sql = inline(value, "timestamp", dialect)
+        text = quoted_text(literal(sql))
+        assert text.endswith(zone) and not text.endswith(" Z"), sql
+        node = sqlglot.parse_one(sql, read=dialect).expressions[0].this
+        assert isinstance(node, exp.Cast) and node.this.this == text, (dialect, sql)
+        assert node.to.is_type(*exp.DataType.TEMPORAL_TYPES), node.to
+        regenerated = sqlglot.parse_one(sql, read=dialect).sql(dialect=dialect)
+        again = sqlglot.parse_one(regenerated, read=dialect).expressions[0].this
+        assert isinstance(again, exp.Cast) and again.this.this == text, regenerated
+
+
+def test_only_the_three_spark_family_spellings_change_from_0_1_3() -> None:
+    pytest.importorskip("sqlglot")
+    from factlang.sql.registry import literal_style_for
+
+    assert literal_style_for("spark2").timestamp_literal == "CAST('{date} {time}Z' AS TIMESTAMP)"
+    for dialect in (*ZONE_LESS, "oracle"):
+        assert literal_style_for(dialect).timestamp_literal == "TIMESTAMP '{date} {time}'"
+    # the shared spelling is internal: no new public name on the trino profile module
+    import factlang.sql.profiles.trino as trino_module
+
+    assert "UTC_TIMESTAMP_LITERAL" not in vars(trino_module)
+    assert all("TIMESTAMP" not in name for name in trino_module.__all__)
+
+
+@pytest.mark.parametrize("dialect", ZONE_LESS)
+def test_zone_less_dialects_keep_the_naive_utc_spelling(dialect: str) -> None:
+    pytest.importorskip("sqlglot")
+    from factlang.sql.registry import literal_style_for
+
+    assert literal_style_for(dialect).timestamp_literal == "TIMESTAMP '{date} {time}'"
+    assert literal(inline(AWARE, "timestamp", dialect)) == NAIVE_FORM[0]
+    assert literal(inline(dt.datetime(1, 1, 1), "timestamp", dialect)) == (
+        "TIMESTAMP '0001-01-01 00:00:00'"
+    )
 
 
 def test_the_ansi_timestamp_form_executes_in_duckdb_as_the_utc_instant() -> None:
@@ -154,8 +277,10 @@ def test_bridge_table_is_consulted_before_the_ancestor_walk() -> None:
     pytest.importorskip("sqlglot")
     from factlang.sql.registry import literal_style_for
 
-    # databricks is a sqlglot Spark subclass with a native profile; spark itself is bridged
-    assert literal_style_for("spark").timestamp_literal == "TIMESTAMP '{date} {time}'"
+    # databricks is a sqlglot Spark subclass with a native profile; spark itself is bridged,
+    # and hive (Spark's sqlglot parent) keeps its own naive entry
+    assert literal_style_for("spark").timestamp_literal == "TIMESTAMP '{date} {time} UTC'"
+    assert literal_style_for("hive").timestamp_literal == "TIMESTAMP '{date} {time}'"
     # dune is a Trino subclass without a table entry: it inherits the native trino spelling
     assert literal_style_for("dune").timestamp_literal == "TIMESTAMP '{date} {time} UTC'"
     # fabric still walks to T-SQL

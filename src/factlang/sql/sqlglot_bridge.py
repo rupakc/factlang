@@ -51,6 +51,7 @@ from factlang.sql.lower import Lowerer
 from factlang.sql.printer import Printer, guard
 from factlang.sql.probe import ANSI_STYLE, LiteralStyle, RenderedProbe, RenderError, placeholder
 from factlang.sql.profile import DialectProfile
+from factlang.sql.profiles._shared import _UTC_TIMESTAMP_LITERAL
 from factlang.sql.registry import SQLGLOT_NAMES, get_profile, native_dialects
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; sqlglot is imported lazily at runtime
@@ -91,18 +92,34 @@ _CAST_TYPES = {
 # from the dialect's lexer, never from here: literal_style() replaces every entry's
 # doubled_quote_escape with the lexer's answer. The hive/spark/spark2 entries say False
 # anyway (their lexers have no '' form), so the table never reads as claiming one.
-_UTC_TIMESTAMP = "TIMESTAMP '{date} {time} UTC'"  # Presto/Trino: an explicit zone
+#
+# Timestamps (rule since 0.1.4): first ask whether the dialect's TIMESTAMP is zone-aware or
+# reads a zone-less literal in a session/JVM zone, or is zone-less (a local date-time); the
+# former takes an explicit UTC zone, the latter a naive literal holding UTC wall-clock time.
+# - presto, athena: TIMESTAMP '... UTC' is a TIMESTAMP WITH TIME ZONE -> explicit UTC.
+# - spark (Spark >= 3.0, as databricks): a zone-less literal is read in
+#   spark.sql.session.timeZone, so it names a different instant under a non-UTC session ->
+#   TIMESTAMP '... UTC'.
+# - spark2 (Spark 2.x): a zone-less literal is read in the JVM default zone, and the
+#   TIMESTAMP '...' literal form goes through java.sql.Timestamp.valueOf, which rejects a
+#   zone suffix -> CAST('...Z' AS TIMESTAMP): the string-to-timestamp cast of Spark 2.4 and
+#   3.x reads the Z as UTC.
+# - hive, teradata, exasol: TIMESTAMP is zone-less -> naive UTC wall-clock is the right value.
 _NAIVE_TIMESTAMP = "TIMESTAMP '{date} {time}'"  # naive, holding UTC wall-clock time
+_CAST_Z_TIMESTAMP = "CAST('{date} {time}Z' AS TIMESTAMP)"  # Spark 2.x: the cast reads Z as UTC
+_UTC = dataclasses.replace(ANSI_STYLE, timestamp_literal=_UTC_TIMESTAMP_LITERAL)
 _NAIVE_NO_DOUBLING = dataclasses.replace(
     ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP, doubled_quote_escape=False
 )
 BRIDGE_LITERAL_STYLES: Mapping[str, LiteralStyle] = MappingProxyType(
     {
-        "presto": dataclasses.replace(ANSI_STYLE, timestamp_literal=_UTC_TIMESTAMP),
-        "athena": dataclasses.replace(ANSI_STYLE, timestamp_literal=_UTC_TIMESTAMP),
+        "presto": _UTC,
+        "athena": _UTC,
         "hive": _NAIVE_NO_DOUBLING,
-        "spark": _NAIVE_NO_DOUBLING,
-        "spark2": _NAIVE_NO_DOUBLING,
+        "spark": dataclasses.replace(_UTC, doubled_quote_escape=False),
+        "spark2": dataclasses.replace(
+            ANSI_STYLE, timestamp_literal=_CAST_Z_TIMESTAMP, doubled_quote_escape=False
+        ),
         # Teradata has no boolean literal: 1/0, as on T-SQL and Oracle
         "teradata": dataclasses.replace(
             ANSI_STYLE, true_literal="1", false_literal="0", timestamp_literal=_NAIVE_TIMESTAMP

@@ -347,8 +347,10 @@ def inline_template(
     with ``RenderError("FL507 cannot inline ...")``. Strings are quoted by doubling ``'``;
     nothing ever relies on backslash escaping, and no literal holds a line terminator.
     Timestamps inline as UTC literals of the dialect's timestamp type: with an explicit
-    ``UTC`` zone where the style says so (Trino, Presto, Athena), otherwise a literal most
-    engines read as a naive (time-zone-less) UTC value, which compared with a
+    ``UTC`` zone where the style says so (Trino, Presto, Athena, Databricks, Spark; a
+    ``Z``-suffixed cast on Spark 2), where ``TIMESTAMP`` is zone-aware or session-local;
+    otherwise a literal most engines read as
+    a naive (time-zone-less) UTC value, which compared with a
     time-zone-aware column depends on the session time zone, exactly as for the bound
     parameter. An ``int`` outside the signed 64-bit range and a ``Decimal`` needing more
     than 38 digits of precision are refused (engines change such a literal's type).

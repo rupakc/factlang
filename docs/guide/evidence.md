@@ -79,9 +79,10 @@ whatever it cannot render safely instead of guessing:
 
     Timestamp literals:
 
-    - `trino`, and bridged `presto`, `athena` and Trino-derived dialects:
-      `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff] UTC'`;
-    - `databricks`, `oracle`, and bridged `hive`, `spark`, `spark2`, `teradata`, `exasol`:
+    - `trino`, `databricks`, and bridged `presto`, `athena`, `spark` and Trino-derived
+      dialects: `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff] UTC'`;
+    - bridged `spark2`: `CAST('YYYY-MM-DD HH:MM:SS[.ffffff]Z' AS TIMESTAMP)`;
+    - `oracle`, and bridged `hive`, `teradata`, `exasol`:
       `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff]'`;
     - `tsql` (and bridged `fabric`): `CAST('YYYY-MM-DD HH:MM:SS[.ffffff]' AS DATETIME2)`;
     - every other dialect: `TIMESTAMP 'YYYY-MM-DDTHH:MM:SS[.ffffff]+00:00'`.
@@ -90,8 +91,18 @@ whatever it cannot render safely instead of guessing:
     names (`BRIDGE_LITERAL_STYLES` in `factlang.sql.sqlglot_bridge`, not public API), else from the nearest native
     profile it derives from in sqlglot (Fabric from T-SQL, Materialize from Postgres), else
     the ANSI forms. Whether `''` may be used is always decided by the dialect's own lexer.
-- On Trino-family dialects the literal carries an explicit `UTC` zone, so it is the UTC
-  instant whatever the session time zone. Elsewhere a timestamp inlines as a literal most
+- The spelling follows what the dialect's `TIMESTAMP` type is. Where it is zone-aware or
+  session-time-zone-local, the literal carries an explicit `UTC` zone, so it is the UTC
+  instant whatever the session time zone: Trino, Presto and Athena (`TIMESTAMP WITH TIME
+  ZONE`), and Databricks and Spark (Spark 3.0 and later), which read a zone-less literal in
+  the session time zone (`spark.sql.session.timeZone`). Spark 2.x (`spark2`) reads a
+  zone-less literal in the JVM default zone, and its `TIMESTAMP '…'` literal form
+  (`java.sql.Timestamp.valueOf`) rejects a zone suffix, so it inlines a cast of a
+  `Z`-suffixed string instead, which Spark's string-to-timestamp cast reads as UTC. Before
+  0.1.4 all three were zone-less and named another instant under a non-UTC session or JVM
+  zone. Where it is zone-less (a local date-time:
+  Hive, Teradata, Exasol, Oracle), a naive literal holding UTC wall-clock time is the
+  correct value. Elsewhere a timestamp inlines as a literal most
   engines read as a naive (time-zone-less) value holding UTC wall-clock time; compared with
   a time-zone-aware column (`timestamptz`, `DATETIMEOFFSET`, `TIMESTAMP WITH TIME ZONE`),
   the result then depends on the session time zone, as it does for the bound parameter.

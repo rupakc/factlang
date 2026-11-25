@@ -333,9 +333,9 @@ def test_timestamps_are_utc_and_parse_in_every_native_dialect(dialect: str) -> N
     if dialect == "tsql":
         assert sql == "SELECT CAST('2019-12-31 19:00:00.000250' AS DATETIME2) AS x"
         assert isinstance(node, exp.Cast) and node.to.sql("tsql") == "DATETIME2"
-    elif dialect in ("oracle", "databricks"):
+    elif dialect == "oracle":
         assert sql == "SELECT TIMESTAMP '2019-12-31 19:00:00.000250' AS x"
-    elif dialect == "trino":
+    elif dialect in ("trino", "databricks"):  # 0.1.4: databricks TIMESTAMP is session-local
         assert sql == "SELECT TIMESTAMP '2019-12-31 19:00:00.000250 UTC' AS x"
     else:
         assert sql == "SELECT TIMESTAMP '2019-12-31T19:00:00.000250+00:00' AS x"

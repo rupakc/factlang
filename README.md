@@ -16,7 +16,7 @@ Why: numbers in LLM answers, schema registries, data contracts and migration pla
 claims about data, and claims drift. FactLang makes them checkable, line by line, with
 evidence a human can audit. The core is pure standard-library Python with no dependencies.
 
-**Status: Alpha (0.1.3).** Python 3.10–3.13. Language version `1.0`.
+**Status: Alpha (0.1.4).** Python 3.10–3.13. Language version `1.0`.
 [Documentation](https://rupakc.github.io/factlang/) ·
 [Wiki](https://github.com/rupakc/factlang/wiki) ·
 [Changelog](https://github.com/rupakc/factlang/blob/main/CHANGELOG.md)

@@ -7,6 +7,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-25
+
+A single inline-output fix. Bound-parameter SQL is unchanged.
+
+### Fixed (inline output)
+- `databricks` (native profile), and bridged `spark` and `spark2`, no longer inline 0.1.3's
+  zone-less `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff]'`, which named a different instant than
+  the UTC value: Databricks and Spark 3.0+ read a zone-less literal in
+  `spark.sql.session.timeZone`, Spark 2.x in the JVM default zone.
+  - `databricks`, `spark`: `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff] UTC'`, the Trino
+    spelling.
+  - `spark2`: `CAST('YYYY-MM-DD HH:MM:SS[.ffffff]Z' AS TIMESTAMP)`. Spark 2.x's
+    `TIMESTAMP '…'` literal goes through `java.sql.Timestamp.valueOf` and rejects a zone
+    suffix; the string-to-timestamp cast reads the `Z` as UTC.
+  - `hive`, `teradata` and `exasol` keep the zone-less form: their `TIMESTAMP` is a
+    zone-less (local date-time) type, so a naive UTC wall-clock is the correct value.
+
+  Display/inline SQL only; quote-doubling decisions are unchanged (`spark`/`spark2` still
+  refuse a `'`).
+
 ## [0.1.3] - 2026-11-25
 
 Compatible improvements: two quoting helpers, a claim cap for agents, per-dialect inline
@@ -229,7 +249,8 @@ The first release. Development status: Alpha. Python 3.10–3.13.
   probe (both claims were reported as `FL500`).
 - `str(Verdict.PASS)` is `"pass"`.
 
-[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/rupakc/factlang/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/rupakc/factlang/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/rupakc/factlang/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/rupakc/factlang/compare/v0.1.0...v0.1.1

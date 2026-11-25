@@ -61,8 +61,13 @@ def judge_run(run: dict[str, Any] | None, jobs: Sequence[dict[str, Any]]) -> tup
     return OK, f"run {run.get('databaseId')} succeeded with {len(legs)} test-full legs"
 
 
+GH_TIMEOUT_S = 60.0  # one gh call; a hung call is a transient failure, retried
+
+
 def _run_gh(args: Sequence[str]) -> str:
-    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(
+        ["gh", *args], check=True, capture_output=True, text=True, timeout=GH_TIMEOUT_S
+    ).stdout
 
 
 GH_ATTEMPTS = 3
@@ -77,11 +82,12 @@ def call_with_retry(
     attempts: int = GH_ATTEMPTS,
     backoff_s: float = GH_BACKOFF_S,
 ) -> str:
-    """``gh(args)``, retried on a transient ``CalledProcessError``; a persistent one is raised."""
+    """``gh(args)``, retried on a transient failure (``CalledProcessError`` or a call that hit
+    its ``TimeoutExpired``); a persistent one is raised."""
     for attempt in range(1, attempts + 1):
         try:
             return gh(args)
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             if attempt == attempts:
                 raise
             sleep(backoff_s * attempt)

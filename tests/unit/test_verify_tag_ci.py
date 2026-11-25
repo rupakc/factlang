@@ -141,14 +141,17 @@ def test_release_workflow_uses_the_gate_and_the_wider_timeout() -> None:
 class Flaky(FakeGh):
     """Fails the first ``failures`` calls with a CalledProcessError, then behaves."""
 
-    def __init__(self, failures: int | None, *a: Any) -> None:
+    def __init__(self, failures: int | None, *a: Any, hang: bool = False) -> None:
         super().__init__(*a)
         self.failures = failures  # None: always fails
+        self.hang = hang  # fail by timing out instead of exiting non-zero
         self.calls = 0
 
     def __call__(self, args: Sequence[str]) -> str:
         self.calls += 1
         if self.failures is None or self.calls <= self.failures:
+            if self.hang:
+                raise subprocess.TimeoutExpired(["gh", *args], gate.GH_TIMEOUT_S)
             raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 502")
         return super().__call__(args)
 
@@ -165,3 +168,27 @@ def test_a_persistent_gh_failure_is_fatal() -> None:
     with pytest.raises(subprocess.CalledProcessError):
         verify(gh)
     assert gh.calls == gate.GH_ATTEMPTS
+
+
+def test_a_timed_out_gh_call_is_retried_and_a_persistent_one_is_fatal() -> None:
+    gh = Flaky(1, [[run()]], legs(), hang=True)
+    ok, why = verify(gh)
+    assert ok, why
+    assert gh.calls == 3
+    stuck = Flaky(None, [[run()]], legs(), hang=True)
+    with pytest.raises(subprocess.TimeoutExpired):
+        verify(stuck)
+    assert stuck.calls == gate.GH_ATTEMPTS
+
+
+def test_each_real_gh_call_has_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd: Sequence[str], **kw: Any) -> Any:
+        seen.update(kw, cmd=list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    assert gate._run_gh(["run", "list"]) == "[]"
+    assert seen["timeout"] == gate.GH_TIMEOUT_S == 60
+    assert seen["cmd"] == ["gh", "run", "list"] and seen["check"] is True

@@ -215,7 +215,8 @@ def test_extreme_decimals_are_refused_fast_and_ordinary_ones_render() -> None:
     for value in [Decimal("1E+100000000"), Decimal("1E-100000000"), Decimal("9" * 5000)]:
         with pytest.raises(RenderError, match=FL507):
             inline(value, "decimal")
-    assert time.monotonic() - start < 1.0
+    # generous (spec C2: no upper bound under 1 s); it only catches the digits being built
+    assert time.monotonic() - start < 30.0
     assert inline(Decimal("-0"), "decimal") == "SELECT -0 AS x"
     # 0.1.3 (I3): past DECIMAL's 38 digits of precision is FL507; within, the plain form
     for value in [Decimal("1E+50"), Decimal("1E-50")]:

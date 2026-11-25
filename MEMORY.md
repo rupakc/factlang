@@ -57,3 +57,8 @@ How to apply: spec §19. `SampleSpec` (keyhash / system / bernoulli, seeded) onl
 `Checker.measure`; claims/contracts never sample (FL404); a dialect that cannot express a
 method raises FL506, never falls back to exact or LIMIT. Payloads are raw sample metrics +
 `sampled_rows`; the host estimates. Same-seed keyhash on both join sides keeps the same keys.
+
+## 2026-11-25 — inline output is a compatibility surface
+Any change to inlined literal output (spellings, prefixes such as `N'…'`, boolean/timestamp forms, refusal codes such as FL507) gets its own CHANGELOG entry, even in a patch release.
+**Why:** a downstream consumer re-checks every rendered literal and fails closed on unrecognised forms.
+**How to apply:** when touching `sql/probe.py` inlining or any profile's literal fields, add a "Changed (inline output)" bullet to CHANGELOG `[Unreleased]`.

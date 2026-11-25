@@ -10,7 +10,7 @@ For each claim, in order:
 
 1. **Verb** exists in the active pack (FL300, with a did-you-mean suggestion).
 2. **Operands**: count (FL301) and kind and reference depth (FL302). A column reference with more than four parts is FL302.
-3. **Attributes**: known (FL303), required ones present (FL304), value type fits (FL305), operator allowed (FL306), values in range such as a ratio above 1 (FL309), mutually exclusive pairs such as `TOLERANCE` and `ABS_TOLERANCE` (FL309).
+3. **Attributes**: known (FL303), required ones present (FL304), value type fits (FL305), operator allowed (FL306), values in range such as a ratio above 1 (FL309), mutually exclusive pairs such as `TOLERANCE` and `ABS_TOLERANCE` (FL309). A `TOLERANCE` or `ABS_TOLERANCE` on a `MIN`/`MAX` whose `VALUE` is a date or timestamp gives a warning (FL314): the band has no effect and the claim will be ERROR when judged. The rule is declared on the verb (`VerbSpec.no_band_on_temporal`), not written into the analyzer.
 4. **Filter**: allowed for this verb (FL308), literals valid (FL309 for a bad date), the filter column exists and has a sensible type (FL305 for a bare boolean atom over a non-boolean column).
 5. **Names**: table and column exist in the catalog (FL311). A join across different types without `CAST` gives a warning (FL312).
 

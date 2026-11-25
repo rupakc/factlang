@@ -86,8 +86,8 @@ whatever it cannot render safely instead of guessing:
     - `tsql` (and bridged `fabric`): `CAST('YYYY-MM-DD HH:MM:SS[.ffffff]' AS DATETIME2)`;
     - every other dialect: `TIMESTAMP 'YYYY-MM-DDTHH:MM:SS[.ffffff]+00:00'`.
 
-    A bridged dialect takes its spellings from a small table of sqlglot dialect names
-    (`BRIDGE_LITERAL_STYLES` in `factlang.sql.sqlglot_bridge`), else from the nearest native
+    A bridged dialect takes its spellings from a small internal table of sqlglot dialect
+    names (`BRIDGE_LITERAL_STYLES` in `factlang.sql.sqlglot_bridge`, not public API), else from the nearest native
     profile it derives from in sqlglot (Fabric from T-SQL, Materialize from Postgres), else
     the ANSI forms. Whether `''` may be used is always decided by the dialect's own lexer.
 - On Trino-family dialects the literal carries an explicit `UTC` zone, so it is the UTC

@@ -109,8 +109,9 @@ literal    = NUMBER | STRING | typed | "TRUE" | "FALSE" ;
   recognised **uppercase only**. A bare keyword is never a column name; quote it.
 - The column of a comparison is a single name (`IDENT` or `QIDENT`), not a dotted ref.
 - A `name` standing alone as an atom tests a boolean column: `deleted` means
-  `deleted = TRUE`. A bare `TRUE` or `FALSE` atom is `FL206` (they are keywords; quote a
-  column named `true` as `"TRUE"`).
+  `deleted = TRUE`. A bare `TRUE` or `FALSE` atom is `FL206` (they are keywords): a column
+  named `TRUE` (uppercase) must be quoted as `"TRUE"`, while a lowercase `true` is not a
+  keyword and is a valid bare column name.
 - `x = NULL` is `FL206`: `IS NULL` is the only way to test NULL.
 - Inside `IN`, items are filter literals; a trailing comma is allowed.
 

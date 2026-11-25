@@ -34,7 +34,7 @@ ARROW       = "->" ;
 OP          = ">=" | "<=" | "==" | "!=" | "=" | "<" | ">" ;
 PUNCT       = "." | "," | "[" | "]" | "(" | ")" ;
 COMMENT     = "#" { any char except newline } ;
-CONT        = "\" NEWLINE ;
+CONT        = "\" { " " | TAB } NEWLINE ;
 ```
 
 Strings are single-quoted only; double quotes and backticks delimit identifiers.
@@ -42,6 +42,10 @@ Strings are single-quoted only; double quotes and backticks delimit identifiers.
 `NUMBER`; two-character `OP` before one-character; `->` before `-` as a number sign.
 An unexpected character is `FL102`; an unterminated string or quoted identifier is
 `FL101`; a dangling continuation is `FL205`.
+
+**Continuation.** A `\` followed only by spaces or tabs before the newline joins the next
+line to the claim (`CONT` above); the blanks between the `\` and the newline are ignored.
+A `\` followed by anything else is `FL102`, and a `\` with no next line is `FL205`.
 
 ## 3. Syntactic grammar
 
@@ -530,6 +534,14 @@ An attribute may appear once.
 
 ```factlang-invalid FL204
 ROWS orders VALUE >=1 VALUE <=5
+```
+
+A claim continues on the next line after a `\`, even with blanks after it.
+
+```factlang-valid
+ROWS orders \
+  VALUE >=1 \ 	
+  WHERE status = 'paid'
 ```
 
 A continuation needs a following line.

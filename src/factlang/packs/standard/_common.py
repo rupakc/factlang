@@ -101,6 +101,9 @@ def answer_attrs(value_type: str) -> tuple[AttrSpec, ...]:
 
 ANSWER_EXCLUSIVE: tuple[tuple[str, str], ...] = (("TOLERANCE", "ABS_TOLERANCE"),)
 
+#: MIN/MAX accept a temporal ``VALUE``; a band on one is judged ERROR, so it is flagged (FL314).
+ANSWER_NO_TEMPORAL_BAND: tuple[str, tuple[str, ...]] = ("VALUE", ("TOLERANCE", "ABS_TOLERANCE"))
+
 
 def answer_number(value: object) -> Decimal | float | None:
     """A measured SUM/AVG/MIN/MAX number: a finite float stays a float (so the judge's

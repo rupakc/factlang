@@ -43,3 +43,28 @@ def test_bag_basics() -> None:
     assert bag.codes() == ["FL312", "FL101"]
     assert [d.code for d in bag] == ["FL312", "FL101"]
     assert len(bag.to_list()) == 2
+
+
+def test_render_caret_reproduces_tabs_of_the_source_line() -> None:
+    bag = DiagnosticBag()
+    bag.error("FL102", "x", Span(1, 5, 7))
+    # source: tab, tab, "a", " ", "b:" -> col 5 is the 'b' after two tabs, 'a' and a space
+    src = "\t\ta b:"
+    out = bag.render(src).split("\n")
+    assert out[2] == src
+    assert out[3] == "\t\t  ^^"
+
+
+def test_render_caret_tab_after_the_offending_column_is_not_copied() -> None:
+    bag = DiagnosticBag()
+    bag.error("FL102", "x", Span(1, 2, 3))
+    out = bag.render("a\tb").split("\n")
+    assert out[3] == " ^"
+
+
+def test_render_caret_lines_up_for_a_tab_indented_claim() -> None:
+    import factlang as fl
+
+    text = "\tUNIQE orders.id"
+    out = fl.lint(text).render().split("\n")
+    assert out[2] == text and out[3] == "\t^^^^^"

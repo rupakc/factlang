@@ -44,6 +44,7 @@
 | FL311 | no such table or column |
 | FL312 | join across different types without `CAST` (warning) |
 | FL313 | could not verify names (info) |
+| FL314 | tolerance on a temporal `VALUE` of `MIN`/`MAX` has no effect; the claim will be ERROR when judged (warning) |
 
 ## FL4xx: planning
 

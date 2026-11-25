@@ -10,6 +10,7 @@ from factlang.ir import ColumnAggregate, Metric
 from factlang.judge import Within
 from factlang.packs.standard._common import (
     ANSWER_EXCLUSIVE,
+    ANSWER_NO_TEMPORAL_BAND,
     answer_attrs,
     answer_value,
 )
@@ -23,6 +24,7 @@ SPEC = VerbSpec(
     attrs=answer_attrs("NUMBER_OR_TEMPORAL"),
     filterable=True,
     exclusive=ANSWER_EXCLUSIVE,
+    no_band_on_temporal=ANSWER_NO_TEMPORAL_BAND,
 )
 
 
@@ -46,6 +48,7 @@ CONTRACT = Contract(
         Example("MAX order_items.price VALUE == 99.99 ABS_TOLERANCE 0.01"),
         Example("MAX orders.created_at VALUE >= DATE '2025-01-31'"),
         Example("MAX events.at VALUE <= TIMESTAMP '2025-01-31T12:00:00Z'"),
+        Example("MAX orders.created_at VALUE >= DATE '2025-01-31' TOLERANCE 1%", expect="FL314"),
         Example("MAX order_items VALUE == 1", valid=False, expect="FL302"),
         Example("MAX order_items.price", valid=False, expect="FL304"),
         Example(

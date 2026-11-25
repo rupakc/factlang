@@ -16,6 +16,7 @@ are turned into diagnostics or treated as "unknown".
 
 from __future__ import annotations
 
+import datetime as dt
 import difflib
 import re
 from dataclasses import replace
@@ -267,6 +268,7 @@ class _ClaimCheck:
         operands = self.operands(spec)
         attrs = self.attributes(spec)
         self.presence(spec, attrs)
+        self.temporal_band(spec, attrs)
         if operands is not None:
             self.column_lists(spec, operands, attrs)
         flt = self.filter(spec)
@@ -472,6 +474,25 @@ class _ClaimCheck:
                     f"{first} and {second} are mutually exclusive",
                     written[second].span,
                 )
+
+    def temporal_band(self, spec: VerbSpec, attrs: dict[str, CheckedAttr]) -> None:
+        """FL314 (warning): a band written next to a temporal subject value has no effect."""
+        if spec.no_band_on_temporal is None:
+            return
+        subject, bands = spec.no_band_on_temporal
+        value = attrs.get(subject)
+        if value is None or not isinstance(value.value, dt.date):
+            return
+        for a in self.claim.attributes:
+            if a.name in bands and a.name in attrs:
+                self.bag.warning(
+                    "FL314",
+                    f"{a.name} has no effect on a temporal {subject}; "
+                    "this claim will be ERROR when judged",
+                    a.span,
+                    hint=f"remove {a.name}",
+                )
+                return
 
     def column_lists(
         self, spec: VerbSpec, operands: tuple[Operand, ...], attrs: dict[str, CheckedAttr]

@@ -61,6 +61,9 @@ class VerbSpec:
     suppresses the cross-family FL312 warning on an edge verb. ``existence_subject`` marks a
     verb whose table operand is the subject of an existence test (``EXISTS``): a catalog that
     says the table is absent is that claim's answer (FAIL), not an FL311 name error.
+    ``no_band_on_temporal`` is ``(value_attr, band_attrs)``: when ``value_attr`` coerces to a
+    date or timestamp and any of ``band_attrs`` is also written, the analyser warns FL314
+    (a tolerance band has no meaning on a temporal value).
     """
 
     name: str
@@ -73,6 +76,7 @@ class VerbSpec:
     paired: tuple[tuple[str, str], ...] = ()
     cast_attr: str | None = None
     existence_subject: bool = False
+    no_band_on_temporal: tuple[str, tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
         if not _UPPER.fullmatch(self.name):
@@ -107,6 +111,13 @@ class VerbSpec:
             for n in (first, second):
                 if types[n] != "COLUMN_LIST":
                     raise ValueError(f"{self.name}: paired attribute {n!r} must be COLUMN_LIST")
+        if self.no_band_on_temporal is not None:
+            subject, bands = self.no_band_on_temporal
+            for n in (subject, *bands):
+                if n not in seen:
+                    raise ValueError(
+                        f"{self.name}: no_band_on_temporal names undeclared attribute {n!r}"
+                    )
         if self.cast_attr is not None and self.cast_attr not in seen:
             raise ValueError(
                 f"{self.name}: cast_attr names undeclared attribute {self.cast_attr!r}"

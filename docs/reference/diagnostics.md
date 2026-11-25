@@ -53,6 +53,7 @@ catalog holding `orders(id, customer_id, status)` and `customers(id, email)`.
 | <a id="fl311"></a>FL311 | analyser | error | no such table or column, on a definite answer from the catalog | `UNIQUE orders.stauts` |
 | <a id="fl312"></a>FL312 | analyser | warning | a `JOIN` between different type families without `CAST` | `JOIN orders.customer_id -> customers.email MATCH >= 99%` |
 | <a id="fl313"></a>FL313 | analyser | info | names could not be verified: the catalog could not answer (reported once per claim) | *any claim checked with `NullCatalog`* |
+| <a id="fl314"></a>FL314 | analyser | warning | a `TOLERANCE` or `ABS_TOLERANCE` on a `MIN`/`MAX` whose `VALUE` is a date or timestamp: the band has no effect and the claim will be ERROR when judged | `MIN orders.created_at VALUE >= DATE '2025-01-31' TOLERANCE 1%` |
 | <a id="fl404"></a>FL404 | planning | error | a contract's plan sets `sample`: claims are always measured exactly | *a contract returning `ColumnAggregate(…, sample=SampleSpec(…))`* |
 | <a id="fl405"></a>FL405 | planning | error | a `system`/`bernoulli` sample on a plan that reads the table more than once; use `keyhash` | *`ValueMembership(…, sample=SampleSpec("bernoulli", …))`* |
 | <a id="fl500"></a>FL500 | rendering | error | a primitive cannot be rendered: not registered, a bad lowering, or a rendered text that fails the guard | *`fl.measure` of an unregistered primitive* |

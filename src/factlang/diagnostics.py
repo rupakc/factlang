@@ -52,9 +52,14 @@ class Diagnostic:
             lines.append(f"  --> {span.line}:{span.col}")
             src_lines = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
             if 1 <= span.line <= len(src_lines):
-                lines.append(src_lines[span.line - 1])
+                text = src_lines[span.line - 1]
+                lines.append(text)
                 width = max(1, span.end_col - span.col)
-                lines.append(" " * (span.col - 1) + "^" * width)
+                # a tab in the source is a tab in the padding, so the carets line up under
+                # the offending text whatever the terminal's tab width
+                pad = "".join("\t" if ch == "\t" else " " for ch in text[: span.col - 1])
+                pad += " " * (span.col - 1 - len(pad))
+                lines.append(pad + "^" * width)
         if self.hint:
             lines.append(f"help: {self.hint}")
         if self.suggestion:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -489,10 +490,13 @@ def test_unhashable_attribute_value_is_fl305() -> None:
     assert claims == [] and bag.codes() == ["FL305"]
 
 
-def test_non_finite_attribute_value_is_fl305() -> None:
+def test_non_finite_attribute_value_is_fl305(request: pytest.FixtureRequest) -> None:
+    from factlang.semantics import types as _types
     from factlang.semantics.types import ValueType, register_type
     from factlang.syntax.ast import LiteralKind
 
+    for name in ("NAN_T", "INF_T"):
+        request.addfinalizer(lambda n=name: _types._REGISTRY.pop(n, None))
     for name, bad in (("NAN_T", Decimal("NaN")), ("INF_T", Decimal("-Infinity"))):
         register_type(
             ValueType(name, frozenset({LiteralKind.STRING}), lambda lit, b=bad: b),
@@ -682,3 +686,71 @@ def test_existence_subject_table_is_not_fl311() -> None:
     # every other verb still reports it, and TYPE on a missing column stays FL311
     assert check("USE shop.public\nROWS nope VALUE >= 1") == ["FL311"]
     assert check("USE shop.public\nTYPE orders.nope IS integer") == ["FL311"]
+
+
+def _band_registry(band: tuple[str, tuple[str, ...]] | None) -> VerbRegistry:
+    reg = VerbRegistry()
+    reg.register(
+        VerbSpec(
+            "ANS",
+            "answer",
+            (OperandSpec("column", OperandKind.COLUMN),),
+            (
+                AttrSpec("VALUE", "NUMBER_OR_TEMPORAL", required=True, ops=ALL),
+                AttrSpec("TOLERANCE", "RATIO"),
+                AttrSpec("ABS_TOLERANCE", "NUMBER"),
+            ),
+            no_band_on_temporal=band,
+        )
+    )
+    return reg
+
+
+def _band_bag(text: str, band: tuple[str, tuple[str, ...]] | None) -> DiagnosticBag:
+    bag = DiagnosticBag()
+    analyze(parse(text).document, _band_registry(band), bag=bag)
+    return bag
+
+
+_BAND = ("VALUE", ("TOLERANCE", "ABS_TOLERANCE"))
+
+
+def test_fl314_temporal_value_with_tolerance_is_a_warning() -> None:
+    for text in (
+        "ANS t.c VALUE >= DATE '2025-01-31' TOLERANCE 1%",
+        "ANS t.c VALUE >= TIMESTAMP '2025-01-31T00:00:00Z' ABS_TOLERANCE 1",
+    ):
+        bag = _band_bag(text, _BAND)
+        assert bag.codes() == ["FL314"], text
+        d = next(iter(bag))
+        assert d.severity is Severity.WARNING and not bag.has_errors
+        assert "temporal" in d.message and d.span is not None
+
+
+def test_fl314_negative_controls() -> None:
+    assert _band_bag("ANS t.c VALUE >= 5 TOLERANCE 1%", _BAND).codes() == []
+    assert _band_bag("ANS t.c VALUE >= DATE '2025-01-31'", _BAND).codes() == []
+    # the rule is declared on the verb: without it nothing is flagged
+    assert _band_bag("ANS t.c VALUE >= DATE '2025-01-31' TOLERANCE 1%", None).codes() == []
+
+
+def test_fl314_still_returns_the_claim() -> None:
+    bag = DiagnosticBag()
+    claims = analyze(
+        parse("ANS t.c VALUE >= DATE '2025-01-31' TOLERANCE 1%").document,
+        _band_registry(_BAND),
+        bag=bag,
+    )
+    assert len(claims) == 1
+
+
+def test_fl314_on_the_standard_min_and_max() -> None:
+    import factlang as fl
+
+    for verb in ("MIN", "MAX"):
+        bag = fl.lint(f"{verb} orders.created_at VALUE >= DATE '2025-01-31' TOLERANCE 1%")
+        assert bag.codes() == ["FL314"], verb
+        assert not bag.has_errors
+    assert fl.lint("MIN orders.created_at VALUE >= DATE '2025-01-31'").codes() == []
+    assert fl.lint("MIN orders.total VALUE >= 5 TOLERANCE 1%").codes() == []
+    assert fl.lint("SUM orders.total VALUE >= 5 TOLERANCE 1%").codes() == []

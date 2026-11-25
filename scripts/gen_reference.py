@@ -87,7 +87,8 @@ def _verb(contract: Contract) -> list[str]:
     notes += [f"`{a}` and `{b}` are mutually exclusive." for a, b in spec.exclusive]
     notes += [f"`{a}` and `{b}` go together and list as many columns." for a, b in spec.paired]
     out += [f"- {n}" for n in notes] + [""]
-    valid = [e.source for e in contract.examples if e.valid]
+    # published examples are ones to copy: not a valid example expecting a warning (FL314)
+    valid = [e.source for e in contract.examples if e.valid and e.expect is None]
     invalid = [e for e in contract.examples if not e.valid]
     if valid:
         out += ["```factlang", *valid, "```", ""]

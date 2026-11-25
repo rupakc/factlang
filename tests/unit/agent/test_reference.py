@@ -56,7 +56,7 @@ def test_every_verb_and_every_valid_example_of_the_standard_pack(style: str) -> 
         if style == "markdown":
             assert contract.spec.summary in text
             for ex in contract.examples:
-                if ex.valid:
+                if ex.valid and ex.expect is None:
                     assert ex.source in text, ex.source
 
 
@@ -147,3 +147,32 @@ def test_markdown_lists_constraints() -> None:
 def test_unknown_style_raises() -> None:
     with pytest.raises(ValueError, match="style"):
         verb_reference(standard_pack(), style="html")  # type: ignore[arg-type]
+
+
+def test_no_published_example_carries_an_expect_code() -> None:
+    # a valid example with expect (FL314: a warning, ERROR when judged) is a test, not one to
+    # copy: it must not reach the agent reference, `factlang verbs` or docs/reference/verbs.md
+    from pathlib import Path
+
+    from factlang import cli
+    from factlang.packs.standard import standard_pack
+
+    expecting = [
+        e.source
+        for c in standard_pack().contracts()
+        for e in c.examples
+        if e.valid and e.expect is not None
+    ]
+    assert expecting  # non-vacuous: the FL314 examples of MIN and MAX
+    page = (Path(__file__).resolve().parents[3] / "docs" / "reference" / "verbs.md").read_text(
+        encoding="utf-8"
+    )
+    published = [
+        verb_reference(style="markdown"),
+        verb_reference(style="compact"),
+        "\n".join(str(x) for r in cli._verb_records() for x in r["examples"]),  # type: ignore[attr-defined]
+        page,
+    ]
+    for source in expecting:
+        for text in published:
+            assert source not in text, source

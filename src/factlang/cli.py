@@ -385,7 +385,7 @@ def _verb_records() -> list[dict[str, object]]:
                     for a in s.attrs
                 ],
                 "filterable": s.filterable,
-                "examples": [e.source for e in c.examples if e.valid],
+                "examples": [e.source for e in c.examples if e.valid and e.expect is None],
             }
         )
     return records

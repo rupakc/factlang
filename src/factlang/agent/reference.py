@@ -53,7 +53,8 @@ def _constraints(spec: VerbSpec) -> list[str]:
 
 
 def _valid_examples(contract: Contract) -> list[str]:
-    return [e.source for e in contract.examples if e.valid]
+    # a valid example that expects a warning (FL314: ERROR when judged) is not one to copy
+    return [e.source for e in contract.examples if e.valid and e.expect is None]
 
 
 def _header(pack: ContractPack) -> str:

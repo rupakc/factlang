@@ -541,7 +541,6 @@ MIN order_items.price VALUE >= 10 TOLERANCE 1% WHERE order_id = 7
 MIN order_items.price VALUE == 99.99 ABS_TOLERANCE 0.01
 MIN orders.created_at VALUE >= DATE '2025-01-31'
 MIN events.at VALUE <= TIMESTAMP '2025-01-31T12:00:00Z'
-MIN orders.created_at VALUE >= DATE '2025-01-31' TOLERANCE 1%
 ```
 
 | does not compile | diagnostic |
@@ -577,7 +576,6 @@ MAX order_items.price VALUE >= 10 TOLERANCE 1% WHERE order_id = 7
 MAX order_items.price VALUE == 99.99 ABS_TOLERANCE 0.01
 MAX orders.created_at VALUE >= DATE '2025-01-31'
 MAX events.at VALUE <= TIMESTAMP '2025-01-31T12:00:00Z'
-MAX orders.created_at VALUE >= DATE '2025-01-31' TOLERANCE 1%
 ```
 
 | does not compile | diagnostic |

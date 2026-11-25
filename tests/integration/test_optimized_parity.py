@@ -50,3 +50,12 @@ def test_verb_matrix_outcomes_are_identical_under_python_O() -> None:
     assert len(normal["cases"]) > 60  # the whole matrix plus the hostile-catalog claims
     for plain, opt in zip(normal["cases"], optimized["cases"], strict=True):
         assert plain == opt, plain["claim"]
+    # a plan returning no plan is the documented "plan failed" ERROR in both modes, never a
+    # catalog claim (it used to hit an assert, or run the catalog path under -O)
+    bad = [c for c in normal["cases"] if c["claim"].split()[0] in {"NONE_PLAN", "STR_PLAN"}]
+    assert len(bad) == 2
+    for case in bad:
+        (o,) = case["outcomes"]
+        assert o["verdict"] == "ERROR", case
+        assert o["explanation"].startswith("plan failed: ValueError: verb "), case
+        assert case["compiled"] == o["explanation"], case

@@ -15,7 +15,7 @@ from importlib.metadata import entry_points as _entry_points
 from typing import Literal
 
 from factlang.diagnostics import DiagnosticBag, Severity
-from factlang.ir import ProbePlan, is_sampled
+from factlang.ir import CORE_PRIMITIVES, PRIMITIVE_LOWERINGS, ProbePlan, is_sampled
 from factlang.judge import Derive, Predicate
 from factlang.semantics.analyzer import analyze
 from factlang.semantics.catalog import Catalog, NullCatalog
@@ -119,13 +119,26 @@ class Contract:
         return self.spec.name
 
 
+def _is_probe_plan(plan: object) -> bool:
+    """A core primitive, or an instance of a class registered with ``register_primitive``."""
+    return isinstance(plan, CORE_PRIMITIVES) or type(plan) in PRIMITIVE_LOWERINGS
+
+
 def plan_for(contract: Contract, claim: CheckedClaim) -> ProbePlan:
-    """The contract's plan for ``claim``. A sampled plan (FL404) and a filterable verb whose
-    plan drops the claim's ``WHERE`` filter (FL605; for ``KeyOverlap`` the left ``filter``)
-    are contract bugs and raise ``ValueError``."""
+    """The contract's plan for ``claim``. A plan that returns no probe plan (``None``, or an
+    object that is neither a core primitive nor a registered one), a sampled plan (FL404) and
+    a filterable verb whose plan drops the claim's ``WHERE`` filter (FL605; for
+    ``KeyOverlap`` the left ``filter``) are contract bugs and raise ``ValueError``."""
     if contract.plan is None:
         raise ValueError(f"contract {contract.name} has no plan (it is catalog or unprobeable)")
     plan = contract.plan(claim)
+    if not _is_probe_plan(plan):
+        returned = "None" if plan is None else type(plan).__name__
+        raise ValueError(
+            f"verb {contract.name}: its plan returned {returned}, not a probe plan; return a "
+            "core primitive or an instance of a class registered with "
+            "factlang.ir.register_primitive"
+        )
     if is_sampled(plan):
         raise ValueError(
             f"FL404 sampled plan in a claim: contract {contract.name} returned a plan with "

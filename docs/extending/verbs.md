@@ -81,7 +81,10 @@ It reports:
 - `FL600`: `decide` reads a fact that `derive` never declares (`.facts(...)`).
 - `FL601`: `decide` reads an attribute the signature does not declare.
 - `FL602`: fewer than three valid and three invalid examples.
-- `FL603`: an example does not behave as declared (or its plan raises).
+- `FL603`: an example does not behave as declared (or its plan raises). A plan must return a
+  probe plan: a core primitive or an instance of a class registered with
+  `fl.ir.register_primitive`. One that returns `None` or anything else is refused with a
+  `ValueError` naming the verb, and `check()` reports the claim as `error` ("plan failed").
 - `FL604`: a decorator-built contract is missing a part (plan, derive or decide).
 - `FL605`: a **filterable** verb's plan drops the claim's `WHERE` filter. A plan that ignores
   `claim.filter` would measure the whole table while the claim talks about some of it, so

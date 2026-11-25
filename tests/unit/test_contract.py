@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from decimal import Decimal
+from typing import ClassVar
 
 import pytest
 
@@ -487,6 +489,43 @@ def test_plan_for_returns_an_exact_plan() -> None:
     assert c is not None
     plan = plan_for(c, _claim("POSITIVE orders.amount", pack))
     assert isinstance(plan, ColumnAggregate) and plan.column == Ident("amount")
+
+
+@pytest.mark.parametrize(
+    ("returned", "named"), [(None, "None"), ("SELECT 1", "str"), (42, "int")], ids=str
+)
+def test_plan_for_refuses_a_plan_that_is_not_a_probe_plan(returned: object, named: str) -> None:
+    # a host plan returning nothing (or not a primitive) must not reach the catalog path or
+    # the renderer as "no plan"; ValueError names the verb, so check() reports "plan failed"
+    pack = ContractPack("p", "1.0")
+    pack.register(_contract(plan=lambda claim: returned))
+    c = pack.get("POSITIVE")
+    assert c is not None
+    with pytest.raises(ValueError, match=rf"^verb POSITIVE: its plan returned {named}, not a"):
+        plan_for(c, _claim("POSITIVE orders.amount", pack))
+
+
+def test_plan_for_accepts_a_registered_custom_primitive_only() -> None:
+    @dataclasses.dataclass(frozen=True)
+    class Probe:
+        arity: ClassVar[ir.Arity] = ir.Arity.SINGLE_ROW
+        table: object
+
+        def result_columns(self) -> tuple[str, ...]:
+            return ("n",)
+
+    pack = ContractPack("p", "1.0")
+    pack.register(_contract(plan=lambda claim: Probe(claim.table)))
+    c = pack.get("POSITIVE")
+    assert c is not None
+    claim = _claim("POSITIVE orders.amount", pack)
+    with pytest.raises(ValueError, match="not a probe plan"):
+        plan_for(c, claim)
+    ir.register_primitive(Probe, lower=lambda plan: None)
+    try:
+        assert isinstance(plan_for(c, claim), Probe)
+    finally:
+        ir.unregister_primitive(Probe)
 
 
 # --- Operand helpers + discovery ---------------------------------------------------------

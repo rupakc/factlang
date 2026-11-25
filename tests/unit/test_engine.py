@@ -228,6 +228,39 @@ def test_compile_render_error_is_error_outcome() -> None:
     assert o.explanation.startswith("FL504")
 
 
+def _none_plan_pack() -> Any:
+    import factlang as fl
+
+    pack = fl.standard_pack().extend("mine", "1.0")
+
+    @pack.verb("POSITIVE", summary="x", operands=[fl.Operand.column()], filterable=True)
+    def positive(claim: Any) -> Any:
+        return None  # a host contract bug: the plan returns no plan
+
+    @positive.derive
+    def _(payload: Any, claim: Any) -> dict[str, object]:
+        return {"min": payload["min_value"]}
+
+    positive.facts("min")
+    positive.decide(fl.Compare("min", ">", value=0))
+    return pack
+
+
+def test_a_plan_returning_none_is_a_plan_failed_error_not_a_catalog_claim() -> None:
+    fn = rows_fn([{"row_count": 1}])
+    checker = Checker(
+        CallableConnector(fn, "duckdb"), pack=_none_plan_pack(), catalog=NullCatalog()
+    )
+    (o,) = checker.check("POSITIVE orders.amount").outcomes
+    assert o.verdict is Verdict.ERROR
+    assert o.explanation.startswith("plan failed: ValueError: verb POSITIVE: its plan returned")
+    assert fn.calls == []
+    # compile takes the same path; it never substitutes a MetadataQuery for the missing plan
+    (c,) = Checker(dialect="duckdb", pack=_none_plan_pack()).compile("POSITIVE orders.amount")
+    assert isinstance(c, Outcome) and c.verdict is Verdict.ERROR
+    assert c.explanation == o.explanation
+
+
 def test_check_render_error_is_error_outcome() -> None:
     fn = rows_fn([])
     (o,) = (

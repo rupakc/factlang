@@ -29,7 +29,6 @@ SRC = Path(factlang.__file__).resolve().parent
 INTERNAL_ASSERTS: dict[tuple[str, str], int] = {
     ("engine.py", "Checker.compile"): 1,
     ("engine.py", "Checker._error"): 1,
-    ("engine.py", "Checker._catalog_outcome"): 1,
     ("engine.py", "Checker._results"): 2,
     ("engine.py", "Checker._finish"): 1,
     ("optimizer.py", "optimize"): 1,

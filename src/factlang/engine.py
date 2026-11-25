@@ -279,6 +279,17 @@ def _runs(jobs: Sequence[tuple[FusedProbe, RenderedProbe | Exception]]) -> bool:
     return any(isinstance(p, RenderedProbe) for _, p in jobs)
 
 
+def _is_catalog_slot(slot: _Slot) -> bool:
+    """A claim still to judge whose verb is a catalog verb (it has ``catalog_facts``; a
+    planned verb always has a plan or an outcome, since ``plan_for`` refuses a missing one)."""
+    return (
+        slot.outcome is None
+        and slot.plan is None
+        and slot.contract is not None
+        and slot.contract.catalog_facts is not None
+    )
+
+
 def _code(message: str, default: str) -> str:
     m = _CODE.match(message)
     return m.group(1) if m else default
@@ -389,7 +400,7 @@ class Checker:
         bag = DiagnosticBag()
         slots = self._front(text, self.catalog, bag)
         for slot in slots:
-            if slot.outcome is None and slot.contract is not None and slot.plan is None:
+            if _is_catalog_slot(slot):
                 slot.outcome = self._catalog_outcome(slot, bag)
         jobs = self._jobs([WorkItem(s.plan, s.claim) for s in slots if s.plan is not None])
         probes = [p for _, p in jobs]
@@ -400,7 +411,7 @@ class Checker:
         bag = DiagnosticBag()
         slots = await asyncio.to_thread(self._front, text, self.catalog, bag)
         for slot in slots:
-            if slot.outcome is None and slot.contract is not None and slot.plan is None:
+            if _is_catalog_slot(slot):
                 slot.outcome = await asyncio.to_thread(self._catalog_outcome, slot, bag)
         jobs = self._jobs([WorkItem(s.plan, s.claim) for s in slots if s.plan is not None])
         probes = [p for _, p in jobs]
@@ -423,7 +434,13 @@ class Checker:
                 out.append(slot.outcome)
                 continue
             assert slot.claim is not None
-            plan = slot.plan if slot.plan is not None else MetadataQuery(slot.claim.table)
+            if slot.plan is not None:
+                plan: ProbePlan = slot.plan
+            elif _is_catalog_slot(slot):
+                plan = MetadataQuery(slot.claim.table)
+            else:  # pragma: no cover - plan_for refuses a missing plan: the slot has an outcome
+                out.append(self._error(slot, None, "plan failed: no plan", None, bag))
+                continue
             try:
                 out.append(self._renderer()(plan))
             except Exception as exc:
@@ -630,7 +647,11 @@ class Checker:
 
     def _catalog_outcome(self, slot: _Slot, bag: DiagnosticBag) -> Outcome:
         claim, contract = slot.claim, slot.contract
-        assert claim is not None and contract is not None and contract.catalog_facts is not None
+        if claim is None or contract is None or contract.catalog_facts is None:
+            # callers pass only _is_catalog_slot slots; never let a host plan reach here
+            raise ValueError(  # pragma: no cover - unreachable through check()/acheck()
+                "internal: _catalog_outcome needs a catalog verb's slot"
+            )
         catalog = self.catalog if self.catalog is not None else NullCatalog()
         evidence = self._catalog_evidence(claim, catalog)
         try:

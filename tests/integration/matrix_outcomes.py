@@ -3,7 +3,9 @@
 Run as a script by ``test_optimized_parity.py``, once normally and once under ``python -O``,
 so the two runs can be compared: an ``assert`` that carries behaviour shows up as a
 difference. After the matrix come a few claims checked through a ``CachedCatalog`` over a
-catalog that breaks the protocol: the guards on such host values must hold under ``-O`` too.
+catalog that breaks the protocol, and claims of a custom verb whose plan returns no plan
+(``None``, or an object that is not a probe plan): the guards on such host values must hold
+under ``-O`` too.
 Wall-clock dependent values (the ``Approx`` facts of the expectations, and the
 explanation of a claim that has one) are masked; everything else is compared exactly.
 This module deliberately uses no ``assert`` itself.
@@ -18,6 +20,7 @@ from typing import Any
 from expectations import CASES, COMPOSITE_JOIN, COVERAGE_FAIL, Approx, Case
 from shop import make_shop
 
+import factlang as fl
 from factlang.connectors import DBAPIConnector
 from factlang.engine import Checker
 from factlang.semantics.catalog import CachedCatalog, NullCatalog
@@ -43,9 +46,38 @@ HOSTILE = (
 )
 
 
+BAD_PLAN = ("NONE_PLAN orders.amount", "STR_PLAN orders.amount WHERE status = 'paid'")
+
+
+def _bad_plan_pack() -> fl.ContractPack:
+    """Custom verbs whose plan is a host bug: it returns ``None`` or a string."""
+    pack = fl.standard_pack().extend("bad-plans", "1.0")
+    for name, returned in (("NONE_PLAN", None), ("STR_PLAN", "SELECT 1")):
+        verb = pack.verb(name, summary="x", operands=[fl.Operand.column()], filterable=True)
+        verb(lambda claim, returned=returned: returned)
+        verb.derive(lambda payload, claim: {"min": payload["min_value"]})
+        verb.facts("min")
+        verb.decide(fl.Compare("min", ">", value=0))
+    return pack
+
+
+def _bad_plan_outcome(conn: DBAPIConnector, claim: str) -> dict[str, Any]:
+    pack = _bad_plan_pack()
+    (o,) = Checker(conn, pack=pack, catalog=NullCatalog()).check(claim).outcomes
+    (c,) = Checker(dialect="duckdb", pack=pack).compile(claim)
+    compiled = c.explanation if isinstance(c, fl.Outcome) else f"probe: {c.sql_template}"
+    return {
+        "claim": claim,
+        "outcomes": [{"verdict": o.verdict.name, "explanation": o.explanation}],
+        "compiled": compiled,
+    }
+
+
 def _outcome(conn: DBAPIConnector, case: Case | str) -> dict[str, Any]:
     kw: dict[str, Any] = {}
     clocked: set[str] = set()
+    if isinstance(case, str) and case in BAD_PLAN:
+        return _bad_plan_outcome(conn, case)
     if isinstance(case, str):
         claim, lying = case, _Lying()
         kw["catalog"] = CachedCatalog(lying)  # type: ignore[arg-type]
@@ -82,7 +114,7 @@ def main() -> int:
         make_shop(con)
         conn = DBAPIConnector(con, "duckdb")
         cases = (*CASES, *COMPOSITE_JOIN, COVERAGE_FAIL)
-        rows = [_outcome(conn, case) for case in (*cases, *HOSTILE)]
+        rows = [_outcome(conn, case) for case in (*cases, *HOSTILE, *BAD_PLAN)]
     finally:
         con.close()
     json.dump({"optimize": sys.flags.optimize, "cases": rows}, sys.stdout, sort_keys=True)

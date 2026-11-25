@@ -47,6 +47,8 @@ No primitive samples its input unless its `sample` field is set, and only `Check
 
 A custom primitive registers with `fl.ir.register_primitive(cls, lower=fn)`. It must declare arity and result columns and supply a lowering to the internal SQL tree; otherwise rendering it is FL500.
 
+`fl.ir.unregister_primitive(cls)` removes a registration (`KeyError` if there is none); it is the supported way to undo one, for instance in a test teardown. `fl.ir.PRIMITIVE_LOWERINGS` is read-only by convention: it stays a plain `dict` in 0.1.x, so `.pop()` still works, but a read-only view is planned for 0.2.0.
+
 ## See also
 
 - [[Optimizer]]

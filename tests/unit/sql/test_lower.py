@@ -10,7 +10,6 @@ from typing import ClassVar
 import pytest
 
 from factlang.ir import (
-    PRIMITIVE_LOWERINGS,
     Arity,
     ColumnAggregate,
     CompositeKeyAggregate,
@@ -21,6 +20,7 @@ from factlang.ir import (
     SampleSpec,
     ValueMembership,
     register_primitive,
+    unregister_primitive,
 )
 from factlang.semantics.filters import FAnd, FBool, FCompare, FIn, FIsNull, FNot, FOr, Param
 from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
@@ -530,7 +530,7 @@ def test_custom_primitive_dispatches_through_registry() -> None:
         with pytest.raises(RenderError, match="FL500"):
             lower(_MaxLen(ORDERS))  # type: ignore[arg-type]
     finally:
-        PRIMITIVE_LOWERINGS.pop(_MaxLen, None)
+        unregister_primitive(_MaxLen)
 
 
 def test_unknown_primitive_is_fl500() -> None:
@@ -716,7 +716,7 @@ def test_custom_lowering_with_clashing_param_names_is_fl500() -> None:
         with pytest.raises(RenderError, match="FL500 parameter name 'p1'"):
             lower(_MaxLen(ORDERS))  # type: ignore[arg-type]
     finally:
-        PRIMITIVE_LOWERINGS.pop(_MaxLen, None)
+        unregister_primitive(_MaxLen)
 
 
 def test_custom_lowering_with_mismatched_aliases_is_fl500() -> None:
@@ -728,7 +728,7 @@ def test_custom_lowering_with_mismatched_aliases_is_fl500() -> None:
         with pytest.raises(RenderError, match=r"FL500 .*result_columns"):
             lower(_MaxLen(ORDERS))  # type: ignore[arg-type]
     finally:
-        PRIMITIVE_LOWERINGS.pop(_MaxLen, None)
+        unregister_primitive(_MaxLen)
 
 
 def test_value_membership_outer_order_summary_first_then_freq_desc_value_asc() -> None:

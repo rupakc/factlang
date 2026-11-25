@@ -19,9 +19,11 @@ tokens, diagnostics); it must not import the parser.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from factlang.syntax import ast
+from factlang.syntax.tokens import FILTER_KEYWORDS
 
 LK = ast.LiteralKind
 
@@ -70,6 +72,45 @@ def _string(text: str) -> str:
 
 def _quoted(text: str) -> str:
     return '"' + text.replace('"', '""') + '"'
+
+
+_BARE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_RESERVED_BARE = frozenset({"WHERE", "USE", *FILTER_KEYWORDS})
+_UNREPRESENTABLE = {"\r": "a carriage return", "\n": "a newline", "\x00": "a NUL character"}
+
+
+def needs_quoting(name: str) -> bool:
+    """True iff writing ``name`` bare in FactLang source would not denote that exact name.
+
+    A bare name must match ``[A-Za-z_][A-Za-z0-9_$]*`` (ASCII), must not be an uppercase
+    word (at least one letter and no lowercase letter: such a word starts the attribute
+    section or is read as a keyword) and must not be ``WHERE``, ``USE`` or a member of
+    ``FILTER_KEYWORDS`` (case-sensitive). ``deleted``, ``Status`` and ``order`` need no
+    quotes; ``ID``, ``NULL``, ``order items`` and ``2fa`` do. Quoting is always safe: when
+    in doubt (a non-ASCII letter, say) the answer is ``True``.
+    """
+    if _BARE_NAME.fullmatch(name) is None:
+        return True
+    if any(c.isalpha() for c in name) and not any(c.islower() for c in name):
+        return True
+    return name in _RESERVED_BARE
+
+
+def quote_name(name: str) -> str:
+    """The FactLang double-quoted form of ``name``: ``"`` + ``name`` with ``"`` doubled + ``"``.
+
+    Raises ``ValueError`` for an empty name and for a name holding a carriage return or a
+    newline (a quoted identifier cannot span lines) or NUL (no warehouse identifier can
+    hold it; rendering would refuse it as FL502).
+    """
+    if not isinstance(name, str):
+        raise TypeError(f"name must be a str, got {type(name).__name__}")
+    if not name:
+        raise ValueError("an empty name cannot be quoted")
+    for char, what in _UNREPRESENTABLE.items():
+        if char in name:
+            raise ValueError(f"a name holding {what} cannot be written in FactLang source")
+    return _quoted(name)
 
 
 def _name(name: ast.Name) -> str:
@@ -178,4 +219,4 @@ def format_document(doc: ast.Document) -> str:
     return "".join(line + "\n" for line in lines)
 
 
-__all__ = ["format_claim", "format_document"]
+__all__ = ["format_claim", "format_document", "needs_quoting", "quote_name"]

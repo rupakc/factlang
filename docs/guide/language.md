@@ -74,6 +74,26 @@ inside a string, as in SQL.
     quoted: `ROWS "ORDERS" VALUE >=1`. Without the quotes, `ORDERS` would be read as an
     attribute.
 
+### Writing names from code
+
+A program that generates claims from warehouse metadata does not have to re-derive these
+rules: `factlang.syntax.needs_quoting(name)` says whether a name written bare would denote
+something else (an uppercase word, a filter keyword, a space or a leading digit), and
+`factlang.syntax.quote_name(name)` returns its double-quoted form, refusing (`ValueError`) an
+empty name or one holding a carriage return, a newline or NUL.
+
+```python
+import factlang as fl
+from factlang.syntax import needs_quoting, quote_name
+
+def name(n: str) -> str:
+    return quote_name(n) if needs_quoting(n) else n
+
+print(name("status"), name("ID"), name("order items"), name('say "hi"'))
+# status "ID" "order items" "say ""hi"""
+assert fl.lint(f"UNIQUE {name('Order Items')}.{name('ID')}").has_errors is False
+```
+
 ## Values
 
 | kind | examples | notes |

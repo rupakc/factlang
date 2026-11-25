@@ -106,6 +106,17 @@ than `result_columns()`, is refused with `FL500`, as is rendering a primitive no
 registered. Use it from a [verb's plan](verbs.md) or [measure](../guide/measure.md) it
 directly.
 
+`fl.ir.unregister_primitive(cls)` removes a registration (in a test's teardown, say) and
+raises `KeyError` if `cls` has none. Change the registry only through these two functions:
+`fl.ir.PRIMITIVE_LOWERINGS` is read-only by convention. It stays a plain `dict` throughout
+0.1.x; a read-only view is planned for 0.2.0.
+
+```python
+fl.ir.unregister_primitive(CountAbove)
+assert CountAbove not in fl.ir.PRIMITIVE_LOWERINGS
+fl.ir.register_primitive(CountAbove, lower=lower_count_above)  # no replace=True needed now
+```
+
 ## See also
 
 - [Raw measurement](../guide/measure.md)

@@ -29,6 +29,8 @@ series**. Libraries built on FactLang, schema profilers in particular, may depen
 | `fl.sql.Param` (a typed bind parameter) | [Fragments](../extending/fragments.md) |
 | `fl.connectors.Connector`, `AsyncConnector`, `QueryResult`, `ExecutionError` | [Connectors](../extending/connectors.md) |
 | `factlang.syntax.FILTER_KEYWORDS`: the words reserved inside a `WHERE` filter (the filter-keyword set only, not every keyword of the language) | [Filters](../guide/filters.md) |
+| `factlang.syntax.needs_quoting`, `factlang.syntax.quote_name`: whether a name must be quoted in FactLang source, and its quoted form | [Writing names from code](../guide/language.md#writing-names-from-code) |
+| `fl.ir.register_primitive`, `fl.ir.unregister_primitive` (`fl.ir.PRIMITIVE_LOWERINGS` is read-only by convention: change it only through these two) | [IR primitives](../extending/primitives.md#a-custom-primitive) |
 | `Report.verified` and `Report.ok` | [Verdicts](../guide/verdicts.md#reports) |
 
 The metric aliases (`row_count non_null distinct_keys max_rows_per_key min_value max_value
@@ -49,6 +51,10 @@ sum_value avg_value duplicate_keys server_now`) are a wire format and do not cha
 ::: factlang.api.parse_filter
 
 ::: factlang.syntax.parser.parse
+
+::: factlang.syntax.formatter.needs_quoting
+
+::: factlang.syntax.formatter.quote_name
 
 `fl.check` with a single claim returns an `Outcome`; with any other number it returns a
 `Report`. To get document-level diagnostics (a broken `USE` line, for instance) always use
@@ -132,6 +138,8 @@ outcomes, or with nothing measured at all, is ok but not verified.
 ::: factlang.ir.metrics.Metric
 
 ::: factlang.ir.primitives.register_primitive
+
+::: factlang.ir.primitives.unregister_primitive
 
 ## SQL
 

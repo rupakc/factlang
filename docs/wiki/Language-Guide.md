@@ -34,6 +34,7 @@ A reference has one to four parts separated by dots: `[catalog.][schema.]table[.
 
 - Quote a name with `"double quotes"` or `` `backticks` `` when it has spaces, uppercase letters you want preserved, or clashes with a keyword.
 - An unquoted name means exactly what it would mean in your warehouse's own SQL, so the warehouse applies its own case rules.
+- Generating claims from code? `factlang.syntax.needs_quoting(name)` says whether a name must be quoted (it would not denote itself bare: an uppercase word, a filter keyword, a space, a leading digit), and `factlang.syntax.quote_name(name)` returns the double-quoted form (`ValueError` for an empty name or one holding CR, LF or NUL). Both are stable API.
 - `EXISTS t COLUMN c` names a column through an attribute, because a bare `a.b` operand is always a table.
 
 ### The USE directive

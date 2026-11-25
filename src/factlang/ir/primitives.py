@@ -374,6 +374,9 @@ CORE_PRIMITIVES: tuple[type, ...] = (
 
 # primitive class -> builder into the internal SQL AST (consumed by the lowering, Task 13)
 PRIMITIVE_LOWERINGS: dict[type, Callable[..., object]] = {}
+"""Registered primitive classes and their lowerings. Read-only by convention: change it only
+through :func:`register_primitive` and :func:`unregister_primitive`. It stays a plain ``dict``
+throughout 0.1.x; a read-only view is planned for 0.2.0."""
 
 
 def register_primitive(cls: type, *, lower: Callable[..., object], replace: bool = False) -> None:
@@ -392,6 +395,19 @@ def register_primitive(cls: type, *, lower: Callable[..., object], replace: bool
     if cls in PRIMITIVE_LOWERINGS and not replace:
         raise ValueError(f"primitive {cls.__name__} is already registered")
     PRIMITIVE_LOWERINGS[cls] = lower
+
+
+def unregister_primitive(cls: type) -> None:
+    """Remove the registration of primitive ``cls``; raises ``KeyError`` if it has none.
+
+    The supported way to undo :func:`register_primitive` (in a test's teardown, say); do not
+    mutate ``PRIMITIVE_LOWERINGS`` directly.
+    """
+    try:
+        del PRIMITIVE_LOWERINGS[cls]
+    except KeyError:
+        name = getattr(cls, "__name__", repr(cls))
+        raise KeyError(f"primitive {name} is not registered") from None
 
 
 def is_sampled(plan: object) -> bool:
@@ -459,4 +475,5 @@ __all__ = [
     "canonical_key",
     "is_sampled",
     "register_primitive",
+    "unregister_primitive",
 ]

@@ -134,6 +134,23 @@ def test_usability_names_are_reachable_from_public_paths() -> None:
             assert hasattr(mod, name), (mod.__name__, name)
 
 
+def test_syntax_and_ir_helper_exports() -> None:
+    from factlang import syntax
+
+    # 0.1.3 (spec 3.3 P1-P3): the quoting helpers and unregister_primitive are public
+    assert set(syntax.__all__) == {
+        "FILTER_KEYWORDS",
+        "ParseResult",
+        "needs_quoting",
+        "parse",
+        "quote_name",
+    }
+    assert {"register_primitive", "unregister_primitive", "PRIMITIVE_LOWERINGS"} <= set(
+        fl.ir.__all__
+    )
+    assert fl.ir.unregister_primitive is fl.ir.primitives.unregister_primitive
+
+
 def test_facade_import_is_idempotent() -> None:
     assert importlib.reload(fl).__all__ == fl.__all__
 

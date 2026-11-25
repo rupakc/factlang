@@ -20,6 +20,7 @@ from factlang.ir.primitives import (
     canonical_key,
     is_sampled,
     register_primitive,
+    unregister_primitive,
 )
 from factlang.semantics.refs import ColumnRef, EdgeRef, Ident, TableRef
 
@@ -49,4 +50,5 @@ __all__ = [
     "canonical_key",
     "is_sampled",
     "register_primitive",
+    "unregister_primitive",
 ]

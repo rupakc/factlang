@@ -38,6 +38,10 @@ The hash (SHA-256 over a canonical form of verb, resolved operands, filter in ca
 
 `fl.parse_filter("deleted IS NULL OR NOT deleted")` parses and checks a bare condition (with or without `WHERE`), returning the filter tree and diagnostics, with no claim around it. Useful for tools that build SQL fragments. See [[Measurement-API]].
 
+## Quoting names from code
+
+`factlang.syntax.needs_quoting(name)` is true iff the bare name would not denote exactly that name: it does not match `[A-Za-z_][A-Za-z0-9_$]*`, or it is an uppercase word (at least one letter, no lowercase letter: read as an attribute or keyword), or it is `WHERE`, `USE` or a filter keyword. `factlang.syntax.quote_name(name)` returns the double-quoted form with inner `"` doubled, and refuses an empty name and CR, LF or NUL. Both are property-tested against this parser.
+
 ## See also
 
 - [[Lexer]]

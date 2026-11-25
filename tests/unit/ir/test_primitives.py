@@ -23,6 +23,7 @@ from factlang.ir import (
     canonical_key,
     is_sampled,
     register_primitive,
+    unregister_primitive,
 )
 from factlang.semantics.filters import FCompare, Param
 from factlang.semantics.refs import ColumnRef, Ident, TableRef
@@ -309,15 +310,16 @@ def test_register_primitive() -> None:
     def lower(plan: object) -> object:
         return plan
 
+    register_primitive(Median, lower=lower)
     try:
-        register_primitive(Median, lower=lower)
         assert ir.PRIMITIVE_LOWERINGS[Median] is lower
         with pytest.raises(ValueError, match="already"):
             register_primitive(Median, lower=lower)
         register_primitive(Median, lower=lower, replace=True)
         json.loads(canonical_key(Median(T, C)))
     finally:
-        PRIMITIVE_LOWERINGS.pop(Median, None)
+        unregister_primitive(Median)
+    assert Median not in PRIMITIVE_LOWERINGS
 
     class NotADataclass:
         arity = Arity.SINGLE_ROW
@@ -383,3 +385,25 @@ def test_sample_fraction_whose_keyhash_threshold_rounds_to_zero_is_refused() -> 
     # 5e-7 rounds half-up to one bucket of 1_000_000: the smallest fraction accepted
     SampleSpec("keyhash", Decimal("0.0000005"), key=(C,))
     SampleSpec("system", Decimal("0.0000005"))
+
+
+def test_unregister_primitive() -> None:
+    @dataclass(frozen=True)
+    class Mode:
+        arity: ClassVar[Arity] = Arity.SINGLE_ROW
+        table: TableRef
+
+        def result_columns(self) -> tuple[str, ...]:
+            return ("mode",)
+
+    with pytest.raises(KeyError, match="Mode"):
+        unregister_primitive(Mode)  # never registered
+    register_primitive(Mode, lower=lambda plan: plan)
+    unregister_primitive(Mode)
+    assert Mode not in PRIMITIVE_LOWERINGS
+    with pytest.raises(KeyError):
+        unregister_primitive(Mode)  # already removed
+    # a removed class can be registered again without replace=True
+    register_primitive(Mode, lower=lambda plan: plan)
+    unregister_primitive(Mode)
+    assert "unregister_primitive" in ir.__all__

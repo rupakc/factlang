@@ -427,7 +427,7 @@ def test_no_command_prints_help_and_exits_2(capsys: pytest.CaptureFixture[str]) 
 def test_version(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
         cli.main(["--version"])
-    assert exc.value.code == 0 and "0.1.2" in capsys.readouterr().out
+    assert exc.value.code == 0 and "0.1.3" in capsys.readouterr().out
 
 
 def test_python_dash_m(tmp_path: Path) -> None:

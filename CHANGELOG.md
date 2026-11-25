@@ -7,6 +7,80 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-25
+
+Compatible improvements: two quoting helpers, a claim cap for agents, per-dialect inline
+spellings, and guards that hold under `python -O`. Bound-parameter SQL is unchanged.
+
+### Added
+- `factlang.syntax.needs_quoting(name)` and `factlang.syntax.quote_name(name)` (stable API):
+  whether a name must be quoted to be written in FactLang source, and its double-quoted
+  form. `quote_name` raises `ValueError` for an empty name or one holding CR, LF or NUL.
+- `fl.ir.unregister_primitive(cls)` (`KeyError` if `cls` is not registered), the supported
+  way to remove a registration. `fl.ir.register_primitive` and `unregister_primitive` are
+  listed in the stable API; `fl.ir.PRIMITIVE_LOWERINGS` is read-only by convention (it stays
+  a `dict` in 0.1.x; a read-only view is planned for 0.2.0).
+- Agent tools: `factlang_check` / `factlang_explain` (`handle_tool_call` and the MCP server)
+  refuse a call carrying more than `max_claims` claims (default 200) with the new error
+  code `too_many_claims`, before any analysis or SQL; `factlang mcp --max-claims N`,
+  `handle_tool_call(..., max_claims=...)` (`None` removes the cap) and
+  `factlang.agent.tools.count_claims`. `factlang_lint` is not capped. Tool error codes may
+  be added in patch releases; consumers must handle codes they do not know.
+- Warning `FL314`: a `TOLERANCE` or `ABS_TOLERANCE` on a `MIN`/`MAX` whose `VALUE` is a
+  date or timestamp has no effect, and the claim will be `error` when judged (judging is
+  unchanged; as a warning it leaves `factlang lint` exit codes and `Report.ok` as they
+  were). Declared through the new `VerbSpec.no_band_on_temporal`, usable by contract
+  authors.
+
+### Changed (inline output)
+- Timestamp literals in inline/display SQL now follow the dialect. Ten dialects changed:
+  `trino` and bridged `presto`, `athena`, `dune` write
+  `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff] UTC'` (an explicit zone, so the literal is the
+  UTC instant whatever the session time zone); `databricks` and bridged `hive`, `spark`,
+  `spark2`, `teradata`, `exasol` write `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff]'` (naive,
+  holding UTC). Bridged `teradata` inlines booleans as `1`/`0`. Date literals, the
+  quote-doubling decision (always the dialect's lexer) and bound-parameter SQL are
+  unchanged.
+- Precision caps: inlining refuses with `FL507` a `Decimal` whose plain-notation precision
+  exceeds 38 digits (`Decimal('1E+50')` counts 51) and an `int` outside the signed 64-bit
+  range, where engines silently change the literal's type (DuckDB reads them as `DOUBLE`,
+  `HUGEINT` or `BIGNUM`). Evidence shows the `{{name}}` template instead; checks are
+  unaffected.
+
+### Fixed
+- Guards on host-supplied values (`CachedCatalog` answers, `UnionAll` branches built by a
+  custom lowering, non-finite numbers in caller-built parameters) no longer vanish under
+  `python -O`: they raise `AssertionError` explicitly, as before, now with a message. Under
+  `-O` a protocol-breaking catalog could turn an `error` into a `pass`.
+- A custom contract whose plan returns `None` (or anything that is not a core or registered
+  primitive) is refused by `plan_for` with a `ValueError` naming the verb, so `check()` and
+  `compile()` report the documented "plan failed" `error`, identically under `-O`. It used
+  to be taken for a catalog verb: a bare `AssertionError` (or, under `-O`, a "catalog lookup
+  failed" error), and `compile()` silently rendered a metadata query.
+- Caret lines in rendered diagnostics copy the tabs of the source line, so carets line up
+  under tab-indented claims in any tab width.
+
+### Documentation
+- The grammar reference documents the continuation rule (blanks after `\` are allowed) and
+  that a column named `TRUE` must be quoted while a lowercase `true` is a valid bare name;
+  the agents guide recommends a read-only database role and explains that `--max-bytes`
+  bounds cost only on dry-run-capable connectors while `--max-claims` bounds work; the
+  verbs guide states 19 verbs (doc-tested); the connectors guide explains that
+  non-weak-referenceable connections (sqlite3, pyodbc) are held for the process lifetime.
+
+### Tests & CI
+- The release workflow's verify job requires the tag push's own CI run with every
+  `test-full` matrix leg green (no other run may substitute; 100-minute wait, 120-minute job
+  timeout, transient `gh` failures retried), via `scripts/verify_tag_ci.py`.
+- Engine timeout and DB-API thread tests use events and barriers instead of wall-clock
+  budgets; the architecture test reports each violation once; the packs test helper no
+  longer edits `sys.path`; the analyser test no longer leaks registered value types.
+- New: a hash-preserving format property, hypothesis properties for the quoting helpers
+  against the real parser, a bound-SQL snapshot pinning `sql_template` + parameters to 0.1.2
+  for 19 dialects, sqlglot round-trips of every new spelling, the DuckDB verb matrix run
+  normally and under `python -O` with identical outcomes, and every `assert` left in `src/`
+  pinned as a reviewed internal invariant.
+
 ## [0.1.2] - 2026-11-25
 
 Security: literal inlining trusts no value's own methods (post-0.1.1 security review).

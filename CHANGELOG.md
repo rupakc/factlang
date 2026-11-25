@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-25
+
 Security: literal inlining trusts no value's own methods (post-0.1.1 security review).
 
 ### Security
@@ -140,6 +142,7 @@ The first release. Development status: Alpha. Python 3.10–3.13.
   probe (both claims were reported as `FL500`).
 - `str(Verdict.PASS)` is `"pass"`.
 
-[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/rupakc/factlang/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/rupakc/factlang/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/rupakc/factlang/releases/tag/v0.1.0

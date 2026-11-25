@@ -5,7 +5,7 @@ full text is in `CLAUDE.md`; the design is in `docs/specs/2026-11-24-factlang-de
 
 ## Rules
 
-- Package `factlang`, `src/` layout, import name `factlang`, version `0.1.1` in `src/factlang/__about__.py`; `LANGUAGE_VERSION = "1.0"`.
+- Package `factlang`, `src/` layout, import name `factlang`, version `0.1.2` in `src/factlang/__about__.py`; `LANGUAGE_VERSION = "1.0"`.
 - Python `>=3.10`; CI matrix 3.10, 3.11, 3.12, 3.13.
 - Core (everything except `factlang/sql/sqlglot_bridge.py`, `factlang/connectors/<adapter>.py` other than `base.py`/`callable.py`/`dbapi.py`/`catalog.py`, `factlang/agent/mcp.py`) imports only the stdlib. Optional deps imported lazily inside functions.
 - Layer rule spec §5.1: a module imports only from strictly lower layers.

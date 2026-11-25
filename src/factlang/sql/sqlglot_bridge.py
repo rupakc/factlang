@@ -37,8 +37,9 @@ from __future__ import annotations
 import dataclasses
 import functools
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from factlang.ir import ProbePlan
@@ -83,6 +84,26 @@ _CAST_TYPES = {
     "bytes": "VARBINARY",
     "json": "JSON",
 }
+# Inline-literal spellings of bridged dialects with no native profile, by sqlglot dialect
+# name (spec 0.1.3 I1/I2). Consulted after native profiles and before the ancestor walk, for
+# the dialect class registered under exactly that name (a subclass walks as before). Display
+# SQL only; the quote-doubling decision always comes from the dialect's lexer, never from here.
+_UTC_TIMESTAMP = "TIMESTAMP '{date} {time} UTC'"  # Presto/Trino: an explicit zone
+_NAIVE_TIMESTAMP = "TIMESTAMP '{date} {time}'"  # naive, holding UTC wall-clock time
+BRIDGE_LITERAL_STYLES: Mapping[str, LiteralStyle] = MappingProxyType(
+    {
+        "presto": dataclasses.replace(ANSI_STYLE, timestamp_literal=_UTC_TIMESTAMP),
+        "athena": dataclasses.replace(ANSI_STYLE, timestamp_literal=_UTC_TIMESTAMP),
+        "hive": dataclasses.replace(ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP),
+        "spark": dataclasses.replace(ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP),
+        "spark2": dataclasses.replace(ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP),
+        # Teradata has no boolean literal: 1/0, as on T-SQL and Oracle
+        "teradata": dataclasses.replace(
+            ANSI_STYLE, true_literal="1", false_literal="0", timestamp_literal=_NAIVE_TIMESTAMP
+        ),
+        "exasol": dataclasses.replace(ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP),
+    }
+)
 _GENERIC_CATALOG = "SELECT column_name, data_type FROM information_schema.columns WHERE {where}"
 _PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
 _TOKEN = re.compile(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}")
@@ -149,14 +170,19 @@ def literal_style(dialect: str) -> LiteralStyle | None:
 
     The quote form comes from the dialect's own lexer (``''`` is an escaped quote only when
     sqlglot's tokenizer lists ``'`` among its string escapes); the other spellings come from
-    the nearest native profile in the dialect's class hierarchy (Fabric -> T-SQL,
-    Materialize -> Postgres), else ANSI.
+    the ``BRIDGE_LITERAL_STYLES`` entry of the dialect's sqlglot name, else from the nearest
+    native profile in the dialect's class hierarchy (Fabric -> T-SQL, Materialize ->
+    Postgres, Dune -> Trino), else ANSI.
     """
     if not isinstance(dialect, str):
         return None
     resolved = _sqlglot_dialect(SQLGLOT_NAMES.get(dialect, dialect))
     if resolved is None:
         return None
+    doubled = lexer_doubles_quote(dialect) is True
+    entry = _bridge_entry(type(resolved))
+    if entry is not None:
+        return dataclasses.replace(entry, doubled_quote_escape=doubled)
     by_class: dict[type, DialectProfile] = {}
     for name in native_dialects():
         native = _sqlglot_dialect(SQLGLOT_NAMES.get(name, name))
@@ -168,8 +194,17 @@ def literal_style(dialect: str) -> LiteralStyle | None:
         if cls in by_class:
             base = by_class[cls].literal_style
             break
-    doubled = lexer_doubles_quote(dialect) is True
     return dataclasses.replace(base, doubled_quote_escape=doubled)
+
+
+def _bridge_entry(cls: type) -> LiteralStyle | None:
+    """The ``BRIDGE_LITERAL_STYLES`` entry whose sqlglot dialect class is exactly ``cls``."""
+    from sqlglot.dialects.dialect import Dialect
+
+    for name, style in BRIDGE_LITERAL_STYLES.items():
+        if Dialect.classes.get(name) is cls:
+            return style
+    return None
 
 
 def _target(dialect: str | DialectProfile, max_table_parts: int | None = None) -> _Target:

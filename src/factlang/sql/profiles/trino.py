@@ -86,6 +86,9 @@ TRINO = DialectProfile(
     ),
     default_schema_sql="current_schema",
     default_catalog_sql="current_catalog",
+    # inlined literals: timestamps are timestamp(6) with time zone; the explicit UTC zone
+    # makes the literal the UTC instant whatever the session zone (no 'T' separator)
+    timestamp_literal="TIMESTAMP '{date} {time} UTC'",
 )
 
 __all__ = ["TRINO"]

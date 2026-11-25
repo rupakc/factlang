@@ -91,6 +91,8 @@ DATABRICKS = DialectProfile(
     default_catalog_sql="current_catalog()",
     # a string literal escapes ' with a backslash only; '' is two adjacent literals
     doubled_quote_escape=False,
+    # a naive TIMESTAMP literal holding UTC wall-clock time, as on Oracle
+    timestamp_literal="TIMESTAMP '{date} {time}'",
 )
 
 __all__ = ["DATABRICKS"]

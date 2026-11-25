@@ -62,18 +62,41 @@ whatever it cannot render safely instead of guessing:
   `Decimal`, `str`, `datetime.date` and `datetime.datetime`. A subclass of any of them (an
   `IntEnum`, a numpy scalar, a `str` subclass) is refused, because its own methods could
   print anything; values are rendered through the base type's functions or from their
-  fields. Lists, dicts, sets, bytes, other objects, `NaN`, infinities, integers or decimals
-  with more than 4300 digits, and a value whose type does not match its parameter family (a
-  `datetime` in a `date` parameter, `True` in an `integer` one) are refused.
-- Spellings follow the dialect: T-SQL strings are national literals (`N'…'`); T-SQL and
-  Oracle booleans are `1`/`0`; timestamps are converted to UTC and written as
-  `CAST('… …' AS DATETIME2)` on T-SQL, `TIMESTAMP '… …'` on Oracle, and
-  `TIMESTAMP '…T…+00:00'` elsewhere; T-SQL dates are `CAST('…' AS DATE)`.
-- A timestamp inlines as a UTC literal of the dialect's timestamp type, which most engines
-  read as a naive (time-zone-less) value holding UTC wall-clock time. Compared with a
-  time-zone-aware column (`timestamptz`, `DATETIMEOFFSET`, `TIMESTAMP WITH TIME ZONE`), the
-  result then depends on the session time zone. Bound parameters have the same semantics,
-  so inline and executed SQL agree; neither is independent of the session time zone.
+  fields. Lists, dicts, sets, bytes, other objects, `NaN`, infinities and a value whose type
+  does not match its parameter family (a `datetime` in a `date` parameter, `True` in an
+  `integer` one) are refused.
+- Numbers are inlined only where every engine reads the literal as that exact value: an
+  `int` within the signed 64-bit range, and a `Decimal` whose plain form needs a precision
+  (integer digits plus scale, what `DECIMAL(p,s)` must hold) of at most 38, so
+  `Decimal('1E+50')` (precision 51) is refused. Past those limits engines silently change
+  the literal's type or precision (DuckDB reads a 39-digit fraction as `DOUBLE`, a 20-digit integer as `HUGEINT`). A
+  finite `float` always inlines: its shortest `repr` never has more than 17 significant
+  digits. Bound parameters have no such limits.
+- Spellings follow the dialect. T-SQL strings are national literals (`N'…'`); T-SQL, Oracle
+  and Teradata booleans are `1`/`0`. Timestamps are converted to UTC; fractional seconds
+  (`.ffffff`) are written only when the microseconds are not zero. Dates are `DATE '…'`
+  everywhere except T-SQL (`CAST('…' AS DATE)`).
+
+    Timestamp literals:
+
+    - `trino`, and bridged `presto`, `athena` and Trino-derived dialects:
+      `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff] UTC'`;
+    - `databricks`, `oracle`, and bridged `hive`, `spark`, `spark2`, `teradata`, `exasol`:
+      `TIMESTAMP 'YYYY-MM-DD HH:MM:SS[.ffffff]'`;
+    - `tsql` (and bridged `fabric`): `CAST('YYYY-MM-DD HH:MM:SS[.ffffff]' AS DATETIME2)`;
+    - every other dialect: `TIMESTAMP 'YYYY-MM-DDTHH:MM:SS[.ffffff]+00:00'`.
+
+    A bridged dialect takes its spellings from a small table of sqlglot dialect names
+    (`BRIDGE_LITERAL_STYLES` in `factlang.sql.sqlglot_bridge`), else from the nearest native
+    profile it derives from in sqlglot (Fabric from T-SQL, Materialize from Postgres), else
+    the ANSI forms. Whether `''` may be used is always decided by the dialect's own lexer.
+- On Trino-family dialects the literal carries an explicit `UTC` zone, so it is the UTC
+  instant whatever the session time zone. Elsewhere a timestamp inlines as a literal most
+  engines read as a naive (time-zone-less) value holding UTC wall-clock time; compared with
+  a time-zone-aware column (`timestamptz`, `DATETIMEOFFSET`, `TIMESTAMP WITH TIME ZONE`),
+  the result then depends on the session time zone, as it does for the bound parameter.
+  The executed statement always binds its parameters, so the inline spelling never changes
+  what a check measures.
 
 A refusal is `RenderError("FL507 cannot inline <type> parameter <name> …")`. Evidence never
 fails a check over it: `evidence.sql` (and `factlang explain`, the agent's `factlang_explain`

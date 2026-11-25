@@ -217,14 +217,20 @@ def test_extreme_decimals_are_refused_fast_and_ordinary_ones_render() -> None:
             inline(value, "decimal")
     assert time.monotonic() - start < 1.0
     assert inline(Decimal("-0"), "decimal") == "SELECT -0 AS x"
-    assert inline(Decimal("1E+50"), "decimal") == "SELECT 1" + "0" * 50 + " AS x"
-    assert inline(Decimal("1E-50"), "decimal") == "SELECT 0." + "0" * 49 + "1 AS x"
+    # 0.1.3 (I3): past DECIMAL's 38 digits of precision is FL507; within, the plain form
+    for value in [Decimal("1E+50"), Decimal("1E-50")]:
+        with pytest.raises(RenderError, match=FL507):
+            inline(value, "decimal")
+    assert inline(Decimal("1E+37"), "decimal") == "SELECT 1" + "0" * 37 + " AS x"
+    assert inline(Decimal("1E-38"), "decimal") == "SELECT 0." + "0" * 37 + "1 AS x"
 
 
 def test_an_integer_past_the_digit_limit_is_fl507_not_value_error() -> None:
     with pytest.raises(RenderError, match=FL507):
         inline(10**5000, "integer")
-    assert inline(10**4000, "integer") == f"SELECT {10**4000} AS x"
+    with pytest.raises(RenderError, match=FL507):  # 0.1.3: past signed 64-bit (I3)
+        inline(10**4000, "integer")
+    assert inline(2**63 - 1, "integer") == f"SELECT {2**63 - 1} AS x"
     assert display_sql(probe(10**5000, "integer")) == "SELECT {{p1}} AS x"
 
 
@@ -326,8 +332,10 @@ def test_timestamps_are_utc_and_parse_in_every_native_dialect(dialect: str) -> N
     if dialect == "tsql":
         assert sql == "SELECT CAST('2019-12-31 19:00:00.000250' AS DATETIME2) AS x"
         assert isinstance(node, exp.Cast) and node.to.sql("tsql") == "DATETIME2"
-    elif dialect == "oracle":
+    elif dialect in ("oracle", "databricks"):
         assert sql == "SELECT TIMESTAMP '2019-12-31 19:00:00.000250' AS x"
+    elif dialect == "trino":
+        assert sql == "SELECT TIMESTAMP '2019-12-31 19:00:00.000250 UTC' AS x"
     else:
         assert sql == "SELECT TIMESTAMP '2019-12-31T19:00:00.000250+00:00' AS x"
     naive = inline(dt.datetime(2025, 1, 31, 12), "timestamp", dialect)

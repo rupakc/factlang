@@ -109,8 +109,17 @@ def bind_template(
 
 
 # Python's default int <-> str conversion limit; also the bound for a Decimal's plain form, so
-# a value like Decimal("1E+100000000") is refused instead of rendering 100M digits.
+# a value like Decimal("1E+100000000") is refused instead of rendering 100M digits. The inline
+# caps below are tighter; this stays the cheap first check.
 MAX_LITERAL_DIGITS = 4300
+# Inline precision caps (spec 0.1.3 I3): past these, engines silently change a literal's type
+# or precision (DuckDB reads a 39-digit fraction as DOUBLE, a 39-digit integer as BIGNUM and
+# a 20-digit one as HUGEINT), so the literal would not mean the value. Bound parameters are
+# not affected.
+MAX_DECIMAL_PRECISION = 38
+INT64_MIN = -(2**63)
+INT64_MAX = 2**63 - 1
+MAX_FLOAT_SIGNIFICANT_DIGITS = 17
 
 
 @dataclass(frozen=True)
@@ -205,6 +214,19 @@ def _time_text(t: dt.datetime) -> str:
     return text + (f".{t.microsecond:06d}" if t.microsecond else "")
 
 
+def _decimal_precision(plain: str) -> int:
+    """Integer digits + scale of a plain-notation decimal (what ``DECIMAL(p, s)`` must hold):
+    ``1E+50`` counts 51, ``0.001`` counts 3, ``0`` counts 1."""
+    whole, _, scale = plain.lstrip("-").partition(".")
+    return max(len(whole.lstrip("0")) + len(scale), 1)
+
+
+def _significant_digits(text: str) -> int:
+    """Significant digits of a ``float.__repr__`` (``1e+22`` -> 1, ``0.0001`` -> 1)."""
+    mantissa = text.lstrip("-").split("e")[0].replace(".", "")
+    return max(len(mantissa.strip("0")), 1)
+
+
 def _trusted_tz(tz: object) -> bool:
     if tz is None or type(tz) is dt.timezone:
         return True
@@ -241,20 +263,22 @@ def _inline_value(p: Param, quote_string: Callable[[str], str], style: LiteralSt
         return style.true_literal if v else style.false_literal
     if t is int:
         assert isinstance(v, int)
-        if int.bit_length(v) > MAX_LITERAL_DIGITS * 4:  # cheap pre-check, then exact
-            raise _unsafe(what, f": more than {MAX_LITERAL_DIGITS} digits")
-        try:
-            text = int.__repr__(v)
-        except ValueError:  # the interpreter's digit limit is lower than ours
-            raise _unsafe(what, ": too many digits to convert") from None
-        if len(text.lstrip("-")) > MAX_LITERAL_DIGITS:
-            raise _unsafe(what, f": more than {MAX_LITERAL_DIGITS} digits")
-        return text
+        # int.__lt__, never ``<`` on the value (an exact int, but stay with the base type)
+        if int.__lt__(v, INT64_MIN) or int.__gt__(v, INT64_MAX):
+            raise _unsafe(
+                what,
+                ": it is outside the signed 64-bit range, where engines change the literal's "
+                "type; bind it as a parameter instead",
+            )
+        return int.__repr__(v)
     if t is float:
         assert isinstance(v, float)
         if not math.isfinite(v):
             raise _unsafe(what, ": NaN and infinities have no portable literal")
-        return float.__repr__(v)
+        text = float.__repr__(v)
+        # repr is the shortest round-tripping form: never more than 17 significant digits
+        assert _significant_digits(text) <= MAX_FLOAT_SIGNIFICANT_DIGITS, text
+        return text
     if t is Decimal:
         assert isinstance(v, Decimal)
         if not Decimal.is_finite(v):
@@ -263,7 +287,15 @@ def _inline_value(p: Param, quote_string: Callable[[str], str], style: LiteralSt
         assert isinstance(exponent, int)
         if len(digits) + abs(exponent) > MAX_LITERAL_DIGITS:
             raise _unsafe(what, f": its plain form has more than {MAX_LITERAL_DIGITS} digits")
-        return Decimal.__format__(v, "f")
+        text = Decimal.__format__(v, "f")
+        precision = _decimal_precision(text)
+        if precision > MAX_DECIMAL_PRECISION:
+            raise _unsafe(
+                what,
+                f": its plain form needs precision {precision}, more than the "
+                f"{MAX_DECIMAL_PRECISION} digits a DECIMAL holds; bind it as a parameter instead",
+            )
+        return text
     if t is str:
         assert isinstance(v, str)
         _refuse_unsafe_text(v, what)
@@ -314,11 +346,15 @@ def inline_template(
     (backslash handling, ``standard_conforming_strings``), or the whole call fails closed
     with ``RenderError("FL507 cannot inline ...")``. Strings are quoted by doubling ``'``;
     nothing ever relies on backslash escaping, and no literal holds a line terminator.
-    Timestamps inline as UTC literals of the dialect's timestamp type, which most engines
-    read as a naive (time-zone-less) UTC value: compared with a time-zone-aware column, the
-    result depends on the session time zone, exactly as for the bound parameter. ``style`` gives the
-    dialect's spellings (default: ANSI); any other exception raised while converting a value
-    (by a host quote function, say) is reported as ``FL507`` as well.
+    Timestamps inline as UTC literals of the dialect's timestamp type: with an explicit
+    ``UTC`` zone where the style says so (Trino, Presto, Athena), otherwise a literal most
+    engines read as a naive (time-zone-less) UTC value, which compared with a
+    time-zone-aware column depends on the session time zone, exactly as for the bound
+    parameter. An ``int`` outside the signed 64-bit range and a ``Decimal`` needing more
+    than 38 digits of precision are refused (engines change such a literal's type).
+    ``style`` gives the dialect's spellings (default: ANSI); any other exception raised
+    while converting a value (by a host quote function, say) is reported as ``FL507`` as
+    well.
     """
     quote = quote_string if quote_string is not None else ansi_quote
     spelling = style if style is not None else ANSI_STYLE

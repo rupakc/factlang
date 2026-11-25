@@ -394,10 +394,14 @@ class UnionAll:
         selects = _tuple(self, "selects")
         if len(selects) < 2:
             raise ValueError("UnionAll needs at least two selects")
+        # explicit raises, not asserts: a caller's lowering builds this, and the check must
+        # hold under python -O too (the class is the one callers always saw)
         first = selects[0]
-        assert isinstance(first, Select)
+        if not isinstance(first, Select):
+            raise AssertionError(f"every branch of a UnionAll must be a Select, got {first!r}")
         for s in selects[1:]:
-            assert isinstance(s, Select)
+            if not isinstance(s, Select):
+                raise AssertionError(f"every branch of a UnionAll must be a Select, got {s!r}")
             if s.aliases != first.aliases:
                 raise ValueError("every branch of a UnionAll must have the same column aliases")
 

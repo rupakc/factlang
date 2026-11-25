@@ -42,7 +42,9 @@ def format_number(value: Decimal) -> str:
     if value.is_zero():
         return "0"
     sign, digits, exp = value.as_tuple()
-    assert isinstance(exp, int)
+    if not isinstance(exp, int):  # NaN/Infinity, e.g. in a caller-built Param; not an assert,
+        # so it holds under python -O too (the class is the one callers always saw)
+        raise AssertionError(f"a non-finite number ({value}) has no plain-notation text")
     ds = list(digits)
     while len(ds) > 1 and ds[-1] == 0:
         ds.pop()

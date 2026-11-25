@@ -118,13 +118,23 @@ class CachedCatalog:
         return value
 
     def table_exists(self, ref: TableRef) -> bool | None:
+        """The inner catalog's answer; ``AssertionError`` if it is not ``True``/``False``/``None``
+        (raised explicitly, so it holds under ``python -O`` too)."""
         value = self._get("exists", ref, self._inner.table_exists)
-        assert value is None or isinstance(value, bool)
+        if not (value is None or isinstance(value, bool)):
+            raise AssertionError(
+                f"catalog table_exists must return True, False or None, got {value!r}"
+            )
         return value
 
     def columns(self, ref: TableRef) -> dict[str, str] | None:
+        """A copy of the inner catalog's answer; ``AssertionError`` if it is neither a ``dict``
+        nor ``None`` (raised explicitly, so it holds under ``python -O`` too)."""
         value = self._get("columns", ref, self._inner.columns)
         if value is None:
             return None
-        assert isinstance(value, dict)
+        if not isinstance(value, dict):
+            raise AssertionError(
+                f"catalog columns must return a dict or None, got {type(value).__name__}"
+            )
         return dict(value)

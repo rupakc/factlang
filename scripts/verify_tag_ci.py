@@ -65,6 +65,29 @@ def _run_gh(args: Sequence[str]) -> str:
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
 
+GH_ATTEMPTS = 3
+GH_BACKOFF_S = 5.0
+
+
+def call_with_retry(
+    gh: Gh,
+    args: Sequence[str],
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    attempts: int = GH_ATTEMPTS,
+    backoff_s: float = GH_BACKOFF_S,
+) -> str:
+    """``gh(args)``, retried on a transient ``CalledProcessError``; a persistent one is raised."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return gh(args)
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            sleep(backoff_s * attempt)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def verify(
     repo: str,
     tag: str,
@@ -79,9 +102,13 @@ def verify(
     """Poll until the tag run is decided or the budget runs out; ``(verified, reason)``."""
     deadline = clock() + budget_s
     reason = ""
+
+    def call(args: Sequence[str]) -> str:
+        return call_with_retry(gh, args, sleep=sleep, backoff_s=min(GH_BACKOFF_S, poll_s))
+
     while True:
         runs = json.loads(
-            gh(
+            call(
                 [
                     "run",
                     "list",
@@ -108,7 +135,7 @@ def verify(
             and run.get("conclusion") == "success"
         ):
             view = json.loads(
-                gh(["run", "view", str(run["databaseId"]), "--repo", repo, "--json", "jobs"])
+                call(["run", "view", str(run["databaseId"]), "--repo", repo, "--json", "jobs"])
             )
             jobs = view.get("jobs", [])
         state, reason = judge_run(run, jobs)
@@ -127,7 +154,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--sha", required=True)
     args = parser.parse_args(argv)
-    ok, reason = verify(args.repo, args.tag, args.sha)
+    try:
+        ok, reason = verify(args.repo, args.tag, args.sha)
+    except subprocess.CalledProcessError as exc:
+        print(f"::error::gh failed after {GH_ATTEMPTS} attempts: {exc.stderr or exc}")
+        return 1
     if ok:
         print(f"CI verified for {args.tag} ({args.sha}): {reason}")
         return 0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -135,3 +136,32 @@ def test_release_workflow_uses_the_gate_and_the_wider_timeout() -> None:
     assert "scripts/verify_tag_ci.py" in text
     assert "timeout-minutes: 120" in text
     assert gate.WAIT_BUDGET_S == 100 * 60
+
+
+class Flaky(FakeGh):
+    """Fails the first ``failures`` calls with a CalledProcessError, then behaves."""
+
+    def __init__(self, failures: int | None, *a: Any) -> None:
+        super().__init__(*a)
+        self.failures = failures  # None: always fails
+        self.calls = 0
+
+    def __call__(self, args: Sequence[str]) -> str:
+        self.calls += 1
+        if self.failures is None or self.calls <= self.failures:
+            raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 502")
+        return super().__call__(args)
+
+
+def test_a_transient_gh_failure_is_retried() -> None:
+    gh = Flaky(1, [[run()]], legs())
+    ok, why = verify(gh)
+    assert ok, why
+    assert gh.calls == 3  # failed list, list, view
+
+
+def test_a_persistent_gh_failure_is_fatal() -> None:
+    gh = Flaky(None, [[run()]], legs())
+    with pytest.raises(subprocess.CalledProcessError):
+        verify(gh)
+    assert gh.calls == gate.GH_ATTEMPTS

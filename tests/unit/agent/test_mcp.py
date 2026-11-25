@@ -314,3 +314,31 @@ def test_max_claims_option_and_call_tool_cap(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(fl_mcp, "serve", lambda checker, **kw: served.append(kw))
     assert fl_mcp.main(["--dialect", "duckdb", "--max-claims", "9"]) == 0
     assert served[0]["max_claims"] == 9
+
+
+@pytest.mark.parametrize("server_cls", [_FakeServerV1, _FakeServerV2])
+def test_build_server_threads_max_claims_into_dispatch(
+    monkeypatch: pytest.MonkeyPatch, server_cls: type
+) -> None:
+    _fake_mcp(monkeypatch, server_cls)
+    seen: list[Any] = []
+    real = fl_mcp._dispatch
+
+    def spy(checker: Checker, name: str, arguments: Any, max_claims: Any = None) -> Any:
+        seen.append(max_claims)
+        return real(checker, name, arguments, max_claims)
+
+    monkeypatch.setattr(fl_mcp, "_dispatch", spy)
+    server = fl_mcp.build_server(Checker(dialect="duckdb"), max_claims=2)
+    args = {"claims": "UNIQUE a.b\nUNIQUE a.c\nUNIQUE a.d", "dialect": "duckdb"}
+    if server_cls is _FakeServerV1:
+        with pytest.raises(fl_mcp.ToolCallFailed) as exc:
+            asyncio.run(server.handlers["call"]("factlang_explain", args))
+        text = str(exc.value)
+    else:
+        params = types.SimpleNamespace(name="factlang_explain", arguments=args)
+        result = asyncio.run(server.handlers["call"](None, params))
+        assert result["isError"] is True
+        text = result["content"][0].text
+    assert seen == [2]
+    assert json.loads(text)["error"]["code"] == "too_many_claims"

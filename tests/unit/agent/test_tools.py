@@ -284,6 +284,8 @@ def test_explain_falls_back_to_the_template_for_an_uninlinable_literal(checker: 
         ("COUNT orders WHERE a = '#'\nUNIQUE orders.id", 2),  # # inside a string
         ("UNIQUE orders.id \\", 1),  # dangling continuation at the end
         ("UNIQUE a.b\r\nUNIQUE a.c\r\n", 2),
+        ("UNIQUE a.b\rUNIQUE a.c\rUNIQUE a.d", 3),  # a bare CR ends a line, as in the lexer
+        ("COUNT orders \\\r= 3\rUNIQUE a.b", 2),  # a continuation before a bare CR
     ],
 )
 def test_count_claims_follows_the_line_rule(text: str, n: int) -> None:
@@ -329,6 +331,18 @@ def test_cap_applies_to_check_before_the_connector_or_any_sql() -> None:
         ]
         == "no_connector"
     )
+
+
+@pytest.mark.parametrize("tool", ["factlang_check", "factlang_explain"])
+def test_bare_cr_line_endings_do_not_bypass_the_cap(tool: str) -> None:
+    calls: list[str] = []
+    conn = CallableConnector(lambda sql, params: calls.append(sql) or [], "duckdb")
+    claims = "\r".join("UNIQUE orders.id" for _ in range(300))
+    args = {"claims": claims, **({"dialect": "duckdb"} if tool == "factlang_explain" else {})}
+    out = handle_tool_call(tool, args, Checker(conn))
+    assert out["error"]["code"] == "too_many_claims"  # type: ignore[index]
+    assert "300" in out["error"]["message"]  # type: ignore[index]
+    assert calls == []
 
 
 def test_the_cap_counts_before_analysis_even_for_invalid_claims() -> None:

@@ -60,7 +60,8 @@ def count_claims(text: str) -> int:
     """
     count = 0
     logical = ""
-    for raw in text.split("\n"):
+    # every line ending the lexer knows (CRLF, bare CR, LF), as diagnostics.py normalises
+    for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         code, continued = _strip_line(raw)
         logical += code
         if continued:

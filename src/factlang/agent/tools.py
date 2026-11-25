@@ -17,6 +17,9 @@ native dialects as ``examples``.
 ``{"error": {"code", "message", "tool"}}`` with one of the stable codes in
 :data:`ERROR_CODES`; ``factlang_check`` returns :meth:`Report.to_dict`, whose first key is
 ``verified``.
+
+Tool error codes may be added in patch releases (``too_many_claims`` arrived in 0.1.3):
+consumers must treat an unknown code as a generic failure.
 """
 
 from __future__ import annotations
@@ -41,8 +44,50 @@ ERROR_CODES: tuple[str, ...] = (
     "invalid_arguments",  # arguments are not an object matching the input schema
     "unknown_dialect",  # factlang_explain: the dialect cannot be rendered (FL504)
     "no_connector",  # factlang_check on a Checker without a connector
+    "too_many_claims",  # factlang_check / factlang_explain: more than max_claims claims
     "internal_error",  # anything unexpected (a bug); the message names the exception
 )
+
+DEFAULT_MAX_CLAIMS = 200
+
+
+def count_claims(text: str) -> int:
+    """Claims in ``text`` by the line rule, with no parsing or analysis.
+
+    After joining ``\\`` continuations, a line counts unless it is blank, comment-only
+    (``#``), or a ``USE`` directive. A ``\\`` inside a comment continues nothing, as in the
+    lexer.
+    """
+    count = 0
+    logical = ""
+    for raw in text.split("\n"):
+        code, continued = _strip_line(raw)
+        logical += code
+        if continued:
+            continue
+        words = logical.split(None, 1)
+        if words and words[0] != "USE":
+            count += 1
+        logical = ""
+    words = logical.split(None, 1)  # a dangling continuation at the end of the text
+    return count + (1 if words and words[0] != "USE" else 0)
+
+
+def _strip_line(line: str) -> tuple[str, bool]:
+    """``line`` without its comment, and whether it ends in a continuation ``\\``."""
+    quote = ""
+    for i, ch in enumerate(line):
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "#":
+            return line[:i], False
+    body = line.rstrip(" \t\r")
+    if body.endswith("\\"):
+        return body[:-1] + " ", True
+    return line, False
+
 
 _CLAIMS = {
     "type": "string",
@@ -169,6 +214,17 @@ def _arguments(name: str, arguments: object) -> dict[str, str]:
     return out
 
 
+def _cap(claims: str, max_claims: int | None) -> None:
+    if max_claims is None:
+        return
+    n = count_claims(claims)
+    if n > max_claims:
+        raise _ToolError(
+            "too_many_claims",
+            f"{n} claims is over this server's limit of {max_claims}; send fewer per call",
+        )
+
+
 def _check(checker: Checker, claims: str) -> dict[str, object]:
     if checker.connector is None:
         raise _ToolError(
@@ -227,8 +283,19 @@ def _explain(checker: Checker, claims: str, dialect: str) -> dict[str, object]:
     return {"dialect": dialect, "claims": entries}
 
 
-def handle_tool_call(name: str, arguments: dict[str, Any], checker: Checker) -> dict[str, object]:
-    """Run tool ``name`` with ``arguments`` on ``checker``; a JSON-safe dict, never raises."""
+def handle_tool_call(
+    name: str,
+    arguments: dict[str, Any],
+    checker: Checker,
+    *,
+    max_claims: int | None = DEFAULT_MAX_CLAIMS,
+) -> dict[str, object]:
+    """Run tool ``name`` with ``arguments`` on ``checker``; a JSON-safe dict, never raises.
+
+    ``factlang_check`` and ``factlang_explain`` refuse more than ``max_claims`` claims
+    (``too_many_claims``, counted by :func:`count_claims` before any analysis); ``None``
+    removes the cap. ``factlang_lint`` is never capped: it runs no SQL.
+    """
     if not isinstance(name, str) or name not in _PARAMS:
         known = ", ".join(TOOL_NAMES)
         return _error(
@@ -238,6 +305,8 @@ def handle_tool_call(name: str, arguments: dict[str, Any], checker: Checker) -> 
         )
     try:
         args = _arguments(name, arguments)
+        if name != "factlang_lint":
+            _cap(args["claims"], max_claims)
         if name == "factlang_check":
             return _check(checker, args["claims"])
         if name == "factlang_lint":
@@ -250,9 +319,11 @@ def handle_tool_call(name: str, arguments: dict[str, Any], checker: Checker) -> 
 
 
 __all__ = [
+    "DEFAULT_MAX_CLAIMS",
     "ERROR_CODES",
     "JSON_SCHEMA_DIALECT",
     "TOOL_NAMES",
+    "count_claims",
     "handle_tool_call",
     "sqlglot_available",
     "tool_definitions",

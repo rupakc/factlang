@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from types import ModuleType
 from typing import Any
 
-from factlang.agent.tools import handle_tool_call, tool_definitions
+from factlang.agent.tools import DEFAULT_MAX_CLAIMS, handle_tool_call, tool_definitions
 from factlang.connectors import connect
 from factlang.contract import ContractPack
 from factlang.engine import Checker
@@ -56,17 +56,27 @@ def tool_registrations(pack: ContractPack | None = None) -> list[dict[str, Any]]
     ]
 
 
-def _dispatch(checker: Checker, name: str, arguments: Any) -> tuple[str, bool]:
-    result = handle_tool_call(name, arguments, checker)
+def _dispatch(
+    checker: Checker, name: str, arguments: Any, max_claims: int | None = DEFAULT_MAX_CLAIMS
+) -> tuple[str, bool]:
+    result = handle_tool_call(name, arguments, checker, max_claims=max_claims)
     return json.dumps(result, indent=2), "error" in result
 
 
-def call_tool(checker: Checker, name: str, arguments: Any) -> str:
+def call_tool(
+    checker: Checker,
+    name: str,
+    arguments: Any,
+    *,
+    max_claims: int | None = DEFAULT_MAX_CLAIMS,
+) -> str:
     """One tool call as the JSON text an MCP ``TextContent`` carries; never raises."""
-    return _dispatch(checker, name, arguments)[0]
+    return _dispatch(checker, name, arguments, max_claims)[0]
 
 
-def build_server(checker: Checker, *, name: str = SERVER_NAME) -> Any:
+def build_server(
+    checker: Checker, *, name: str = SERVER_NAME, max_claims: int | None = DEFAULT_MAX_CLAIMS
+) -> Any:
     """A low-level ``mcp`` server with the three tools registered (needs ``factlang[mcp]``).
 
     Works with both ``mcp`` 1.x (decorator registration) and 2.x (``on_*`` handlers); a
@@ -81,7 +91,7 @@ def build_server(checker: Checker, *, name: str = SERVER_NAME) -> Any:
     async def run_tool(tool: str, arguments: Any) -> tuple[Any, bool]:
         args = arguments if arguments is not None else {}
         # checks block on the warehouse: keep the event loop free
-        text, failed = await asyncio.to_thread(_dispatch, checker, tool, args)
+        text, failed = await asyncio.to_thread(_dispatch, checker, tool, args, max_claims)
         return types.TextContent(type="text", text=text), failed
 
     if hasattr(lowlevel.Server, "list_tools"):  # mcp 1.x
@@ -112,9 +122,11 @@ def build_server(checker: Checker, *, name: str = SERVER_NAME) -> Any:
     return lowlevel.Server(name, on_list_tools=list_tools, on_call_tool=call)
 
 
-def serve(checker: Checker, *, name: str = SERVER_NAME) -> None:
+def serve(
+    checker: Checker, *, name: str = SERVER_NAME, max_claims: int | None = DEFAULT_MAX_CLAIMS
+) -> None:
     """Serve the tools over stdio until the client disconnects (needs ``factlang[mcp]``)."""
-    server = build_server(checker, name=name)
+    server = build_server(checker, name=name, max_claims=max_claims)
     stdio = _mcp("mcp.server.stdio")
 
     async def run() -> None:
@@ -125,6 +137,16 @@ def serve(checker: Checker, *, name: str = SERVER_NAME) -> None:
 
 
 # -- command line ----------------------------------------------------------------------------
+
+
+def _positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
 
 
 def configure_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -142,6 +164,15 @@ def configure_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
     )
     parser.add_argument(
         "--max-bytes", type=int, default=None, help="refuse probes priced above this (dry run)"
+    )
+    parser.add_argument(
+        "--max-claims",
+        type=_positive_int,
+        default=DEFAULT_MAX_CLAIMS,
+        help=(
+            "refuse factlang_check / factlang_explain calls with more claims than this "
+            f"(default {DEFAULT_MAX_CLAIMS})"
+        ),
     )
     parser.add_argument("--name", default=SERVER_NAME, help="MCP server name")
     return parser
@@ -169,7 +200,7 @@ def run(args: argparse.Namespace) -> int:
         print(f"factlang mcp: cannot connect: {exc}", file=sys.stderr)
         return 2
     try:
-        serve(checker, name=args.name)
+        serve(checker, name=args.name, max_claims=args.max_claims)
     except ImportError as exc:
         print(f"factlang mcp: {exc}", file=sys.stderr)
         return 2

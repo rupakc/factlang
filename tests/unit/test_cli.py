@@ -533,7 +533,14 @@ def test_mcp_subcommand_is_wired(
     served: list[Any] = []
     monkeypatch.setattr(agent_mcp, "serve", lambda checker, **kw: served.append((checker, kw)))
     code, _, _ = run(["mcp", "--dialect", "postgres", "--name", "shop"], capsys)
-    assert code == 0 and served[0][0].dialect == "postgres" and served[0][1] == {"name": "shop"}
+    assert (
+        code == 0
+        and served[0][0].dialect == "postgres"
+        and served[0][1] == {"name": "shop", "max_claims": 200}
+    )
+    code, _, _ = run(["mcp", "--dialect", "postgres", "--max-claims", "5"], capsys)
+    assert code == 0 and served[1][1]["max_claims"] == 5
+    served.pop()
     monkeypatch.delenv("FACTLANG_DSN", raising=False)
     code, _, err = run(["mcp"], capsys)
     assert code == 2 and "--dsn" in err

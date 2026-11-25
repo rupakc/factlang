@@ -263,3 +263,94 @@ def test_explain_falls_back_to_the_template_for_an_uninlinable_literal(checker: 
     assert entry["kind"] == "probe"
     assert entry["sql"] == entry["sql_template"] and "{{p1}}" in entry["sql"]
     assert [p["value"] for p in entry["params"]] == ["a\\b"]
+
+
+# -- claim cap (0.1.3) -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "n"),
+    [
+        ("", 0),
+        ("\n  \n", 0),
+        ("# only a comment\n   # another", 0),
+        ("USE shop\nUNIQUE orders.id", 1),
+        ("UNIQUE orders.id  # trailing comment\nCOUNT orders = 3", 2),
+        ("COUNT orders \\\n  = 3\nUNIQUE orders.id", 2),  # a continuation joins lines
+        ("COUNT orders \\   \n= 3", 1),  # trailing blanks after the backslash
+        ("USE a \\\nUNIQUE x.y", 0),  # joined, the line starts with USE
+        ("# note \\\nUNIQUE orders.id", 1),  # a backslash in a comment continues nothing
+        ("UNIQUE orders.id # x \\\nUNIQUE orders.id", 2),
+        ("COUNT orders WHERE a = '#'\nUNIQUE orders.id", 2),  # # inside a string
+        ("UNIQUE orders.id \\", 1),  # dangling continuation at the end
+        ("UNIQUE a.b\r\nUNIQUE a.c\r\n", 2),
+    ],
+)
+def test_count_claims_follows_the_line_rule(text: str, n: int) -> None:
+    assert agent_tools.count_claims(text) == n
+
+
+def _many(n: int) -> str:
+    return "\n".join("UNIQUE orders.id" for _ in range(n))
+
+
+def test_default_cap_is_200_and_the_boundary_passes() -> None:
+    assert agent_tools.DEFAULT_MAX_CLAIMS == 200
+    checker = Checker(dialect="duckdb")
+    ok = handle_tool_call("factlang_explain", {"claims": _many(200), "dialect": "duckdb"}, checker)
+    assert "error" not in ok
+    over = handle_tool_call(
+        "factlang_explain", {"claims": _many(201), "dialect": "duckdb"}, checker
+    )
+    assert over["error"]["code"] == "too_many_claims"  # type: ignore[index]
+    assert over["error"]["tool"] == "factlang_explain"  # type: ignore[index]
+    assert "201" in over["error"]["message"] and "200" in over["error"]["message"]  # type: ignore[index]
+
+
+def test_cap_applies_to_check_before_the_connector_or_any_sql() -> None:
+    calls: list[str] = []
+    conn = CallableConnector(lambda sql, params: calls.append(sql) or [], "duckdb")
+    out = handle_tool_call(
+        "factlang_check", {"claims": _many(5)}, Checker(conn, dialect="duckdb"), max_claims=4
+    )
+    assert out["error"]["code"] == "too_many_claims"  # type: ignore[index]
+    assert calls == []
+    # no connector: the cap is reported first for an oversize call, no_connector otherwise
+    bare = Checker(dialect="duckdb")
+    assert (
+        handle_tool_call("factlang_check", {"claims": _many(5)}, bare, max_claims=4)["error"][  # type: ignore[index]
+            "code"
+        ]
+        == "too_many_claims"
+    )
+    assert (
+        handle_tool_call("factlang_check", {"claims": _many(4)}, bare, max_claims=4)["error"][  # type: ignore[index]
+            "code"
+        ]
+        == "no_connector"
+    )
+
+
+def test_the_cap_counts_before_analysis_even_for_invalid_claims() -> None:
+    garbage = "\n".join("BOGUS ???" for _ in range(3))
+    out = handle_tool_call(
+        "factlang_explain",
+        {"claims": garbage, "dialect": "duckdb"},
+        Checker(dialect="duckdb"),
+        max_claims=2,
+    )
+    assert out["error"]["code"] == "too_many_claims"  # type: ignore[index]
+
+
+def test_lint_is_never_capped_and_none_removes_the_cap() -> None:
+    checker = Checker(dialect="duckdb")
+    lint = handle_tool_call("factlang_lint", {"claims": _many(300)}, checker, max_claims=1)
+    assert "error" not in lint and lint["claims"] == 300
+    free = handle_tool_call(
+        "factlang_explain", {"claims": _many(300), "dialect": "duckdb"}, checker, max_claims=None
+    )
+    assert "error" not in free
+
+
+def test_too_many_claims_is_a_listed_error_code() -> None:
+    assert "too_many_claims" in agent_tools.ERROR_CODES

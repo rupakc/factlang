@@ -68,13 +68,26 @@ factlang mcp --dialect snowflake      # no warehouse: lint and explain only
 ```
 
 Options: `--timeout` (per-probe seconds, default 60), `--max-bytes` (refuse probes priced
-above this by a dry run), `--name` (the server name). Without a DSN, `factlang_check`
+above this by a dry run), `--max-claims` (default 200), `--name` (the server name). Without a DSN, `factlang_check`
 answers with a `no_connector` error. `python -m factlang.agent.mcp` is the same server.
 
+`--max-bytes` only bounds cost on connectors that can price a query without running it
+(BigQuery does); elsewhere it does nothing. `--max-claims N` is what bounds the work: a
+`factlang_check` or `factlang_explain` call carrying more than `N` claims is refused with the
+error code `too_many_claims`, before any analysis or SQL. Claims are counted by lines: blank
+lines, comment-only lines and `USE` directives do not count, and `\` continuations join
+lines first. `factlang_lint` is not capped, since it runs no SQL. The same cap is the
+`max_claims=` keyword of `handle_tool_call` (default 200; `None` removes it).
+
+!!! note "Error codes can grow"
+    The tool error codes (`unknown_tool`, `invalid_arguments`, `unknown_dialect`,
+    `no_connector`, `too_many_claims`, `internal_error`) may be added to in patch releases.
+    Handle an unknown code as a generic failure.
+
 Register it with your MCP client as a stdio command, e.g. `factlang mcp` with
-`FACTLANG_DSN` in the server's environment. Use a
-database role that can only read: FactLang's probes are `SELECT`-only, and the credentials
-are what guarantee the rest.
+`FACTLANG_DSN` in the server's environment. Run the
+server under a read-only database role: FactLang's probes are `SELECT`-only, and the
+credentials are what guarantee the rest.
 
 !!! warning "Credentials on the command line"
     A DSN with a password on the command line is visible to other users of the machine in

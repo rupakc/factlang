@@ -46,16 +46,18 @@ It is built from each contract's spec and examples. Use a restricted pack ([[Ext
 With the extra `factlang[mcp]`:
 
 ```
-factlang mcp [--dsn URL | --dialect D] [--timeout S] [--max-bytes N] [--name N]
+factlang mcp [--dsn URL | --dialect D] [--timeout S] [--max-bytes N] [--max-claims N] [--name N]
 ```
 
-serves the same three tools over stdio. Give `--dsn` or `--dialect`; with neither it reads the URL from `FACTLANG_DSN`, and exits 2 if that is unset too. With `--dialect D` and no `--dsn`, `factlang_lint` and `factlang_explain` work and `factlang_check` reports that there is no connector. Without the extra it prints an install hint. `python -m factlang.agent.mcp` is the same server. Note that `--dsn` puts the password in the process list; prefer `FACTLANG_DSN` (see [[CLI]]), and give the MCP server a low-privilege read-only account.
+serves the same three tools over stdio. Give `--dsn` or `--dialect`; with neither it reads the URL from `FACTLANG_DSN`, and exits 2 if that is unset too. With `--dialect D` and no `--dsn`, `factlang_lint` and `factlang_explain` work and `factlang_check` reports that there is no connector. Without the extra it prints an install hint. `python -m factlang.agent.mcp` is the same server. Note that `--dsn` puts the password in the process list; prefer `FACTLANG_DSN` (see [[CLI]]), and run the MCP server under a low-privilege read-only database role.
+
+`--max-bytes` only bounds cost on connectors that can price a query without running it (BigQuery); elsewhere it does nothing. `--max-claims N` (default 200) bounds the work: a `factlang_check` or `factlang_explain` call with more than `N` claims is refused with the error code `too_many_claims`, before any analysis or SQL (lines count, except blank lines, comment-only lines and `USE` directives; `\` continuations join lines first). `factlang_lint` is not capped. In Python the same cap is `handle_tool_call(..., max_claims=N)`; `None` removes it. Tool error codes may be added in patch releases, so handle an unknown code as a generic failure.
 
 ## Safety for agents
 
 - A claim has no raw SQL, and all literals are bound parameters, so a model cannot inject SQL through a claim.
 - The connection's credentials are the real boundary: give the agent a read-only account.
-- Use `max_bytes` on pay-per-scan warehouses.
+- Use `max_bytes` on pay-per-scan warehouses whose connector can dry-run (BigQuery), and `--max-claims` to bound the work per call.
 
 ## See also
 

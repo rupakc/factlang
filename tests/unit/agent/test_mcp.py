@@ -295,3 +295,22 @@ def test_server_lists_and_calls_the_tools(duck_checker: Checker) -> None:
     assert json.loads(explained.content[0].text)["claims"][0]["kind"] == "probe"
     # a schema-violating call is refused (by the SDK's validation or by handle_tool_call)
     assert _is_error(failed) or "invalid_arguments" in failed.content[0].text
+
+
+def test_max_claims_option_and_call_tool_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    parser = fl_mcp.configure_parser(argparse.ArgumentParser())
+    assert parser.parse_args([]).max_claims == 200
+    assert parser.parse_args(["--max-claims", "7"]).max_claims == 7
+    for bad in ("0", "-3", "x"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--max-claims", bad])
+    checker = Checker(dialect="duckdb")
+    claims = "\n".join("UNIQUE orders.id" for _ in range(3))
+    args = {"claims": claims, "dialect": "duckdb"}
+    err = json.loads(fl_mcp.call_tool(checker, "factlang_explain", args, max_claims=2))
+    assert err["error"]["code"] == "too_many_claims"
+    assert "error" not in json.loads(fl_mcp.call_tool(checker, "factlang_explain", args))
+    served: list[dict[str, Any]] = []
+    monkeypatch.setattr(fl_mcp, "serve", lambda checker, **kw: served.append(kw))
+    assert fl_mcp.main(["--dialect", "duckdb", "--max-claims", "9"]) == 0
+    assert served[0]["max_claims"] == 9

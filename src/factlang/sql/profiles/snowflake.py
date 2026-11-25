@@ -45,6 +45,7 @@ _COLUMNS = (
 
 SNOWFLAKE = DialectProfile(
     name="snowflake",
+    doubled_quote_escape=True,  # the lexer reads '' as one ' (conformance-checked)
     tier="native",
     quote_char='"',
     unquoted_case="upper",

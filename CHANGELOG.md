@@ -37,6 +37,14 @@ Security: literal inlining trusts no value's own methods (post-0.1.1 security re
   dates as `CAST('YYYY-MM-DD' AS DATE)`. New `DialectProfile` fields
   `string_literal_prefix`, `boolean_literals`, `date_literal`, `timestamp_literal`; bridged
   dialects take the spellings of the nearest native ancestor (Fabric -> T-SQL).
+- A custom profile cannot switch on `''` for a lexer that lacks it: when a native profile's
+  name is also a dialect sqlglot knows, doubling is used only if both the profile and that
+  dialect's tokenizer allow it (a postgres-like profile registered as `hive` refuses `'`
+  with `FL507`). `DialectProfile.doubled_quote_escape` now defaults to `False` (fail
+  closed); every built-in profile sets it explicitly.
+- A string holding a raw line terminator (CR, LF, U+0085, U+2028, U+2029) is refused with
+  `FL507` in every dialect, so `"x\n\nDROP TABLE t;"` can never reach a console such as
+  SQL*Plus, which ends the SQL at a blank line; evidence shows the template instead.
 
 ### Changed
 - `RenderedProbe.inline()` / `RenderedFragment.inline()` take an optional `style`
@@ -46,7 +54,12 @@ Security: literal inlining trusts no value's own methods (post-0.1.1 security re
 ### Documentation
 - The evidence guide states what inline text assumes: display or hosts without binding, a
   UTF-8 (or single-byte-safe) client charset, and console tools (SQL*Plus `&`, SSMS `GO`,
-  driver paramstyle parsing of `%s`/`?`) that may reinterpret pasted text.
+  driver paramstyle parsing of `%s`/`?`) that may reinterpret pasted text, including
+  SQL*Plus ending a statement at a blank line.
+- Timestamps inline as naive-UTC literals of the dialect's timestamp type, so a comparison
+  with a time-zone-aware column depends on the session time zone (bound parameters behave
+  the same); wording that claimed independence from all server settings now says
+  string-escape settings.
 
 ## [0.1.1] - 2026-11-24
 

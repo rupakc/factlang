@@ -37,7 +37,9 @@ must cover the closing quote.
 
 Inlined literals (display SQL only; bound parameters never use them): ``doubled_quote_escape``
 says the lexer reads ``''`` inside a string literal as one ``'`` (``False`` for BigQuery and
-Databricks, where a string holding ``'`` is then refused, ``FL507``); ``string_literal_prefix``
+Databricks, where a string holding ``'`` is then refused, ``FL507``). It defaults to ``False``
+(fail closed; every built-in profile sets it), and when the profile's name is also a dialect
+sqlglot knows, doubling is used only if that dialect's lexer agrees; ``string_literal_prefix``
 is written before a quoted string (``N`` on T-SQL); ``boolean_literals`` is ``("TRUE",
 "FALSE")`` or ``("1", "0")`` (T-SQL, Oracle); ``date_literal`` (slot ``{date}``) and
 ``timestamp_literal`` (slots ``{date}``, ``{time}``; UTC fields) are FactLang-owned templates.
@@ -137,7 +139,7 @@ class DialectProfile:
     # appended to every full statement (ClickHouse ``SETTINGS …``); never to a fragment
     statement_suffix: str = ""
     # inlined literals (display SQL, ``RenderedProbe.inline``): see ``LiteralStyle``
-    doubled_quote_escape: bool = True
+    doubled_quote_escape: bool = False
     string_literal_prefix: str = ""
     boolean_literals: tuple[str, str] = ("TRUE", "FALSE")
     date_literal: str = "DATE '{date}'"

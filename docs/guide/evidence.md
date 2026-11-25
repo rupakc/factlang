@@ -48,13 +48,16 @@ driver that cannot bind, a console paste), it is built to be safe if executed, a
 whatever it cannot render safely instead of guessing:
 
 - Strings are quoted by doubling `'`, in every dialect. Nothing relies on backslash escaping,
-  so a literal never changes meaning with server settings (MySQL's default `sql_mode`,
+  so a string literal does not depend on string-escape settings (MySQL's default `sql_mode`,
   PostgreSQL's `standard_conforming_strings`).
-- A string holding a backslash, a NUL or a lone surrogate is refused, as is a `'` in a
-  dialect whose lexer does not read `''` as a quote. That is decided by the dialect the
-  renderer resolves: a native profile's `doubled_quote_escape` (`False` for `bigquery` and
-  `databricks`), or, for a bridged dialect, sqlglot's own tokenizer (so `spark`, `spark2` and
-  `hive` refuse it too). A dialect nothing knows refuses it.
+- A string holding a backslash, a NUL, a lone surrogate or a line terminator (CR, LF, U+0085,
+  U+2028, U+2029) is refused, as is a `'` in a dialect whose lexer does not read `''` as a
+  quote. That is decided by the dialect the renderer resolves: a native profile's
+  `doubled_quote_escape` (`False` for `bigquery` and `databricks`), or, for a bridged
+  dialect, sqlglot's own tokenizer (so `spark`, `spark2` and `hive` refuse it too). A
+  dialect nothing knows refuses it. A custom profile defaults to `False`, and when its name
+  is also a dialect sqlglot knows, doubling is used only if that dialect's lexer reads `''`
+  as a quote too (a postgres-like profile registered as `hive` still refuses `'`).
 - Only values of an exact built-in type are inlined: `None`, `bool`, `int`, `float`,
   `Decimal`, `str`, `datetime.date` and `datetime.datetime`. A subclass of any of them (an
   `IntEnum`, a numpy scalar, a `str` subclass) is refused, because its own methods could
@@ -66,6 +69,11 @@ whatever it cannot render safely instead of guessing:
   Oracle booleans are `1`/`0`; timestamps are converted to UTC and written as
   `CAST('… …' AS DATETIME2)` on T-SQL, `TIMESTAMP '… …'` on Oracle, and
   `TIMESTAMP '…T…+00:00'` elsewhere; T-SQL dates are `CAST('…' AS DATE)`.
+- A timestamp inlines as a UTC literal of the dialect's timestamp type, which most engines
+  read as a naive (time-zone-less) value holding UTC wall-clock time. Compared with a
+  time-zone-aware column (`timestamptz`, `DATETIMEOFFSET`, `TIMESTAMP WITH TIME ZONE`), the
+  result then depends on the session time zone. Bound parameters have the same semantics,
+  so inline and executed SQL agree; neither is independent of the session time zone.
 
 A refusal is `RenderError("FL507 cannot inline <type> parameter <name> …")`. Evidence never
 fails a check over it: `evidence.sql` (and `factlang explain`, the agent's `factlang_explain`
@@ -80,7 +88,9 @@ always binds its parameters. (`FL500` stays a genuine render bug and is never sw
     set in which every byte is a whole character): a multi-byte client charset such as SJIS,
     Big5 or GBK talking to a server that also honours backslash escapes is out of scope.
     Console tools may reinterpret pasted text before the server sees it: SQL*Plus
-    substitutes `&name`, SSMS and `sqlcmd` split batches at a line holding `GO`, and drivers
+    substitutes `&name` and, by default (`SQLBLANKLINES OFF`), a blank line ends the SQL
+    being entered even inside a string literal, so the lines after it run as a new command
+    (which is why no inlined literal holds a line terminator); SSMS and `sqlcmd` split batches at a line holding `GO`, and drivers
     that parse paramstyle markers can read a `%s`, `%(name)s` or `?` inside a literal as a
     placeholder. Pass inline text to such a tool only after checking it.
 

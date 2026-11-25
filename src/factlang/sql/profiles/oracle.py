@@ -60,6 +60,7 @@ def _split_prefix(printer: Printer, x: A.SplitPrefix) -> str:
 
 ORACLE = DialectProfile(
     name="oracle",
+    doubled_quote_escape=True,  # the lexer reads '' as one ' (conformance-checked)
     tier="native",
     quote_char='"',
     unquoted_case="upper",

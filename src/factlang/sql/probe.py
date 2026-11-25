@@ -143,21 +143,34 @@ def _unsafe(what: str, why: str) -> RenderError:
 
 
 def _refuse_unsafe_text(text: str, what: str) -> None:
-    """Refuse text whose meaning in a string literal depends on server settings."""
+    """Refuse text whose meaning in a string literal depends on server settings or on the
+    console tool the SQL is pasted into."""
     if "\\" in text or "\x00" in text:
         raise _unsafe(
             what,
             ": it contains a backslash or NUL, whose meaning in a string literal depends on "
             "the server; bind it as a parameter instead",
         )
+    if any(ch in text for ch in _LINE_TERMINATORS):
+        raise _unsafe(
+            what,
+            ": it contains a line terminator, which console tools may treat as the end of a "
+            "statement (SQL*Plus ends one at a blank line); bind it as a parameter instead",
+        )
+
+
+# CR, LF, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR: never inside an inlined literal
+_LINE_TERMINATORS = ("\r", "\n", "\x85", "\u2028", "\u2029")
 
 
 def ansi_quote(text: str) -> str:
     """ANSI string literal: single quotes, inner quotes doubled.
 
-    Text holding a backslash or NUL is refused with ``FL507``: some servers (MySQL by
-    default, PostgreSQL with ``standard_conforming_strings`` off, BigQuery, Databricks,
-    ClickHouse) read a backslash as an escape, so no single spelling is safe everywhere.
+    Text holding a backslash, NUL or a line terminator (CR, LF, U+0085, U+2028, U+2029) is
+    refused with ``FL507``: some servers (MySQL by default, PostgreSQL with
+    ``standard_conforming_strings`` off, BigQuery, Databricks, ClickHouse) read a backslash
+    as an escape, so no single spelling is safe everywhere, and console tools may end a
+    statement at a line break (SQL*Plus at a blank line).
     """
     if type(text) is not str:
         raise _unsafe(f"a {type(text).__name__}", ": only an exact str is quoted")
@@ -297,9 +310,13 @@ def inline_template(
     """Display-oriented SQL with every parameter inlined as a literal.
 
     FactLang never executes it, but it must be safe if a host does: each value either
-    becomes a literal that means exactly that value regardless of server settings, or the
-    whole call fails closed with ``RenderError("FL507 cannot inline ...")``. Strings are
-    quoted by doubling ``'``; nothing ever relies on backslash escaping. ``style`` gives the
+    becomes a literal whose meaning does not depend on string-escape settings
+    (backslash handling, ``standard_conforming_strings``), or the whole call fails closed
+    with ``RenderError("FL507 cannot inline ...")``. Strings are quoted by doubling ``'``;
+    nothing ever relies on backslash escaping, and no literal holds a line terminator.
+    Timestamps inline as UTC literals of the dialect's timestamp type, which most engines
+    read as a naive (time-zone-less) UTC value: compared with a time-zone-aware column, the
+    result depends on the session time zone, exactly as for the bound parameter. ``style`` gives the
     dialect's spellings (default: ANSI); any other exception raised while converting a value
     (by a host quote function, say) is reported as ``FL507`` as well.
     """

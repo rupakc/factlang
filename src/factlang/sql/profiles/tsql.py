@@ -88,6 +88,7 @@ _COLUMNS = (
 
 TSQL = DialectProfile(
     name="tsql",
+    doubled_quote_escape=True,  # the lexer reads '' as one ' (conformance-checked)
     tier="verified",
     quote_char='"',
     unquoted_case="preserve",

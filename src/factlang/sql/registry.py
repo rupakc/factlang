@@ -6,6 +6,7 @@ else the sqlglot bridge if it is installed; else ``FL504 unknown dialect``.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType, ModuleType
@@ -123,11 +124,20 @@ def literal_style_for(dialect: str) -> LiteralStyle:
     """The inline-literal spellings of ``dialect``, resolved as :func:`renderer_for` resolves
     it: the native profile registered under exactly that name, else the dialect the sqlglot
     bridge resolves it to. A dialect neither knows gets ANSI spellings with no doubled-quote
-    form, so a string holding ``'`` is refused (fail closed)."""
+    form, so a string holding ``'`` is refused (fail closed).
+
+    A native profile whose name is also a dialect sqlglot knows keeps ``''`` only when that
+    dialect's lexer reads it as a quote too: a custom profile registered as ``hive`` cannot
+    switch doubling on for a lexer that has none (fail closed)."""
     profile = _PROFILES.get(dialect) if isinstance(dialect, str) else None
-    if profile is not None:
-        return profile.literal_style
     bridge = _bridge()
+    if profile is not None:
+        style_ = profile.literal_style
+        if style_.doubled_quote_escape and bridge is not None:
+            lexer: bool | None = bridge.lexer_doubles_quote(dialect)
+            if lexer is False:
+                return dataclasses.replace(style_, doubled_quote_escape=False)
+        return style_
     if bridge is not None:
         style: LiteralStyle | None = bridge.literal_style(dialect)
         if style is not None:

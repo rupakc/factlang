@@ -66,10 +66,11 @@ def string_quoter(dialect: str) -> Callable[[str], str]:
     """The string-literal quoting used to inline parameters into display SQL (evidence only).
 
     Every dialect quotes by doubling ``'``; none relies on backslash escaping, so the
-    literal cannot change meaning with server settings. Text holding a backslash or NUL is
-    refused with ``FL507``, and so is a ``'`` when the dialect, resolved as the renderer
-    resolves it, has a lexer that does not read ``''`` as a quote (a dialect nothing knows
-    counts as one). Callers that only display SQL fall back to the template (``display_sql``).
+    literal does not depend on string-escape settings. Text holding a backslash, NUL or a
+    line terminator is refused with ``FL507``, and so is a ``'`` when the dialect, resolved
+    as the renderer resolves it, has a lexer that does not read ``''`` as a quote (a dialect
+    nothing knows counts as one). Callers that only display SQL fall back to the template
+    (``display_sql``).
     """
     if literal_style_for(dialect).doubled_quote_escape:
         return ansi_quote

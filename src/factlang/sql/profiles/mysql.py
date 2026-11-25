@@ -79,6 +79,7 @@ def _keyhash(printer: Printer, x: A.KeyHash) -> str:
 
 MYSQL = DialectProfile(
     name="mysql",
+    doubled_quote_escape=True,  # the lexer reads '' as one ' (conformance-checked)
     tier="verified",
     quote_char="`",
     unquoted_case="preserve",

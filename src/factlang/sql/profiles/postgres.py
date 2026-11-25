@@ -39,6 +39,7 @@ TYPE_FAMILIES: tuple[tuple[str, str], ...] = (
 
 POSTGRES = DialectProfile(
     name="postgres",
+    doubled_quote_escape=True,  # the lexer reads '' as one ' (conformance-checked)
     tier="verified",
     quote_char='"',
     unquoted_case="lower",

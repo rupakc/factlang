@@ -2,7 +2,7 @@
 
 The inline form is display-oriented, but a host may execute it when its driver cannot bind
 parameters. So every value either becomes a literal that means exactly that value in every
-native dialect, regardless of server settings, or is refused with ``FL507``.
+native dialect, whatever the string-escape settings, or is refused with ``FL507``.
 """
 
 from __future__ import annotations

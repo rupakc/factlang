@@ -399,3 +399,70 @@ def test_display_sql_of_compiled_claims_never_raises(claim: str, dialect: str) -
         assert text.startswith("SELECT")
         if "'it''s'" in claim:
             assert "{{p1}}" in text
+
+
+# -- 0.1.2 fold-ins (pre-release review) ----------------------------------------------------
+
+
+def test_a_custom_profile_cannot_claim_doubling_its_lexer_lacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A native profile whose name resolves to a sqlglot dialect gets doubling only if both
+    the profile AND that dialect's tokenizer read ``''`` as a quote (fail closed)."""
+    import dataclasses
+
+    from factlang.sql import registry
+
+    pg = get_profile("postgres")
+    assert pg is not None and pg.doubled_quote_escape is True
+    monkeypatch.setitem(registry._PROFILES, "hive", dataclasses.replace(pg, name="hive"))
+    assert literal_style_for("hive").doubled_quote_escape is False
+    with pytest.raises(RenderError, match=r"^FL507"):
+        string_quoter("hive")("it's")
+    with pytest.raises(RenderError, match=FL507):
+        probe("it's", "string", "hive").inline()
+    assert display_sql(probe("it's", "string", "hive")) == "SELECT {{p1}} AS x"
+    # a name sqlglot does not know keeps the profile's own (explicit) choice
+    monkeypatch.setitem(registry._PROFILES, "mypg", dataclasses.replace(pg, name="mypg"))
+    assert string_quoter("mypg")("it's") == "'it''s'"
+
+
+def test_doubled_quote_escape_defaults_to_false() -> None:
+    import dataclasses
+
+    from factlang.sql.profile import DialectProfile
+
+    field = {f.name: f for f in dataclasses.fields(DialectProfile)}["doubled_quote_escape"]
+    assert field.default is False
+
+
+LINE_TERMINATORS = ["\r", "\n", "\r\n", "\x85", "\u2028", "\u2029"]
+
+
+@pytest.mark.parametrize("dialect", [*NATIVE, "spark", "no-such-dialect"])
+@pytest.mark.parametrize("ch", LINE_TERMINATORS)
+def test_line_terminators_are_never_inlined(dialect: str, ch: str) -> None:
+    text = f"a{ch}b"
+    with pytest.raises(RenderError, match=FL507):
+        probe(text, "string", dialect).inline()
+    with pytest.raises(RenderError, match=r"^FL507"):
+        string_quoter(dialect)(text)
+    # a host quote function cannot bypass it
+    with pytest.raises(RenderError, match=FL507):
+        probe(text, "string", dialect).inline(lambda s: "'" + s + "'")
+    assert display_sql(probe(text, "string", dialect)) == "SELECT {{p1}} AS x"
+
+
+def test_a_blank_line_statement_break_falls_back_to_the_template() -> None:
+    hostile = "x\n\nDROP TABLE t;"
+    for dialect in ("oracle", "postgres", "duckdb"):
+        with pytest.raises(RenderError, match=FL507):
+            probe(hostile, "string", dialect).inline()
+        assert "DROP" not in display_sql(probe(hostile, "string", dialect))
+    frag = RenderedFragment("s = {{p1}}", (Param("p1", hostile, "string"),), "oracle", "native")
+    with pytest.raises(RenderError, match=FL507):
+        frag.inline()
+    assert display_sql(frag) == "s = {{p1}}"
+    # the claim language itself has no raw line break inside a string literal
+    with pytest.raises(ValueError, match="FL101"):
+        fl.compile("COUNT orders VALUE == 0 WHERE status = 'x\n\nDROP TABLE t;'", dialect="oracle")

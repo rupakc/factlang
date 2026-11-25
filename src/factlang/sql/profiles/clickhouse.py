@@ -106,6 +106,7 @@ _PARAM_TYPES = {
 
 CLICKHOUSE = DialectProfile(
     name="clickhouse",
+    doubled_quote_escape=True,  # the lexer reads '' as one ' (conformance-checked)
     tier="verified",
     quote_char='"',
     unquoted_case="preserve",

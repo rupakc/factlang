@@ -50,6 +50,7 @@ _PARAM_TYPES = {
 
 TRINO = DialectProfile(
     name="trino",
+    doubled_quote_escape=True,  # the lexer reads '' as one ' (conformance-checked)
     tier="verified",
     quote_char='"',
     unquoted_case="lower",

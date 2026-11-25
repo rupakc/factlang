@@ -133,6 +133,17 @@ def supports_dialect(dialect: str) -> bool:
     return _sqlglot_dialect(SQLGLOT_NAMES.get(dialect, dialect)) is not None
 
 
+def lexer_doubles_quote(dialect: str) -> bool | None:
+    """Whether sqlglot's lexer for ``dialect`` reads ``''`` in a string as one ``'``; ``None``
+    when sqlglot knows no dialect of that name."""
+    if not isinstance(dialect, str):
+        return None
+    resolved = _sqlglot_dialect(SQLGLOT_NAMES.get(dialect, dialect))
+    if resolved is None:
+        return None
+    return "'" in type(resolved).tokenizer_class.STRING_ESCAPES
+
+
 def literal_style(dialect: str) -> LiteralStyle | None:
     """Inline-literal spellings for a dialect sqlglot knows, or ``None`` when it knows none.
 
@@ -157,7 +168,7 @@ def literal_style(dialect: str) -> LiteralStyle | None:
         if cls in by_class:
             base = by_class[cls].literal_style
             break
-    doubled = "'" in type(resolved).tokenizer_class.STRING_ESCAPES
+    doubled = lexer_doubles_quote(dialect) is True
     return dataclasses.replace(base, doubled_quote_escape=doubled)
 
 

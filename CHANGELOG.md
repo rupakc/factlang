@@ -15,17 +15,25 @@ spellings, and guards that hold under `python -O`. Bound-parameter SQL is unchan
 ### Added
 - `factlang.syntax.needs_quoting(name)` and `factlang.syntax.quote_name(name)` (stable API):
   whether a name must be quoted to be written in FactLang source, and its double-quoted
-  form. `quote_name` raises `ValueError` for an empty name or one holding CR, LF or NUL.
+  form. `quote_name` raises `ValueError` for an empty name or one holding CR, LF or NUL,
+  and `TypeError` for an argument that is not a `str`.
 - `fl.ir.unregister_primitive(cls)` (`KeyError` if `cls` is not registered), the supported
   way to remove a registration. `fl.ir.register_primitive` and `unregister_primitive` are
   listed in the stable API; `fl.ir.PRIMITIVE_LOWERINGS` is read-only by convention (it stays
   a `dict` in 0.1.x; a read-only view is planned for 0.2.0).
 - Agent tools: `factlang_check` / `factlang_explain` (`handle_tool_call` and the MCP server)
-  refuse a call carrying more than `max_claims` claims (default 200) with the new error
-  code `too_many_claims`, before any analysis or SQL; `factlang mcp --max-claims N`,
-  `handle_tool_call(..., max_claims=...)` (`None` removes the cap) and
-  `factlang.agent.tools.count_claims`. `factlang_lint` is not capped. Tool error codes may
-  be added in patch releases; consumers must handle codes they do not know.
+  refuse a call carrying more than `max_claims` claims with the new error code
+  `too_many_claims`, before any analysis or SQL. The default is
+  `factlang.agent.tools.DEFAULT_MAX_CLAIMS` (200); it is set by `factlang mcp
+  --max-claims N` and by a `max_claims=` keyword on `handle_tool_call` and on the MCP
+  module's `call_tool`, `build_server` and `serve` (`None` removes the cap). New
+  `factlang.agent.tools.count_claims` (CRLF, CR and LF all end a line). `factlang_lint` is
+  not capped. Tool error codes may be added in patch releases; consumers must handle codes
+  they do not know.
+  **Behaviour change for existing callers:** the 200 default also applies to code that
+  already calls `handle_tool_call` without the keyword, so a call with more than 200
+  claims now returns `too_many_claims`; pass `max_claims=None` to restore the old
+  behaviour.
 - Warning `FL314`: a `TOLERANCE` or `ABS_TOLERANCE` on a `MIN`/`MAX` whose `VALUE` is a
   date or timestamp has no effect, and the claim will be `error` when judged (judging is
   unchanged; as a warning it leaves `factlang lint` exit codes and `Report.ok` as they
@@ -53,10 +61,15 @@ spellings, and guards that hold under `python -O`. Bound-parameter SQL is unchan
   `python -O`: they raise `AssertionError` explicitly, as before, now with a message. Under
   `-O` a protocol-breaking catalog could turn an `error` into a `pass`.
 - A custom contract whose plan returns `None` (or anything that is not a core or registered
-  primitive) is refused by `plan_for` with a `ValueError` naming the verb, so `check()` and
-  `compile()` report the documented "plan failed" `error`, identically under `-O`. It used
-  to be taken for a catalog verb: a bare `AssertionError` (or, under `-O`, a "catalog lookup
-  failed" error), and `compile()` silently rendered a metadata query.
+  primitive) is refused by `plan_for` with a `ValueError` naming the verb. `check()` now
+  returns the documented "plan failed" `error` outcome for that claim, identically under
+  `-O`, and `compile()` returns the same outcome. Before, the claim was taken for a catalog
+  verb: `check()` raised a bare `AssertionError` out of the call (under `-O` it reported a
+  "catalog lookup failed" error instead), and `compile()` silently rendered a metadata
+  query.
+- Published verb examples (`verb_reference`, `factlang verbs`, the verbs reference page)
+  no longer include valid examples that expect a diagnostic, such as the new `FL314`
+  examples, which are `error` when judged.
 - Caret lines in rendered diagnostics copy the tabs of the source line, so carets line up
   under tab-indented claims in any tab width.
 
@@ -216,7 +229,8 @@ The first release. Development status: Alpha. Python 3.10–3.13.
   probe (both claims were reported as `FL500`).
 - `str(Verdict.PASS)` is `"pass"`.
 
-[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/rupakc/factlang/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/rupakc/factlang/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/rupakc/factlang/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/rupakc/factlang/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/rupakc/factlang/releases/tag/v0.1.0

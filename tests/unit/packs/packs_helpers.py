@@ -2,14 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "conformance"))
-
-from test_contract_completeness import assert_pack_complete
-
-from factlang.contract import Contract
+from factlang.contract import Contract, ContractPack, check_pack
 from factlang.diagnostics import DiagnosticBag
 from factlang.judge import Verdict, decide_facts
 from factlang.packs.standard import standard_pack
@@ -17,6 +10,12 @@ from factlang.semantics.analyzer import analyze
 from factlang.semantics.catalog import NullCatalog
 from factlang.semantics.checked import CheckedClaim
 from factlang.syntax import parse
+
+
+def assert_pack_complete(pack: ContractPack) -> None:
+    """The completeness check of ``tests/conformance/test_contract_completeness.py``."""
+    problems = check_pack(pack)
+    assert problems == [], "\n".join(problems)
 
 
 def build_claim(source: str) -> CheckedClaim:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 import time
 from typing import Any
 
@@ -255,39 +256,50 @@ def test_needs_a_dialect_or_connector() -> None:
 
 
 class Hanging:
-    """A connector that ignores ``timeout_s``."""
+    """A connector that ignores ``timeout_s``.
+
+    With ``release`` it blocks until the event is set (no wall-clock delay to race a loaded
+    runner); without, it answers at once.
+    """
 
     dialect = "duckdb"
     paramstyle = "qmark"
 
-    def __init__(self, delay: float) -> None:
-        self.delay = delay
+    def __init__(self, release: threading.Event | None = None) -> None:
+        self.release = release
 
     def execute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
-        time.sleep(self.delay)
+        if self.release is not None:
+            self.release.wait(60)
         return QueryResult([{"row_count": 1}])
 
     async def aexecute(self, probe: RenderedProbe, *, timeout_s: float | None) -> QueryResult:
-        await asyncio.sleep(self.delay)
+        if self.release is not None:
+            await asyncio.sleep(3600)  # cancelled by the engine's backstop
         return QueryResult([{"row_count": 1}])
 
 
 def test_engine_timeout_backstop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Checker, "TIMEOUT_GRACE_S", 0.05)
-    slow = Checker(Hanging(2.0), catalog=NullCatalog(), timeout_s=0.05)
-    start = time.monotonic()
-    (o,) = slow.check("ROWS orders VALUE >= 1").outcomes
-    assert time.monotonic() - start < 1.5
-    assert o.verdict is Verdict.ERROR and o.explanation.startswith("FL702")
-    (a,) = asyncio.run(slow.acheck("ROWS orders VALUE >= 1")).outcomes
-    assert a.verdict is Verdict.ERROR and a.explanation.startswith("FL702")
-    (m,) = slow.measure([ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,))])
-    assert m.error is not None and m.error.code == "FL702" and m.verdict_hint is Verdict.ERROR
-    # within the budget the answer is used
-    fast = Checker(Hanging(0.0), catalog=NullCatalog(), timeout_s=0.05, concurrency=1)
+    release = threading.Event()  # the hung connector answers only when the test lets it
+    try:
+        slow = Checker(Hanging(release), catalog=NullCatalog(), timeout_s=0.05)
+        start = time.monotonic()
+        (o,) = slow.check("ROWS orders VALUE >= 1").outcomes
+        # the backstop fired while the connector was still blocked: it was not waited out
+        assert not release.is_set() and time.monotonic() - start < 30
+        assert o.verdict is Verdict.ERROR and o.explanation.startswith("FL702")
+        (a,) = asyncio.run(slow.acheck("ROWS orders VALUE >= 1")).outcomes
+        assert a.verdict is Verdict.ERROR and a.explanation.startswith("FL702")
+        (m,) = slow.measure([ColumnAggregate(ORDERS, None, (Metric.ROW_COUNT,))])
+        assert m.error is not None and m.error.code == "FL702" and m.verdict_hint is Verdict.ERROR
+    finally:
+        release.set()
+    # within the budget the answer is used (a generous budget: the connector answers at once)
+    fast = Checker(Hanging(), catalog=NullCatalog(), timeout_s=30, concurrency=1)
     (ok,) = fast.check("ROWS orders VALUE >= 1").outcomes
     assert ok.verdict is Verdict.PASS
-    none = Checker(Hanging(0.0), catalog=NullCatalog(), timeout_s=None)
+    none = Checker(Hanging(), catalog=NullCatalog(), timeout_s=None)
     assert none.check("ROWS orders VALUE >= 1").ok
     assert asyncio.run(none.acheck("ROWS orders VALUE >= 1")).ok
 

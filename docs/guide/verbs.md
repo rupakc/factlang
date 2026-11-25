@@ -1,8 +1,17 @@
 # Standard verbs
 
-The standard pack (`standard`, version `1.0`) has seventeen verbs in five groups. This page
+The standard pack (`standard`, version `1.0`) has 19 verbs in five groups. This page
 explains what each one measures and when it passes; the generated
 [verb reference](../reference/verbs.md) lists every attribute, operator and example.
+
+- **Structure facts** (`EXISTS`, `TYPE`): does the table or column exist, and what type
+  family is it? Answered from the catalog.
+- **Data-quality facts** (`ROWS`, `NULLS`, `DEAD`, `UNIQUE`, `FANOUT`, `VALUES`, `RANGE`,
+  `PATTERN`, `FRESH`): how many rows, how many NULLs, which values, how fresh.
+- **Relationship facts** (`JOIN`): do the keys of one table find their match in another?
+- **Answer facts** (`COUNT`, `DISTINCT`, `SUM`, `AVG`, `MIN`, `MAX`): the numbers an agent
+  states in an answer, checked against the warehouse.
+- **Semantic facts** (`NOTE`): a statement no query can establish, kept for the record.
 
 Each verb is one `Contract`: a plan (the measurement), a `derive` step that turns measured
 rows into named **facts**, and a `decide` predicate over those facts. A fact the data cannot

@@ -41,6 +41,11 @@ class Cursor:
         with self.conn.guard:
             self.conn.active += 1
             self.conn.peak = max(self.conn.peak, self.conn.active)
+            self.conn.guard.notify_all()
+            if self.conn.expect_overlap:
+                # a driver that may run concurrently: stay in the statement until a second
+                # one is in it too (generous bound; no wall-clock race on a loaded runner)
+                self.conn.guard.wait_for(lambda: self.conn.peak > 1, timeout=30)
         time.sleep(0.02)
         with self.conn.guard:
             self.conn.active -= 1
@@ -55,7 +60,8 @@ class Cursor:
 
 class Conn:
     def __init__(self) -> None:
-        self.guard = threading.Lock()
+        self.guard = threading.Condition()
+        self.expect_overlap = False
         self.active = 0
         self.peak = 0
         self.fail = False
@@ -96,6 +102,7 @@ def test_level_2_driver_with_cursor_cancel_runs_concurrently(
 ) -> None:
     conn = _driver(monkeypatch, f"fake_ts_{level}", level)
     conn.cursor = lambda: CancellingCursor(conn)  # type: ignore[method-assign]
+    conn.expect_overlap = True
     _hammer(DBAPIConnector(conn, "duckdb"))
     assert conn.peak > 1
 
@@ -191,19 +198,23 @@ def test_waiting_for_the_connection_is_bounded_by_the_timeout(
     conn = _driver(monkeypatch, "fake_wait", 1)
     connector = DBAPIConnector(conn, "duckdb")
     release = threading.Event()
+    holding = threading.Event()
 
     def slow(self: Cursor, sql: str, params: Any) -> None:
-        release.wait(5)
+        holding.set()
+        release.wait(60)
         self.description = (("row_count",),)
 
     monkeypatch.setattr(Cursor, "execute", slow)
     with ThreadPoolExecutor(max_workers=1) as pool:
         holder = pool.submit(connector.execute, PROBE, timeout_s=None)
-        time.sleep(0.05)
-        started = time.monotonic()
-        with pytest.raises(ExecutionError) as info:
-            connector.execute(PROBE, timeout_s=0.1)
-        assert info.value.code == "FL702"
-        assert time.monotonic() - started < 2
-        release.set()
+        assert holding.wait(30)  # the holder owns the connection lock
+        try:
+            with pytest.raises(ExecutionError) as info:
+                connector.execute(PROBE, timeout_s=0.1)
+            assert info.value.code == "FL702"
+            # the wait ended by the timeout, while the holder was still blocked
+            assert not release.is_set() and not holder.done()
+        finally:
+            release.set()
         holder.result()

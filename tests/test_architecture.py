@@ -181,7 +181,8 @@ def check_layering(
         own = LAYERS[own_key]
     problems: list[str] = []
     for node in _module_level_imports(ast.parse(source, filename)):
-        for target in _imported_modules(node, importer, is_pkg):
+        # `from pkg import a, b` yields the same target twice: report the statement once
+        for target in dict.fromkeys(_imported_modules(node, importer, is_pkg)):
             resolved = target_layer(target)
             if resolved is None:
                 problems.append(f"{filename}:{node.lineno}: '{target}' has no layer in LAYERS")
@@ -197,7 +198,7 @@ def facade_problems(source: str, filename: str = "<module>") -> list[str]:
     """Violations: a module-level import in the facade from anything but ``factlang.api``."""
     problems: list[str] = []
     for node in _module_level_imports(ast.parse(source, filename)):
-        for target in _imported_modules(node, FACADE, is_pkg=True):
+        for target in dict.fromkeys(_imported_modules(node, FACADE, is_pkg=True)):
             if target != "factlang.api":
                 problems.append(f"{filename}:{node.lineno}: facade imports '{target}'")
         if isinstance(node, ast.Import) and not any(
@@ -326,6 +327,14 @@ def test_package_imports_resolve_to_submodule_layer() -> None:
     assert check_layering("from factlang.syntax import Token\n", "factlang.syntax.lexer")
     assert check_layering("from factlang.syntax import Token\n", "factlang.semantics.types") == []
     assert check_layering("from factlang.syntax import parser\n", "factlang.syntax.lexer")
+
+
+def test_each_violation_is_reported_once() -> None:
+    # two names from one offending package are one import statement: one violation
+    problems = check_layering("from factlang.syntax import Token, Span\n", "factlang.syntax.lexer")
+    assert len(problems) == 1, problems
+    two = "from factlang.syntax.parser import a\nfrom factlang.syntax.parser import b\n"
+    assert len(check_layering(two, "factlang.syntax.lexer")) == 2  # distinct lines stay distinct
 
 
 def test_layering_allows_same_package_and_flags_unknown() -> None:

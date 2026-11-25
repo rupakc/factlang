@@ -19,7 +19,10 @@ statement that exceeds `timeout_s` where the driver allows it, and serialises st
 one connection unless the driver declares PEP 249 `threadsafety >= 2`. The lock is kept per
 connection object in a weak map; a connection that cannot be weakly referenced falls back to
 a map keyed by `id()`, which holds a strong reference to it, so such a connection stays alive
-for the life of the process once a `DBAPIConnector` has wrapped it.
+for the life of the process once a `DBAPIConnector` has wrapped it. This is the case for
+`sqlite3` and `pyodbc` connections, which are not weak-referenceable. To avoid growth, open
+one connection and reuse one connector for it (rather than a connection and a connector per
+check), so the process pins one connection, not one per call.
 
 ## Writing a connector
 

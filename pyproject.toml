@@ -106,6 +106,7 @@ include = [
   "docs/extending",
   "docs/overrides",
   "scripts/gen_reference.py",
+  "scripts/verify_tag_ci.py",
   "site-playground/glue.py",
 ]
 exclude = ["__pycache__", "*.pyc"]

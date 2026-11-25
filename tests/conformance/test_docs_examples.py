@@ -117,6 +117,17 @@ def test_readme_verb_table_is_the_standard_pack_and_lints() -> None:
         assert not bag.has_errors, f"{claim}\n{bag.render()}"
 
 
+def test_verbs_guide_states_the_verb_count_and_describes_every_verb() -> None:
+    text = (DOCS / "guide" / "verbs.md").read_text(encoding="utf-8")
+    names = fl.standard_pack().names()
+    stated = re.search(r"has (\d+) verbs", text)
+    assert stated is not None, "docs/guide/verbs.md must say 'has N verbs' in digits"
+    assert int(stated.group(1)) == len(names)
+    groups = text.split("## ", 1)[0]  # the group descriptions in the introduction
+    for verb in names:
+        assert f"`{verb}`" in groups, f"the introduction does not describe {verb}"
+
+
 @pytest.mark.parametrize("page", _site_pages(), ids=lambda p: p.relative_to(DOCS).as_posix())
 def test_factlang_blocks_lint_cleanly(page: Path) -> None:
     for block in _FACTLANG.findall(page.read_text(encoding="utf-8")):

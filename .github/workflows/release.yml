@@ -18,7 +18,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     permissions:
       contents: read
       actions: read # gh run list: the CI verdict of the tagged commit
@@ -36,28 +36,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Pass on any completed successful ci.yml run of this exact commit; wait (up to 60
-          # minutes) while runs are still queued or in progress; fail when every run of the
-          # commit finished without success, or none exists.
-          deadline=$(( $(date +%s) + 3600 ))
-          while :; do
-            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
-              --workflow ci.yml --limit 50 --json status,conclusion)
-            echo "$runs"
-            if echo "$runs" | jq -e 'any(.[]; .status == "completed" and .conclusion == "success")' >/dev/null; then
-              echo "CI is green for $GITHUB_SHA"
-              exit 0
-            fi
-            if ! echo "$runs" | jq -e 'any(.[]; .status != "completed")' >/dev/null; then
-              echo "::error::no successful ci.yml run for $GITHUB_SHA"
-              exit 1
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::timed out waiting for ci.yml on $GITHUB_SHA"
-              exit 1
-            fi
-            sleep 30
-          done
+          # Only the ci.yml run of THIS tag push counts (event push, head_branch == the tag,
+          # same sha), and only with every test-full matrix leg successful; no other run may
+          # substitute. Waits up to 100 minutes including queueing (the job allows 120).
+          python scripts/verify_tag_ci.py --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA"
       - run: pip install build twine
       - run: python -m build
       - run: twine check --strict dist/*

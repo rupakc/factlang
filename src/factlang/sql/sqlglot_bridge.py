@@ -87,16 +87,22 @@ _CAST_TYPES = {
 # Inline-literal spellings of bridged dialects with no native profile, by sqlglot dialect
 # name (spec 0.1.3 I1/I2). Consulted after native profiles and before the ancestor walk, for
 # the dialect class registered under exactly that name (a subclass walks as before). Display
-# SQL only; the quote-doubling decision always comes from the dialect's lexer, never from here.
+# SQL only; internal (not part of the public API). The quote-doubling decision always comes
+# from the dialect's lexer, never from here: literal_style() replaces every entry's
+# doubled_quote_escape with the lexer's answer. The hive/spark/spark2 entries say False
+# anyway (their lexers have no '' form), so the table never reads as claiming one.
 _UTC_TIMESTAMP = "TIMESTAMP '{date} {time} UTC'"  # Presto/Trino: an explicit zone
 _NAIVE_TIMESTAMP = "TIMESTAMP '{date} {time}'"  # naive, holding UTC wall-clock time
+_NAIVE_NO_DOUBLING = dataclasses.replace(
+    ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP, doubled_quote_escape=False
+)
 BRIDGE_LITERAL_STYLES: Mapping[str, LiteralStyle] = MappingProxyType(
     {
         "presto": dataclasses.replace(ANSI_STYLE, timestamp_literal=_UTC_TIMESTAMP),
         "athena": dataclasses.replace(ANSI_STYLE, timestamp_literal=_UTC_TIMESTAMP),
-        "hive": dataclasses.replace(ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP),
-        "spark": dataclasses.replace(ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP),
-        "spark2": dataclasses.replace(ANSI_STYLE, timestamp_literal=_NAIVE_TIMESTAMP),
+        "hive": _NAIVE_NO_DOUBLING,
+        "spark": _NAIVE_NO_DOUBLING,
+        "spark2": _NAIVE_NO_DOUBLING,
         # Teradata has no boolean literal: 1/0, as on T-SQL and Oracle
         "teradata": dataclasses.replace(
             ANSI_STYLE, true_literal="1", false_literal="0", timestamp_literal=_NAIVE_TIMESTAMP

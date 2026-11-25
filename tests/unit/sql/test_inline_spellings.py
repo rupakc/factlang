@@ -139,6 +139,9 @@ def test_the_bridge_table_never_decides_quote_doubling() -> None:
     for name in bridge.BRIDGE_LITERAL_STYLES:
         style = literal_style_for(name)
         assert style.doubled_quote_escape is (bridge.lexer_doubles_quote(name) is True), name
+    # the table's own flag agrees with the lexer where it has no '' form
+    for name in ("hive", "spark", "spark2"):
+        assert bridge.BRIDGE_LITERAL_STYLES[name].doubled_quote_escape is False, name
     # spark/hive lexers have no '' form: still refused there, still doubled on presto/teradata
     for name in ("hive", "spark", "spark2"):
         with pytest.raises(RenderError, match=FL507):
@@ -157,6 +160,28 @@ def test_bridge_table_is_consulted_before_the_ancestor_walk() -> None:
     assert literal_style_for("dune").timestamp_literal == "TIMESTAMP '{date} {time} UTC'"
     # fabric still walks to T-SQL
     assert literal_style_for("fabric").timestamp_literal == "CAST('{date} {time}' AS DATETIME2)"
+
+
+def test_a_table_entry_wins_over_the_ancestor_walk(monkeypatch: pytest.MonkeyPatch) -> None:
+    # pin the order with an entry that differs from what the walk would give: dune walks to
+    # the native trino profile, so a table entry for dune must be what literal_style returns
+    pytest.importorskip("sqlglot")
+    import dataclasses
+    from types import MappingProxyType
+
+    from factlang.sql import sqlglot_bridge as bridge
+    from factlang.sql.registry import literal_style_for
+
+    walked = literal_style_for("dune")
+    marker = "TIMESTAMP '{date} {time} (table)'"
+    entry = dataclasses.replace(walked, timestamp_literal=marker, true_literal="1")
+    table = {**bridge.BRIDGE_LITERAL_STYLES, "dune": entry}
+    monkeypatch.setattr(bridge, "BRIDGE_LITERAL_STYLES", MappingProxyType(table))
+    style = literal_style_for("dune")
+    assert (style.timestamp_literal, style.true_literal) == (marker, "1")
+    assert style.doubled_quote_escape is walked.doubled_quote_escape  # still the lexer's
+    monkeypatch.undo()
+    assert literal_style_for("dune") == walked
 
 
 # -- I2 booleans ------------------------------------------------------------------------------

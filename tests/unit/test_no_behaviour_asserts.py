@@ -25,7 +25,8 @@ SRC = Path(factlang.__file__).resolve().parent
 # (module, enclosing function) -> number of asserts: unreachable-state checks and type
 # narrowing of values FactLang itself produced (parser/lexer output, validated primitives,
 # the analyser's typed claim values, the engine's own slot state, the renderer's own type
-# dispatch). None guards a host-supplied value.
+# dispatch). None guards a host-supplied value. The counts are informational (what the
+# review saw): the test pins by function, so only the keys are enforced, never the numbers.
 INTERNAL_ASSERTS: dict[tuple[str, str], int] = {
     ("engine.py", "Checker.compile"): 1,
     ("engine.py", "Checker._error"): 1,

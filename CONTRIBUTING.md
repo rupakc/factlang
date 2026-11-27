@@ -41,7 +41,7 @@ The browser end-to-end tests (`tests/e2e`) drive a served build of the site in C
 pip install -e ".[e2e]"
 python -m playwright install chromium webkit
 mkdocs build --strict -d site
-python -m http.server 8000 --bind 127.0.0.1 --directory site &
+python tests/e2e/serve.py site 8000 &   # http.server with a deeper listen backlog
 FL_SITE_URL=http://127.0.0.1:8000/ pytest -rs tests/e2e
 ```
 

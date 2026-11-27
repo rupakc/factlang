@@ -42,8 +42,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # playground: the e2e expectations run on duckdb 1.4.3, the engine DuckDB-WASM embeds
       - name: Install
-        run: pip install -e ".[dev,docs,e2e]"
+        run: |
+          pip install -e ".[dev,docs,playground,e2e]"
+          python -c "import duckdb; assert duckdb.__version__ == '1.4.3', duckdb.__version__"
       - name: Build the wheel the playground installs
         run: python -m build --wheel
       - name: Generate the verb reference
@@ -52,7 +57,14 @@ jobs:
         run: mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
-      - name: Install the browsers (Chromium, WebKit)
+      - name: Playwright version (the browser cache key)
+        id: pw
+        run: echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium-webkit
+      - name: Install the browsers (Chromium, WebKit) and their system dependencies
         run: |
           for attempt in 1 2 3; do
             python -m playwright install --with-deps chromium webkit && exit 0
@@ -65,7 +77,7 @@ jobs:
           FL_E2E_WEBKIT: "1"
         run: |
           set -o pipefail
-          python -m http.server 8000 --bind 127.0.0.1 --directory site > http.log 2>&1 &
+          python tests/e2e/serve.py site 8000 > http.log 2>&1 &
           for _ in $(seq 1 30); do curl -fsS -o /dev/null "$FL_SITE_URL" && break; sleep 1; done
           pytest -rs -p no:cacheprovider tests/e2e | tee e2e.log
           ! grep -q SKIPPED e2e.log
@@ -82,25 +94,48 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: actions/setup-python@v5
+      # An older run that finishes late must not publish over a newer commit: publish only
+      # while the commit is still the head of main (a newer push brings its own run).
+      - name: Is this commit still the head of main?
+        id: current
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$head" = "$SHA" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "main is now at $head, not $SHA: not publishing"
+          fi
+      - if: steps.current.outputs.publish == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - if: steps.current.outputs.publish == 'true'
+        name: Install
         run: pip install build -e ".[docs]"
-      - name: Build the wheel the playground installs
+      - if: steps.current.outputs.publish == 'true'
+        name: Build the wheel the playground installs
         run: python -m build --wheel
-      - name: Smoke-test the wheel as the playground uses it (clean venv, no extras)
+      - if: steps.current.outputs.publish == 'true'
+        name: Smoke-test the wheel as the playground uses it (clean venv, no extras)
         run: |
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip install dist/factlang-*-py3-none-any.whl
           cd /tmp && /tmp/smoke/bin/python -I "$GITHUB_WORKSPACE/site-playground/glue.py"
-      - name: Generate the verb reference
+      - if: steps.current.outputs.publish == 'true'
+        name: Generate the verb reference
         run: python scripts/gen_reference.py
-      - name: Build the site
+      - if: steps.current.outputs.publish == 'true'
+        name: Build the site
         run: mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
-      - name: Publish to gh-pages
+      - if: steps.current.outputs.publish == 'true'
+        name: Publish to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

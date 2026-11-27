@@ -213,9 +213,11 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          paths=(docs site-playground scripts/docs_hooks.py mkdocs.yml tests/playground
-                 tests/e2e tests/conformance pyproject.toml .github/workflows/ci.yml
-                 .github/workflows/docs.yml)
+          # src: the wheel the playground installs, mkdocstrings, the landing facts;
+          # scripts/gen_reference.py: the verb reference page
+          paths=(docs site-playground src scripts/docs_hooks.py scripts/gen_reference.py
+                 mkdocs.yml tests/playground tests/e2e tests/conformance pyproject.toml
+                 .github/workflows/ci.yml .github/workflows/docs.yml)
           if [ "$EVENT" = pull_request ]; then
             range="$BASE...HEAD"
           elif [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "${BEFORE//0/}" != "" ] \
@@ -234,6 +236,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - if: steps.changes.outputs.site == 'true'
         name: Install
         run: |
@@ -248,8 +252,9 @@ jobs:
         run: python scripts/gen_reference.py
       # The built-site tests (landing facts, playground page), the playground parity tests on
       # duckdb 1.4.3 and the Node-based engine.js tests all skip without their extras; here
-      # every extra is installed, so a skip is a failure. The one exception is by design:
-      # test_dialects skips the parametrised table references no dialect can spell.
+      # every extra is installed, so a skip is a failure. The one exception is by design, and
+      # allowed only with its exact reason and count: test_dialects skips the 8 parametrised
+      # table references that have more than three parts.
       - if: steps.changes.outputs.site == 'true'
         name: Site, playground and conformance tests (no skips)
         env:
@@ -257,7 +262,8 @@ jobs:
         run: |
           set -o pipefail
           pytest -rs -p no:cacheprovider tests/playground tests/conformance | tee site-tests.log
-          if grep SKIPPED site-tests.log | grep -v "tests/conformance/test_dialects.py:"; then
+          known="SKIPPED [8] tests/conformance/test_dialects.py:306: a TableRef holds at most three parts"
+          if grep SKIPPED site-tests.log | grep -vxF "$known"; then
             echo "a site test skipped although every extra is installed"; exit 1
           fi
       - if: steps.changes.outputs.site == 'true'
@@ -266,7 +272,16 @@ jobs:
         env:
           NO_MKDOCS_2_WARNING: "1"
       - if: steps.changes.outputs.site == 'true'
-        name: Install the browsers (Chromium, WebKit)
+        name: Playwright version (the browser cache key)
+        id: pw
+        run: echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - if: steps.changes.outputs.site == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium-webkit
+      - if: steps.changes.outputs.site == 'true'
+        name: Install the browsers (Chromium, WebKit) and their system dependencies
         run: |
           for attempt in 1 2 3; do
             python -m playwright install --with-deps chromium webkit && exit 0
@@ -280,7 +295,7 @@ jobs:
           FL_E2E_WEBKIT: "1"
         run: |
           set -o pipefail
-          python -m http.server 8000 --bind 127.0.0.1 --directory site > http.log 2>&1 &
+          python tests/e2e/serve.py site 8000 > http.log 2>&1 &
           for _ in $(seq 1 30); do curl -fsS -o /dev/null "$FL_SITE_URL" && break; sleep 1; done
           pytest -rs -p no:cacheprovider tests/e2e | tee e2e.log
           ! grep -q SKIPPED e2e.log

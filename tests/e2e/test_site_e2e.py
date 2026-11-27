@@ -35,6 +35,7 @@ ENGINE_URL = re.compile(
     r"/pyodide/|@duckdb/|apache-arrow|extensions\.duckdb\.org|\.whl\b|wheel\.json|"
     r"/assets/playground/(?!playground\.(?:js|css)(?:\?|$))"
 )
+DUCKDB_ENGINE = "1.4.3"  # engine.js DUCKDB_ENGINE_VERSION, pinned by the playground extra
 LANDING_BUDGET = 1_500_000  # raw bytes, web fonts excluded (spec 6)
 
 HOSTILE_HEADER = "<img src=x onerror=alert(1)>"
@@ -66,6 +67,11 @@ def expected(text: str, csv: dict[str, Path] | None = None) -> list[tuple[str, s
 
     import factlang as fl
 
+    if duckdb.__version__ != DUCKDB_ENGINE:
+        pytest.fail(
+            f"the expectations need duckdb=={DUCKDB_ENGINE}, the engine DuckDB-WASM embeds "
+            f'(found {duckdb.__version__}): pip install -e ".[playground]"'
+        )
     con = duckdb.connect()
     con.execute("SET GLOBAL TimeZone = 'UTC'")  # the playground's session zone
     for statement in _glue().SAMPLE_SQL:
@@ -105,8 +111,20 @@ def open_playground(make_context: Context, site_url: str, query: str = "", **kw:
         page.route(pattern, handler)
     page.goto(site_url + "playground/" + query)
     try:
-        page.wait_for_selector("#fl-pg-engine.is-ready", timeout=BOOT_MS)
-    except Exception:
+        # poll, so a request to the site itself that failed ends the wait at once
+        for _ in range(BOOT_MS // 1000):
+            broken = [
+                (r.url, r.failure)
+                for r in seen.requests
+                if r.failure and r.url.startswith(site_url) and "aborted" not in r.failure.lower()
+            ]
+            assert not broken, f"the site server failed requests: {broken}"
+            if page.locator("#fl-pg-engine.is-ready").count():
+                break
+            page.wait_for_timeout(1000)
+        else:
+            raise TimeoutError
+    except (AssertionError, TimeoutError):
         state = page.evaluate(
             "() => [...document.querySelectorAll('#fl-pg-status, #fl-pg-engine,"
             " #fl-pg-engine-status')].map(e => e.id + ': ' + e.textContent)"
@@ -206,6 +224,7 @@ def test_landing_fetches_no_engine_and_stays_under_budget(
     page, seen = _page_requests(make_context, site_url)
     assert _engine_requests(seen) == []
     assert "cdn.jsdelivr.net" not in seen.hosts()
+    assert seen.hosts() - {urlsplit(site_url).hostname} <= SITE_CHROME_HOSTS
     assert worker_counts(page) == {"blob": 0, "pyodide": 0}
     assert any(u.endswith("assets/playground/playground.js") for u in seen.urls())
 
@@ -238,6 +257,8 @@ def test_engine_allowed_hosts_are_the_spec_list() -> None:
     found = re.search(r"ALLOWED_HOSTS = Object\.freeze\(\[([^\]]*)\]\)", ENGINE_JS.read_text())
     assert found is not None
     assert set(re.findall(r'"([^"]+)"', found.group(1))) == ENGINE_HOSTS
+    engine = re.search(r'DUCKDB_ENGINE_VERSION = "v([^"]+)"', ENGINE_JS.read_text())
+    assert engine is not None and engine.group(1) == DUCKDB_ENGINE
 
 
 def test_default_example_gives_the_library_verdicts(make_context: Context, site_url: str) -> None:
@@ -329,6 +350,10 @@ def test_csv_files_hostile_names_are_inert_and_never_sent(
 ) -> None:
     page, seen = open_playground(make_context, site_url)
     wait_idle_verdicts(page)
+    # negative control: a dialog the page opens is observed (and dismissed)
+    page.evaluate("() => alert('fl-dialog-control')")
+    assert seen.dialogs == ["fl-dialog-control"]
+    seen.dialogs.clear()
     hostile = (FIXTURES / "hostile.csv").read_bytes()
     quoted = (FIXTURES / "quoted_names.csv").read_bytes()
     malformed = (FIXTURES / "malformed.csv").read_bytes()

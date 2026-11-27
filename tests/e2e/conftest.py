@@ -9,9 +9,10 @@ never needs it. How to run them locally: ``CONTRIBUTING.md``.
 Two things the fixtures do on the way, both confined to the browser the tests drive:
 
 * **CDN retries.** Requests to the playground's CDNs (``cdn.jsdelivr.net``,
-  ``extensions.duckdb.org``) go through a route that retries a failed or 5xx fetch with
-  backoff and keeps the bytes for the rest of the session, so a flaky CDN neither fails the
-  run nor is downloaded again by every test. If a CDN stays down, the tests fail (and the
+  ``extensions.duckdb.org``) go through a route that retries a failed or 5xx fetch at once
+  (at most 3 attempts in 120 s, no sleep: a sleep would stall the sync Playwright session)
+  and keeps the bytes for the rest of the session, so a flaky CDN neither fails the run nor
+  is downloaded again by every test. If a CDN stays down, the tests fail (and the
   publish they gate waits).
 * **Sitemap.** Material's instant navigation only intercepts URLs listed in ``sitemap.xml``,
   which names the production ``site_url``. Served from another origin, the sitemap is

@@ -17,7 +17,11 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[2]
 SITE_URL = os.environ.get("FL_SITE_URL", "").strip()
 CDN_HOSTS = ("cdn.jsdelivr.net", "extensions.duckdb.org")
-CDN_ATTEMPTS = 5
+# Retries of one CDN resource: immediate (a sleep in a route handler would stall the whole
+# sync Playwright session), each attempt bounded, all of them well under BOOT_MS.
+CDN_ATTEMPTS = 3
+CDN_ATTEMPT_MS = 60_000
+CDN_BUDGET_MS = 120_000
 # a playground page boots Pyodide and DuckDB-WASM from the CDN: generous, but bounded
 BOOT_MS = 300_000
 
@@ -115,13 +119,15 @@ class CdnCache:
 
     def _fetch(self, route: Any) -> tuple[int, dict[str, str], bytes] | None:
         last = ""
-        for attempt in range(CDN_ATTEMPTS):
-            if attempt:
-                time.sleep(min(2**attempt, 20))
+        start = time.monotonic()
+        for _ in range(CDN_ATTEMPTS):
+            left = CDN_BUDGET_MS - (time.monotonic() - start) * 1000
+            if left < 1000:
+                break
             try:
-                response = route.fetch(timeout=90_000)
-            except Exception as exc:  # network error: retry
-                last = str(exc)
+                response = route.fetch(timeout=min(CDN_ATTEMPT_MS, left))
+            except Exception as exc:  # network error or attempt timeout: retry
+                last = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
                 continue
             if response.status >= 500:
                 last = f"HTTP {response.status}"

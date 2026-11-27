@@ -323,7 +323,7 @@ html .md-footer-meta.md-typeset a:hover {
 }
 
 /* Fragment Mono draws >=, == and -> as ligatures; FactLang must read as typed. */
-code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
+code, pre, kbd, .fl-ledger, .fl-install, .fl-idea__says, .fl-step__artefact, .fl-pg textarea, .fl-pg__hl {
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
 }
@@ -1038,7 +1038,7 @@ a.fl-card:focus-visible::before {
 /* The idea: what an answer said, as claims, and what the data says. */
 .fl-idea__panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr);
   border: 1px solid var(--fl-border);
   border-radius: var(--fl-radius);
   background: var(--fl-surface);
@@ -1081,11 +1081,16 @@ a.fl-card:focus-visible::before {
   padding: 0;
   border: 0;
   background: none;
-  font-size: 0.68rem;
-  line-height: 2.05;
-  white-space: pre;
-  overflow-x: auto;
+  font-size: 0.66rem;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  overflow: visible;
 }
+/* the panel's claims are read, not copied: no Material copy button over them */
+.md-typeset pre.fl-idea__code > .md-code__nav,
+.md-typeset pre.fl-idea__code > .md-clipboard { display: none; }
 .fl-idea__why {
   font-family: var(--md-code-font-family);
   font-size: 0.66rem;

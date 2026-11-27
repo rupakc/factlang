@@ -20,6 +20,7 @@ import dataclasses
 import html
 import importlib.metadata
 import importlib.util
+import inspect
 import io
 import os
 import re
@@ -46,6 +47,11 @@ _PYTHON = re.compile(r"^```python[ \t]*\n(.*?)^```", re.M | re.S)
 _TEXT = re.compile(r"^```text[ \t]*\n(.*?)^```", re.M | re.S)
 
 STAT_KEYS = ("native_dialects", "verbs", "verdicts", "core_dependencies")
+# numbers rendered from the facts outside the stat strip (the agents card)
+CARD_FACTS = {
+    "agent_tools": lambda f: str(len(f["agent_tools"])),
+    "max_claims": lambda f: str(f["max_claims"]),
+}
 
 
 def _hooks() -> ModuleType:
@@ -103,6 +109,12 @@ def test_site_facts_are_the_code() -> None:
         "native": sorted(expected.pop("native", [])),
     }
     assert expected == {}, f"a native profile has a tier the landing page does not show: {expected}"
+    # the agents card: tool names and the default claim cap, read here by another route
+    from factlang.agent import TOOL_NAMES, handle_tool_call
+
+    assert facts["agent_tools"] == [n.removeprefix("factlang_") for n in TOOL_NAMES]
+    default_cap = inspect.signature(handle_tool_call).parameters["max_claims"].default
+    assert facts["max_claims"] == default_cap
 
 
 def test_site_facts_count_a_new_dialect() -> None:
@@ -136,9 +148,11 @@ def test_template_reads_numbers_and_dialects_from_the_facts() -> None:
     assert re.search(r"facts\.tiers\b", home)
     # every stat is a data-fact element filled by Jinja, never a typed number
     stats = re.findall(r'data-fact="(\w+)"[^>]*>([^<]*)<', home)
-    assert sorted(k for k, _ in stats) == sorted(STAT_KEYS)
+    assert sorted(k for k, _ in stats) == sorted((*STAT_KEYS, *CARD_FACTS))
     for key, body in stats:
         assert "{{" in body and not re.search(r"\d", body.replace("facts.", "")), (key, body)
+    for typed in ("Three tools", "(200 by default)", "200 by default"):
+        assert typed not in home, f"{typed!r} is typed in; render it from the facts"
     # no dialect name is written into a tier list by hand
     tier_markup = "".join(re.findall(r'data-tier="(?:verified|native)".*?</ul>', home, re.S))
     for name in fl.sql.native_dialects():
@@ -221,7 +235,7 @@ def test_pipeline_artefacts_are_real(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_every_measured_claim_is_one_select() -> None:
     """Backs "every measured claim compiles to one SELECT" (NOTE is never measured)."""
     pack = fl.standard_pack()
-    seen = 0
+    seen: dict[str, int] = {}
     for name in pack.names():
         for example in pack.get(name).examples:
             if not example.valid or example.expect:
@@ -232,8 +246,9 @@ def test_every_measured_claim_is_one_select() -> None:
                 continue
             assert len(probes) == 1, example.source
             assert probes[0].sql_template.lstrip().upper().startswith("SELECT"), example.source
-            seen += 1
-    assert seen >= len(pack.names()) - 1
+            seen[name] = seen.get(name, 0) + 1
+    missing = [n for n in pack.names() if n != "NOTE" and not seen.get(n)]
+    assert not missing, f"verbs with no valid example compiled here: {missing}"
 
 
 def test_best_effort_examples_are_sqlglot_dialects() -> None:
@@ -306,7 +321,9 @@ def test_built_page_shows_the_facts(built_site: Path) -> None:
     page = (built_site / "index.html").read_text(encoding="utf-8")
     facts = _hooks().site_facts()
     stats = dict(re.findall(r'data-fact="(\w+)"[^>]*>\s*([^<]*?)\s*<', page))
-    assert stats == {k: str(facts[k]) for k in STAT_KEYS}
+    expected = {k: str(facts[k]) for k in STAT_KEYS}
+    expected.update({k: render(facts) for k, render in CARD_FACTS.items()})
+    assert stats == expected
     for tier in ("verified", "native"):
         group = re.search(r'data-tier="' + tier + r'".*?</ul>', page, re.S)
         assert group is not None, tier
@@ -347,3 +364,21 @@ def test_every_landing_link_resolves(built_site: Path) -> None:
         "extending/verbs/",
     ):
         assert any(h.split("#")[0].endswith(page_link) for h in hrefs), page_link
+
+
+def test_shop_numbers_in_the_prose_are_the_shop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The numbers typed into sentences (quick start, idea panel) are the shop's."""
+    ns = _shop(tmp_path, monkeypatch)
+    conn = ns["conn"]
+    (customers,) = conn.execute("SELECT COUNT(*) FROM customers").fetchone()
+    (orders,) = conn.execute("SELECT COUNT(*) FROM orders").fetchone()
+    index = INDEX.read_text(encoding="utf-8")
+    assert f"{customers:,} customers and {orders:,} orders" in index
+    (paid,) = (
+        fl.Checker(ns["connector"])
+        .check("COUNT orders VALUE ==1400 WHERE status = 'paid'")
+        .outcomes
+    )
+    assert f"<mark>{paid.facts['value']:,} paid orders</mark>" in _home()

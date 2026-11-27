@@ -57,6 +57,8 @@ def _core_dependencies() -> list[str]:
 def site_facts() -> dict[str, Any]:
     """The facts the landing page states, read from the code and ``pyproject.toml``."""
     import factlang as fl
+    from factlang.agent import tool_definitions
+    from factlang.agent.tools import DEFAULT_MAX_CLAIMS
     from factlang.sql.registry import get_profile
 
     tiers: dict[str, list[str]] = {"verified": [], "native": []}
@@ -71,6 +73,9 @@ def site_facts() -> dict[str, Any]:
         "verdicts": len(fl.Verdict),
         "core_dependencies": len(_core_dependencies()),
         "tiers": {tier: sorted(names) for tier, names in tiers.items()},
+        # the agent card: the tool names (without the factlang_ prefix) and the claim cap
+        "agent_tools": [t["name"].removeprefix("factlang_") for t in tool_definitions()],
+        "max_claims": DEFAULT_MAX_CLAIMS,
     }
 
 

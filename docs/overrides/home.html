@@ -23,12 +23,12 @@
     <div class="fl-hero__inner">
       <div class="fl-hero__copy">
         <span class="fl-hero__tag"><span class="fl-hero__dot" aria-hidden="true"></span>Open source &middot; MIT &middot; v{{ facts.version }}</span>
-        <h1 id="fl-hero-title">Every claim about your data, <span class="fl-gradient-text">checked against every row.</span></h1>
+        <h1 id="fl-hero-title">Don&rsquo;t trust claims about your data. <span class="fl-gradient-text">Measure them.</span></h1>
         <p>
           FactLang is a small language for facts about data: joins, nulls, counts, allowed
-          values, freshness. Each line compiles to read-only SQL for your warehouse and
-          comes back as a verdict, with the measured numbers and the exact query as
-          evidence.
+          values, freshness. Each line comes back as a verdict; the ones that measure data
+          run as read-only SQL over every matching row, with the numbers and the exact
+          query as evidence.
         </p>
         <div class="fl-hero__actions">
           <a class="fl-button fl-button--solid" href="{{ 'playground/' | url }}">Try it live</a>
@@ -179,9 +179,11 @@ VALUES orders.status IN ['paid', 'open', 'shipped']</code></pre>
           <h3>Ground every answer in the data</h3>
           <p>
             The agent writes the facts in its answer as claims and FactLang measures them.
-            Three tools (check, lint, explain) come as JSON-schema tool specs, and
-            <code>factlang mcp</code> serves them over MCP. A per-call claim cap (200 by
-            default) bounds the work; explain shows the SQL without running it.
+            <span data-fact="agent_tools">{{ facts.agent_tools | length }}</span> tools
+            ({{ facts.agent_tools | join(", ") }}) come as JSON-schema tool specs, and
+            <code>factlang mcp</code> serves them over MCP. A per-call claim cap
+            (<span data-fact="max_claims">{{ facts.max_claims }}</span> by default) bounds the
+            work; explain shows the SQL without running it.
           </p>
           <a class="fl-card__more" href="{{ 'agents/' | url }}">Agents and LLMs &rarr;</a>
         </article>
@@ -231,7 +233,7 @@ VALUES orders.status IN ['paid', 'open', 'shipped']</code></pre>
         <a class="fl-card fl-card--indigo fl-feature fl-fade-up" href="{{ 'guide/verbs/' | url }}">
           <h3>{{ facts.verbs }} standard verbs</h3>
           <p>Joins, keys, nulls, allowed values, ranges, patterns, freshness, types, counts and aggregates, each a one-line claim.</p>
-          <code class="fl-feature__code fl-src">UNIQUE order_items.order_id WITH [line_no]</code>
+          <code class="fl-feature__code fl-src">UNIQUE orders.id</code>
         </a>
         <a class="fl-card fl-card--teal fl-feature fl-fade-up" style="--fl-delay:80ms" href="{{ 'guide/evidence/#tiers' | url }}">
           <h3>{{ facts.native_dialects }} native dialects</h3>

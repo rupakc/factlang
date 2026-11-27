@@ -103,13 +103,20 @@ def table_names(files: list[str]) -> list[str]:
 # -- driving the page ---------------------------------------------------------------------------
 
 
-def open_playground(make_context: Context, site_url: str, query: str = "", **kw: Any) -> Any:
-    routes = kw.pop("routes", ())
-    context, seen = make_context(**kw)
-    page = context.new_page()
-    for pattern, handler in routes:
-        page.route(pattern, handler)
-    page.goto(site_url + "playground/" + query)
+def site_errors(seen: Seen, site_url: str) -> list[tuple[int, str]]:
+    """Every 4xx/5xx answer from the site's own origin (scheme, host and port), inside the
+    site's path or not: a URL that resolves one level too high leaves the site's path but
+    not its origin (2026-11-27: ``https://rupakc.github.io/assets/playground/wheel.json``).
+    Other hosts (the CDNs, ``api.github.com``'s rate limit) are not the site's to answer."""
+    origin = "{0.scheme}://{0.netloc}/".format(urlsplit(site_url))
+    return [
+        (r.status, r.url) for r in seen.responses if r.url.startswith(origin) and r.status >= 400
+    ]
+
+
+def wait_engine_ready(page: Any, seen: Seen, site_url: str) -> None:
+    """Wait until DuckDB is ready on the playground ``page``; fail at once, with the page's
+    state, if a request to the site failed or the site answered 4xx/5xx."""
     try:
         # poll, so a request to the site itself that failed ends the wait at once
         for _ in range(BOOT_MS // 1000):
@@ -119,12 +126,15 @@ def open_playground(make_context: Context, site_url: str, query: str = "", **kw:
                 if r.failure and r.url.startswith(site_url) and "aborted" not in r.failure.lower()
             ]
             assert not broken, f"the site server failed requests: {broken}"
+            assert not site_errors(seen, site_url), (
+                f"the site answered {site_errors(seen, site_url)}"
+            )
             if page.locator("#fl-pg-engine.is-ready").count():
                 break
             page.wait_for_timeout(1000)
         else:
             raise TimeoutError
-    except (AssertionError, TimeoutError):
+    except (AssertionError, TimeoutError) as exc:
         state = page.evaluate(
             "() => [...document.querySelectorAll('#fl-pg-status, #fl-pg-engine,"
             " #fl-pg-engine-status')].map(e => e.id + ': ' + e.textContent)"
@@ -132,9 +142,19 @@ def open_playground(make_context: Context, site_url: str, query: str = "", **kw:
         pending = [r.url for r in seen.requests if r.response() is None and not r.failure]
         failed = [(r.url, r.failure) for r in seen.requests if r.failure]
         pytest.fail(
-            f"the playground did not start: {state}; page errors {seen.page_errors}; "
+            f"the playground did not start ({exc}): {state}; page errors {seen.page_errors}; "
             f"console {seen.console[-10:]}; failed {failed}; unanswered {pending[:10]}"
         )
+
+
+def open_playground(make_context: Context, site_url: str, query: str = "", **kw: Any) -> Any:
+    routes = kw.pop("routes", ())
+    context, seen = make_context(**kw)
+    page = context.new_page()
+    for pattern, handler in routes:
+        page.route(pattern, handler)
+    page.goto(site_url + "playground/" + query)
+    wait_engine_ready(page, seen, site_url)
     return page, seen
 
 
@@ -280,7 +300,97 @@ def test_default_example_gives_the_library_verdicts(make_context: Context, site_
     other = [u for u in seen.urls() if urlsplit(u).scheme not in ("http", "https", "blob", "data")]
     assert other == []
     assert seen.page_errors == []
+    assert site_errors(seen, site_url) == []
     assert_csv_never_sent(seen)
+
+
+# -- the playground entered by instant navigation from another page and depth -----------------
+
+# Material's instant navigation swaps the page without a reload: playground.js was evaluated
+# on the FIRST page, so every URL it builds must not depend on where the visitor is now
+# (2026-11-27 incident: script.src re-resolved against the new location, wheel.json -> 404 HTML,
+# "Unexpected token '<' ... is not valid JSON"). Run against a site served under a sub-path
+# (``serve.py site 8000 /factlang/``) to cover a URL that lands one level too high.
+ENTRY_PAGES = ["", "guide/verdicts/", "reference/diagnostics/"]
+
+_CLICK_PLAYGROUND = r"""() => {
+  const a = [...document.querySelectorAll('a[href]')]
+    .find(a => /(^|\/)playground\/$/.test(a.getAttribute('href')));
+  if (!a) return false;
+  a.click();
+  return true;
+}"""
+
+
+def check_rendered_links(page: Any, site_url: str) -> None:
+    """Every link the playground renders into the page points into the site, at a page that
+    exists: Lint (diagnostic codes) and Explain SQL (the tier link) both render links."""
+    page.fill("#fl-pg-source", "FOO orders\nNULLS orders.nosuch RATE <=5%\n")
+    page.click("[data-action=lint]")
+    page.wait_for_selector("#fl-pg-result a[href]")
+    hrefs: list[str] = page.eval_on_selector_all("#fl-pg-result a[href]", "e => e.map(a => a.href)")
+    page.fill("#fl-pg-source", "ROWS orders VALUE >0\n")
+    page.click("[data-action=explain]")
+    page.wait_for_selector("#fl-pg-result .fl-pg__meta a[href]")
+    hrefs += page.eval_on_selector_all("#fl-pg-result a[href]", "e => e.map(a => a.href)")
+    assert any("/reference/diagnostics/#fl" in h for h in hrefs), hrefs
+    assert any("/guide/evidence/#tiers" in h for h in hrefs), hrefs
+    for href in sorted({h.split("#")[0] for h in hrefs}):
+        assert href.startswith(site_url), href
+        assert page.request.get(href).status == 200, href
+
+
+@pytest.mark.parametrize("entry", ENTRY_PAGES, ids=["landing", "guide", "reference"])
+def test_playground_reached_by_instant_navigation_starts_and_checks(
+    make_context: Context, site_url: str, entry: str
+) -> None:
+    context, seen = make_context()
+    page = context.new_page()
+    page.goto(site_url + entry, wait_until="networkidle")
+    page.evaluate("window.__marker = 7")
+    assert page.evaluate(_CLICK_PLAYGROUND) is True, "no link to the playground on " + entry
+    page.wait_for_url("**/playground/")
+    page.wait_for_selector("#fl-playground")
+    assert page.evaluate("window.__marker") == 7, "a full page load: not instant navigation"
+
+    wait_engine_ready(page, seen, site_url)
+    wait_idle_verdicts(page)  # the default example checks itself once DuckDB is up
+    assert page.input_value("#fl-pg-source") == default_example()
+    assert cards(page) == expected(default_example())
+    assert worker_counts(page) == {"blob": 1, "pyodide": 1}
+
+    check_rendered_links(page, site_url)
+    assert site_errors(seen, site_url) == []
+    assert seen.page_errors == []
+
+
+def test_missing_asset_is_reported_by_url_and_status(make_context: Context, site_url: str) -> None:
+    """A startup download that answers the host's 404 page says which URL failed and how,
+    never a raw JSON parse error ("Unexpected token '<' ... is not valid JSON")."""
+    context, _ = make_context()
+    page = context.new_page()
+    page.route(
+        "**/assets/playground/wheel.json",
+        lambda route: route.fulfill(
+            status=404, content_type="text/html", body="<!doctype html><title>404</title>"
+        ),
+    )
+    page.goto(site_url + "playground/")
+    page.wait_for_function(
+        "() => /could not start/.test(document.querySelector('#fl-pg-status').textContent)",
+        timeout=BOOT_MS,
+    )
+    message = page.inner_text("#fl-pg-status")
+    assert site_url + "assets/playground/wheel.json" in message, message
+    assert "HTTP 404" in message, message
+    assert "JSON" not in message and "Unexpected token" not in message, message
+
+
+def test_playground_direct_load_renders_site_links(make_context: Context, site_url: str) -> None:
+    page, seen = open_playground(make_context, site_url)
+    wait_idle_verdicts(page)
+    check_rendered_links(page, site_url)
+    assert site_errors(seen, site_url) == []
 
 
 # -- values crossing the Arrow decoder ---------------------------------------------------------
@@ -407,7 +517,16 @@ def test_csv_files_hostile_names_are_inert_and_never_sent(
 # -- (5) a slow query and a dead worker: ERROR, then the page works -----------------------------
 
 
+def skip_unless_local(site_url: str) -> None:
+    """The ``fl-timeout`` / ``fl-slow`` hooks are honoured on localhost only (engine.js
+    ``testParams``): against a public host the test would measure nothing."""
+    host = urlsplit(site_url).hostname
+    if host not in ("localhost", "127.0.0.1"):
+        pytest.skip(f"uses engine.js test hooks that work on localhost only, not on {host}")
+
+
 def test_timeout_is_an_error_then_the_page_recovers(make_context: Context, site_url: str) -> None:
+    skip_unless_local(site_url)
     page, seen = open_playground(make_context, site_url, "?fl-timeout=2&fl-slow=1")
     wait_idle_verdicts(page)
     got = cards(page)
@@ -433,6 +552,7 @@ _CRASH = """async () => {
 def test_worker_error_is_an_error_then_the_page_recovers(
     make_context: Context, site_url: str
 ) -> None:
+    skip_unless_local(site_url)
     # fl-slow keeps the first query running, so the worker fails with a query in flight
     page, seen = open_playground(make_context, site_url, "?fl-slow=1")
     page.wait_for_function(

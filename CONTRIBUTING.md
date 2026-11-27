@@ -41,9 +41,15 @@ The browser end-to-end tests (`tests/e2e`) drive a served build of the site in C
 pip install -e ".[e2e]"
 python -m playwright install chromium webkit
 mkdocs build --strict -d site
-python tests/e2e/serve.py site 8000 &   # http.server with a deeper listen backlog
-FL_SITE_URL=http://127.0.0.1:8000/ pytest -rs tests/e2e
+python tests/e2e/serve.py site 8000 /factlang/ &   # deeper listen backlog, under a sub-path
+FL_SITE_URL=http://127.0.0.1:8000/factlang/ pytest -rs tests/e2e
 ```
+
+Serve under a sub-path, as GitHub Pages serves the published site: from `/`, a URL that
+resolves one level too high lands on the site root and still works. `FL_E2E_BROWSER=webkit`
+runs the whole suite in WebKit instead of Chromium. Against the published site
+(`FL_SITE_URL=https://rupakc.github.io/factlang/`) the two tests that need the localhost-only
+hooks skip.
 
 The playground honours two test-only URL parameters on localhost only (`?fl-timeout=<s>`,
 `?fl-slow=<n>`, documented in `site-playground/engine.js`). The WebKit check skips when

@@ -13,6 +13,45 @@
 (function () {
   "use strict";
 
+  // Where this script, and so everything it fetches, lives: an absolute URL ending in
+  // "assets/playground/", read ONCE, while this script is first evaluated and the page that
+  // loaded it is current. Never re-derive it later from a <script> element: Material's
+  // instant navigation keeps the first page's element, and its .src re-resolves its relative
+  // src against the page the visitor is on NOW (2026-11-27: the playground entered from the
+  // landing page fetched playground/assets/playground/wheel.json, from a guide page
+  // /assets/playground/…, got the site's 404 page and failed with "Unexpected token '<' … is
+  // not valid JSON"). Property reads only, so the script stays inert on other pages.
+  var BOOT_SRC = bootSrc();
+  var assetBaseMemo = null;
+
+  function bootSrc() {
+    var here = "assets/playground/playground.js";
+    var mine = function (el) { return el && typeof el.src === "string" && el.src.indexOf(here) !== -1 ? el.src : ""; };
+    // a classic <script src> being evaluated: currentScript, else (very old engines) the last
+    // script in the document so far, which is this one; .src is absolute, resolved on THIS page
+    var scripts = document.scripts;
+    return mine(document.currentScript) || (scripts && scripts.length ? mine(scripts[scripts.length - 1]) : "");
+  }
+
+  function assetBase() {
+    if (assetBaseMemo) return assetBaseMemo;
+    if (BOOT_SRC) {
+      assetBaseMemo = BOOT_SRC.replace(/playground\.js(?:[?#].*)?$/, "");
+    } else {
+      // Material's scope is the site root as an absolute URL, computed on the first page;
+      // without it, the playground page itself (one level below the root) is current here
+      var scope = window.__md_scope;
+      assetBaseMemo = new URL("assets/playground/", scope ? String(scope) : new URL("../", location.href)).href;
+    }
+    return assetBaseMemo;
+  }
+
+  // The site root (the folder that holds "assets/"): links rendered into the page start here,
+  // so they are right whatever depth the playground was entered from.
+  function siteUrl(path) {
+    return assetBase().replace(/assets\/playground\/$/, "") + path;
+  }
+
   // The default examples: glue.py's SAMPLE_EXAMPLES_JSON, verbatim. The page needs them before
   // Python has started; tests/playground/test_playground_page.py keeps the copy equal.
   var SAMPLE_EXAMPLES = [
@@ -100,9 +139,27 @@
     return String((err && err.message) || err).replace(/^Error:\s*/, "");
   }
 
-  function baseUrl() {
-    var script = document.querySelector('script[src*="assets/playground/playground.js"]');
-    return script ? script.src.replace(/playground\.js(\?.*)?$/, "") : "../assets/playground/";
+  // fetch(url) that resolves only to a usable answer: an HTTP error or an HTML page where
+  // `what` was expected (a static host answers a missing file with its 404 page) rejects with
+  // a message naming the URL and the status, never a raw parse error.
+  function fetchAsset(url, what, kind) {
+    return fetch(url).catch(function (err) {
+      throw new Error("could not download " + what + " from " + url + " (" + messageOf(err) + ")");
+    }).then(function (r) {
+      if (!r.ok) throw new Error("could not download " + what + " from " + url + " (HTTP " + r.status + ")");
+      var type = (r.headers.get("content-type") || "").toLowerCase();
+      if (type.indexOf("text/html") !== -1) {
+        throw new Error("could not download " + what + ": " + url + " answered an HTML page (HTTP " + r.status + ")");
+      }
+      if (kind === "json") {
+        return r.text().then(function (text) {
+          try { return JSON.parse(text); } catch (e) {
+            throw new Error(what + " at " + url + " is not valid JSON (HTTP " + r.status + ", " + (type || "no content type") + ")");
+          }
+        });
+      }
+      return kind === "bytes" ? r.arrayBuffer() : r.text();
+    });
   }
 
   function loadScript(src) {
@@ -131,31 +188,22 @@
   function startPython(root, status) {
     if (runtime) return runtime;
     var cdn = root.getAttribute("data-pyodide");
-    var base = baseUrl();
+    var base = assetBase();
     runtime = (window.loadPyodide ? Promise.resolve() : loadScript(cdn + "pyodide.js"))
       .then(function () {
         status("Starting Python in your browser…");
         return window.loadPyodide({ indexURL: cdn });
       })
       .then(function (pyodide) {
-        return fetch(base + "wheel.json")
-          .then(function (r) { return r.json(); })
+        return fetchAsset(base + "wheel.json", "the wheel manifest", "json")
           .then(function (manifest) {
-            if (!manifest.wheel) throw new Error("this build of the site has no factlang wheel");
+            if (!manifest || !manifest.wheel) throw new Error("this build of the site has no factlang wheel (" + base + "wheel.json)");
             status("Installing " + manifest.wheel + "…");
-            return fetch(base + manifest.wheel);
-          })
-          .then(function (r) {
-            if (!r.ok) throw new Error("could not download the factlang wheel (" + r.status + ")");
-            return r.arrayBuffer();
+            return fetchAsset(base + manifest.wheel, "the factlang wheel", "bytes");
           })
           .then(function (buffer) {
             pyodide.unpackArchive(buffer, "wheel");
-            return fetch(base + "glue.py");
-          })
-          .then(function (r) {
-            if (!r.ok) throw new Error("could not download the playground glue (" + r.status + ")");
-            return r.text();
+            return fetchAsset(base + "glue.py", "the playground glue", "text");
           })
           .then(function (glue) {
             pyodide.runPython(glue);
@@ -168,7 +216,10 @@
 
   function loadEngineModule() {
     if (!engineModule) {
-      engineModule = import(baseUrl() + "engine.js");
+      var url = assetBase() + "engine.js";
+      engineModule = import(url).catch(function (err) {
+        throw new Error("could not load the playground engine from " + url + " (" + messageOf(err) + ")");
+      });
       engineModule.catch(function () { engineModule = null; });
     }
     return engineModule;
@@ -215,7 +266,7 @@
   function codeLinks(diagnostics) {
     return diagnostics.map(function (d) { return d.code; })
       .filter(function (c, i, a) { return c && a.indexOf(c) === i; })
-      .map(function (c) { return '<a href="../reference/diagnostics/#' + esc(c.toLowerCase()) + '">' + esc(c) + "</a>"; }).join(" ");
+      .map(function (c) { return '<a href="' + esc(siteUrl("reference/diagnostics/")) + "#" + esc(c.toLowerCase()) + '">' + esc(c) + "</a>"; }).join(" ");
   }
 
   function renderFormat(data) {
@@ -247,7 +298,7 @@
           '<pre class="fl-pg__code"><code>' + highlightSql(c.template) + "</code></pre>" + paramsTable(c.params) + "</details>"
         : "";
       return '<section class="fl-pg__probe">' + head +
-        '<p class="fl-pg__meta">' + esc(data.dialect) + ', tier <a href="../guide/evidence/#tiers">' + esc(c.tier) + "</a></p>" +
+        '<p class="fl-pg__meta">' + esc(data.dialect) + ', tier <a href="' + esc(siteUrl("guide/evidence/")) + '#tiers">' + esc(c.tier) + "</a></p>" +
         '<pre class="fl-pg__code"><code>' + highlightSql(c.sql) + "</code></pre>" + params + "</section>";
     }).join("");
   }
@@ -265,7 +316,7 @@
       var extra = d.suggestion ? '<span class="fl-pg__help"> did you mean: ' + esc(d.suggestion) + "</span>"
         : (d.hint ? '<span class="fl-pg__help"> help: ' + esc(d.hint) + "</span>" : "");
       return '<li><span class="fl-pg__sev fl-pg__sev--' + esc(d.severity || "error") + '">' + esc(d.severity || "error") +
-        '</span> <a href="../reference/diagnostics/#' + esc(String(d.code || "").toLowerCase()) + '">' + esc(d.code || "") + "</a> " +
+        '</span> <a href="' + esc(siteUrl("reference/diagnostics/")) + "#" + esc(String(d.code || "").toLowerCase()) + '">' + esc(d.code || "") + "</a> " +
         esc(d.message || "") + esc(where) + extra + "</li>";
     }).join("") + "</ul>";
   }

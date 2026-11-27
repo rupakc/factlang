@@ -103,11 +103,12 @@ jobs:
       - if: steps.current.outputs.current == 'true'
         name: Browser e2e against the built site
         env:
-          FL_SITE_URL: http://127.0.0.1:8000/
+          # served under a sub-path, as GitHub Pages serves the project site (serve.py)
+          FL_SITE_URL: http://127.0.0.1:8000/factlang/
           FL_E2E_WEBKIT: "1"
         run: |
           set -o pipefail
-          python tests/e2e/serve.py site 8000 > http.log 2>&1 &
+          python tests/e2e/serve.py site 8000 /factlang/ > http.log 2>&1 &
           for _ in $(seq 1 30); do curl -fsS -o /dev/null "$FL_SITE_URL" && break; sleep 1; done
           pytest -rs -p no:cacheprovider tests/e2e | tee e2e.log
           ! grep -q SKIPPED e2e.log

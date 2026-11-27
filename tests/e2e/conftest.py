@@ -23,6 +23,7 @@ Two things the fixtures do on the way, both confined to the browser the tests dr
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -61,9 +62,12 @@ def playwright_api() -> Iterator[Any]:
 
 @pytest.fixture(scope="session")
 def browser(playwright_api: Any) -> Iterator[Any]:
-    chromium = playwright_api.chromium.launch()
-    yield chromium
-    chromium.close()
+    """Chromium, or the engine ``FL_E2E_BROWSER`` names (``webkit``, ``firefox``), so the
+    whole suite can run in another browser."""
+    name = os.environ.get("FL_E2E_BROWSER", "chromium").strip() or "chromium"
+    engine = getattr(playwright_api, name).launch()
+    yield engine
+    engine.close()
 
 
 def _sitemap_route(site: str) -> Callable[[Any], None]:

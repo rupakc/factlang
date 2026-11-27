@@ -72,6 +72,8 @@ dev = [
 ]
 docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5,<10", "mkdocstrings[python]>=0.26,<2"]
 playground = ["duckdb==1.4.3"]
+# the browser e2e tests of the built site (tests/e2e); browsers: python -m playwright install
+e2e = ["playwright>=1.49,<2"]
 
 [project.scripts]
 factlang = "factlang.cli:main"
@@ -106,9 +108,12 @@ include = [
   "docs/guide",
   "docs/extending",
   "docs/overrides",
+  "docs/assets",
+  "mkdocs.yml",
+  "scripts/docs_hooks.py",
   "scripts/gen_reference.py",
   "scripts/verify_tag_ci.py",
-  "site-playground/glue.py",
+  "site-playground",
 ]
 exclude = ["__pycache__", "*.pyc"]
 
@@ -131,6 +136,7 @@ testpaths = ["tests"]
 markers = [
   "integration: needs a service container or local engine",
   "live: needs real warehouse credentials",
+  "e2e: drives a served build of the site in a browser (FL_SITE_URL, Playwright)",
 ]
 
 [tool.coverage.run]

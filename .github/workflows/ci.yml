@@ -190,6 +190,101 @@ jobs:
           set +e; factlang check --dsn "$FL_URL" cli-fail.fl; code=$?; set -e
           test "$code" -eq 1
 
+  # The site (site spec 6): the built-site and playground tests with every extra they need
+  # (docs, duckdb==1.4.3 for the playground parity tests, Node for the engine.js tests), then
+  # the wheel, `mkdocs build --strict`, and the browser e2e suite against that build served on
+  # localhost. A skip in any of them is a failure here. It runs on pushes and pull requests
+  # that touch the site (the first step decides; otherwise every later step is skipped and
+  # the job passes), on the nightly schedule, on manual dispatch and on tags. Docs publishing
+  # (docs.yml) runs only after a fully green CI on main, and runs this e2e suite itself again
+  # against the exact build it publishes.
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Does this change touch the site?
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          paths=(docs site-playground scripts/docs_hooks.py mkdocs.yml tests/playground
+                 tests/e2e tests/conformance pyproject.toml .github/workflows/ci.yml
+                 .github/workflows/docs.yml)
+          if [ "$EVENT" = pull_request ]; then
+            range="$BASE...HEAD"
+          elif [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "${BEFORE//0/}" != "" ] \
+              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null && [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            range="$BEFORE...HEAD"
+          else
+            range=""  # schedule, dispatch, a tag or a new branch: always run
+          fi
+          if [ -z "$range" ] || [ -n "$(git diff --name-only "$range" -- "${paths[@]}")" ]; then
+            echo "site=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "site=false" >> "$GITHUB_OUTPUT"
+            echo "no site file changed in $range: nothing to do"
+          fi
+      - if: steps.changes.outputs.site == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: steps.changes.outputs.site == 'true'
+        name: Install
+        run: |
+          pip install -e ".[dev,docs,playground,e2e]"
+          node --version
+          python -c "import duckdb; assert duckdb.__version__ == '1.4.3', duckdb.__version__"
+      - if: steps.changes.outputs.site == 'true'
+        name: Build the wheel the playground installs
+        run: python -m build --wheel
+      - if: steps.changes.outputs.site == 'true'
+        name: Generate the verb reference
+        run: python scripts/gen_reference.py
+      # The built-site tests (landing facts, playground page), the playground parity tests on
+      # duckdb 1.4.3 and the Node-based engine.js tests all skip without their extras; here
+      # every extra is installed, so a skip is a failure. The one exception is by design:
+      # test_dialects skips the parametrised table references no dialect can spell.
+      - if: steps.changes.outputs.site == 'true'
+        name: Site, playground and conformance tests (no skips)
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+        run: |
+          set -o pipefail
+          pytest -rs -p no:cacheprovider tests/playground tests/conformance | tee site-tests.log
+          if grep SKIPPED site-tests.log | grep -v "tests/conformance/test_dialects.py:"; then
+            echo "a site test skipped although every extra is installed"; exit 1
+          fi
+      - if: steps.changes.outputs.site == 'true'
+        name: Build the site
+        run: mkdocs build --strict
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+      - if: steps.changes.outputs.site == 'true'
+        name: Install the browsers (Chromium, WebKit)
+        run: |
+          for attempt in 1 2 3; do
+            python -m playwright install --with-deps chromium webkit && exit 0
+            echo "playwright install failed (attempt $attempt), retrying"; sleep $((attempt * 15))
+          done
+          exit 1
+      - if: steps.changes.outputs.site == 'true'
+        name: Browser e2e against the built site
+        env:
+          FL_SITE_URL: http://127.0.0.1:8000/
+          FL_E2E_WEBKIT: "1"
+        run: |
+          set -o pipefail
+          python -m http.server 8000 --bind 127.0.0.1 --directory site > http.log 2>&1 &
+          for _ in $(seq 1 30); do curl -fsS -o /dev/null "$FL_SITE_URL" && break; sleep 1; done
+          pytest -rs -p no:cacheprovider tests/e2e | tee e2e.log
+          ! grep -q SKIPPED e2e.log
+
   build:
     # Exactly one of test / test-full runs; the other is skipped. Build proceeds only when
     # lint, integration and the test job that ran all succeeded (a skipped job counts as

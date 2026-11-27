@@ -123,6 +123,8 @@ FORBIDDEN_DIGESTS = frozenset(
 ROOT = WIKI.parents[1]
 SCANNED = ("src", "docs", "tests", ".claude", "README.md", "CHANGELOG.md", "CLAUDE.md")
 SCANNED += ("AGENTS.md", "MEMORY.md")
+SCANNED += ("site-playground", "scripts", ".github", "mkdocs.yml", "pyproject.toml")
+SCANNED += ("CONTRIBUTING.md",)
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -155,6 +157,10 @@ def _scanned_files() -> list[Path]:
 def test_no_originating_names() -> None:
     files = _scanned_files()
     assert len(files) > 100  # the scan really covers the tree
+    scanned = {p.relative_to(ROOT).parts[0] for p in files}
+    # an unpacked sdist has no .github: require each scanned directory that exists
+    present = {d for d in ("site-playground", "scripts", ".github") if (ROOT / d).is_dir()}
+    assert present <= scanned and "site-playground" in present
     bad = []
     for path in files:
         try:

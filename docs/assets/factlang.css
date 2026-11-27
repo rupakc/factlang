@@ -1,90 +1,325 @@
-/* FactLang site theme.
- * Palette: cool assay paper + deep ink, with verdict colours that carry meaning
- * (pass / fail / no data / unprobeable). Used by the docs, the landing page and the
- * playground. */
+/* FactLang site theme: one visual system for the docs, the landing page and the playground.
+ *
+ * Light slate paper, white cards, an indigo primary with teal / amber / rose / violet
+ * accents, and verdict colours that carry meaning (pass / fail / no data / error /
+ * unprobeable). Every text colour below meets WCAG AA (4.5:1) on --fl-bg, --fl-bg-subtle
+ * and --fl-surface, and every verdict colour on its own badge tint, in both schemes —
+ * tests/conformance/test_site_style.py computes the ratios from these hex values.
+ *
+ * Contents
+ *   1. Design tokens (light, dark, legacy aliases)
+ *   2. Material mapping: palette, light blurred header, tabs, search, footer
+ *   3. Docs restyle: type scale, links, code, tables, admonitions
+ *   4. Components: .fl-section, .fl-card, .fl-badge, .fl-button, .fl-copy, .fl-fade-up
+ *   5. FactLang syntax highlighting and verdict marks
+ *   6. Landing hero + claim ledger and the current landing sections
+ *   7. Reduced motion, responsive
+ */
+
+/* ── 1. Design tokens ──────────────────────────────────────────────────────────────── */
 
 :root {
-  --fl-paper: #f2f5f9;
+  --fl-bg: #f8fafc;
+  --fl-bg-subtle: #f1f5f9;
   --fl-surface: #ffffff;
-  --fl-ink: #17203a;
-  --fl-muted: #55607a;
-  --fl-rule: #d3dae5;
-  --fl-accent: #2347c5;
-  --fl-pass: #0b7a55;
-  --fl-fail: #c4283a;
-  --fl-nodata: #996400;
-  --fl-unprobeable: #6a55b8;
-  --fl-verb: #2347c5;
-  --fl-attr: #7a3e9d;
-  --fl-keyword: #a0461b;
-  --fl-string: #0b7a55;
-  --fl-number: #b0306a;
-  --fl-comment: #7b859b;
+  --fl-border: #e2e8f0;
+  --fl-border-strong: #cbd5e1;
+  --fl-text: #0f172a;
+  --fl-text-muted: #475569;
+  --fl-indigo: #4f46e5;
+  --fl-teal: #0f766e;
+  --fl-amber: #92400e;
+  --fl-rose: #be123c;
+  --fl-violet: #6d28d9;
+  --fl-on-accent: #ffffff;
+  --fl-pass: #047857;
+  --fl-pass-bg: #e7f8f0;
+  --fl-fail: #be123c;
+  --fl-fail-bg: #fdecee;
+  --fl-nodata: #92400e;
+  --fl-nodata-bg: #fdf3dc;
+  --fl-error: #9a3412;
+  --fl-error-bg: #fdeee4;
+  --fl-unprobeable: #6d28d9;
+  --fl-unprobeable-bg: #f1edfe;
+  --fl-radius: 14px;
+  --fl-radius-sm: 8px;
+  --fl-shadow: 0 1px 2px #0f172a0d, 0 10px 30px -12px #0f172a26;
+  --fl-shadow-sm: 0 1px 2px #0f172a0f;
+  --fl-glow: #4f46e51f;
+  --fl-header-bg: #ffffffd9;
+  --fl-gradient: linear-gradient(135deg, #6d28d9 0%, #4f46e5 55%, #0f766e 100%);
+  /* FactLang syntax colours */
+  --fl-verb: #4338ca;
+  --fl-attr: #7e22ce;
+  --fl-keyword: #9a3412;
+  --fl-string: #047857;
+  --fl-number: #be185d;
+  --fl-comment: #64748b;
   --fl-ident: inherit;
 }
 
 [data-md-color-scheme="slate"] {
-  --fl-paper: #0f1528;
-  --fl-surface: #171f38;
-  --fl-ink: #e7ebf4;
-  --fl-muted: #a3adc4;
-  --fl-rule: #2a3456;
-  --fl-accent: #93a9ff;
-  --fl-pass: #45c894;
-  --fl-fail: #ff7b86;
-  --fl-nodata: #e5b54a;
-  --fl-unprobeable: #b6a6f5;
-  --fl-verb: #93a9ff;
-  --fl-attr: #d2a1f0;
-  --fl-keyword: #f2a477;
-  --fl-string: #6fd6a8;
-  --fl-number: #ff9cc6;
-  --fl-comment: #7f8aa6;
+  --fl-bg: #0b1120;
+  --fl-bg-subtle: #111a2e;
+  --fl-surface: #162036;
+  --fl-border: #26324d;
+  --fl-border-strong: #34425f;
+  --fl-text: #e6ebf5;
+  --fl-text-muted: #a3afc6;
+  --fl-indigo: #a5b4fc;
+  --fl-teal: #5eead4;
+  --fl-amber: #fcd34d;
+  --fl-rose: #fda4af;
+  --fl-violet: #c4b5fd;
+  --fl-on-accent: #0b1120;
+  --fl-pass: #6ee7b7;
+  --fl-pass-bg: #0f2f27;
+  --fl-fail: #fda4af;
+  --fl-fail-bg: #3b1520;
+  --fl-nodata: #fcd34d;
+  --fl-nodata-bg: #33270c;
+  --fl-error: #fdba74;
+  --fl-error-bg: #3a200d;
+  --fl-unprobeable: #c4b5fd;
+  --fl-unprobeable-bg: #262052;
+  --fl-radius: 14px;
+  --fl-radius-sm: 8px;
+  --fl-shadow: 0 1px 2px #00000040, 0 14px 34px -14px #00000099;
+  --fl-shadow-sm: 0 1px 2px #00000040;
+  --fl-glow: #a5b4fc24;
+  --fl-header-bg: #0b1120d1;
+  --fl-gradient: linear-gradient(135deg, #c4b5fd 0%, #a5b4fc 55%, #5eead4 100%);
+  --fl-verb: #a5b4fc;
+  --fl-attr: #d8b4fe;
+  --fl-keyword: #fdba74;
+  --fl-string: #6ee7b7;
+  --fl-number: #f9a8d4;
+  --fl-comment: #8391ad;
 }
 
-/* -- Material colour mapping ------------------------------------------------------- */
+/* Legacy names (playground.css, older markup). Declared on every scheme element so they
+ * re-resolve where the scheme changes (Material puts data-md-color-scheme on <body>). */
+:root, [data-md-color-scheme] {
+  --fl-paper: var(--fl-bg-subtle);
+  --fl-ink: var(--fl-text);
+  --fl-muted: var(--fl-text-muted);
+  --fl-rule: var(--fl-border);
+  --fl-accent: var(--fl-indigo);
+}
+
+/* ── 2. Material mapping ─────────────────────────────────────────────────────────────── */
+
+/* The "primary" colour is the header: a light (or deep, in dark mode) translucent bar
+ * with text in the body colour, as on the landing page. Buttons and links use indigo. */
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: var(--fl-surface);
+  --md-primary-fg-color--light: var(--fl-bg-subtle);
+  --md-primary-fg-color--dark: var(--fl-bg-subtle);
+  --md-primary-bg-color: var(--fl-text);
+  --md-primary-bg-color--light: var(--fl-text-muted);
+  --md-accent-fg-color: var(--fl-indigo);
+  --md-accent-fg-color--transparent: var(--fl-glow);
+  --md-accent-bg-color: var(--fl-on-accent);
+  --md-default-bg-color: var(--fl-bg);
+  --md-typeset-a-color: var(--fl-indigo);
+  --md-typeset-color: var(--fl-text);
+  --md-code-bg-color: var(--fl-bg-subtle);
+  --md-code-fg-color: var(--fl-text);
+  --md-typeset-table-color: var(--fl-border);
+  --md-footer-fg-color: var(--fl-text);
+  --md-footer-fg-color--light: var(--fl-text-muted);
+  --md-footer-fg-color--lighter: var(--fl-text-muted);
+  --md-footer-bg-color: var(--fl-bg-subtle);
+  --md-footer-bg-color--dark: var(--fl-bg);
+}
 
 [data-md-color-scheme="default"] {
-  --md-primary-fg-color: #17203a;
-  --md-primary-fg-color--light: #2a3456;
-  --md-primary-fg-color--dark: #0f1528;
-  --md-primary-bg-color: #f2f5f9;
-  --md-primary-bg-color--light: #c9d2e3;
-  --md-accent-fg-color: #2347c5;
-  --md-accent-fg-color--transparent: #2347c51a;
-  --md-default-bg-color: #f7f9fc;
-  --md-default-fg-color: #17203aee;
-  --md-default-fg-color--light: #17203a99;
-  --md-typeset-a-color: #2347c5;
-  --md-code-bg-color: #eaeef5;
-  --md-code-fg-color: #17203a;
+  --md-default-fg-color: #0f172ae6;
+  --md-default-fg-color--light: #475569;
+  --md-default-fg-color--lighter: #64748b73;
+  --md-default-fg-color--lightest: #94a3b81f;
+  --md-typeset-table-color--light: #f1f5f9;
 }
 
 [data-md-color-scheme="slate"] {
-  --md-hue: 228;
-  --md-primary-fg-color: #171f38;
-  --md-primary-fg-color--light: #2a3456;
-  --md-primary-fg-color--dark: #0f1528;
-  --md-primary-bg-color: #e7ebf4;
-  --md-primary-bg-color--light: #a3adc4;
-  --md-accent-fg-color: #93a9ff;
-  --md-accent-fg-color--transparent: #93a9ff1a;
-  --md-default-bg-color: #0f1528;
-  --md-typeset-a-color: #93a9ff;
-  --md-code-bg-color: #171f38;
-  --md-code-fg-color: #e7ebf4;
+  --md-hue: 222;
+  --md-default-fg-color: #e6ebf5e6;
+  --md-default-fg-color--light: #a3afc6;
+  --md-default-fg-color--lighter: #a3afc673;
+  --md-default-fg-color--lightest: #a3afc61f;
+  --md-typeset-table-color--light: #111a2e;
+}
+
+body {
+  background-color: var(--fl-bg);
+}
+
+::selection {
+  background: var(--fl-glow);
+}
+
+.md-header {
+  background-color: var(--fl-header-bg);
+  -webkit-backdrop-filter: saturate(1.6) blur(14px);
+  backdrop-filter: saturate(1.6) blur(14px);
+  border-bottom: 1px solid var(--fl-border);
+}
+.md-header--shadow {
+  box-shadow: var(--fl-shadow-sm);
+}
+.md-header__title {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.md-header__button.md-logo {
+  color: var(--fl-indigo);
+}
+
+.md-tabs {
+  background-color: var(--fl-surface);
+  color: var(--fl-text-muted);
+  border-bottom: 1px solid var(--fl-border);
+}
+.md-tabs__link {
+  font-weight: 500;
+  opacity: 1;
+}
+.md-tabs__link:hover,
+.md-tabs__link:focus {
+  color: var(--fl-indigo);
+}
+.md-tabs__item--active .md-tabs__link {
+  color: var(--fl-text);
+  font-weight: 700;
+}
+
+.md-progress {
+  background: var(--fl-indigo);
+}
+
+.md-nav__source {
+  background-color: var(--fl-bg-subtle);
+  color: var(--fl-text);
+}
+
+[dir="ltr"] .md-nav--integrated > .md-nav__list > .md-nav__item--active .md-nav--secondary {
+  border-left-color: var(--fl-border);
+}
+
+@media screen and (min-width: 60em) {
+  .md-search__form {
+    background-color: var(--fl-bg-subtle);
+    border: 1px solid var(--fl-border);
+    border-radius: var(--fl-radius-sm);
+  }
+  .md-search__form:hover {
+    background-color: var(--fl-surface);
+    border-color: var(--fl-border-strong);
+  }
+  .md-search__input::placeholder,
+  .md-search__input + .md-search__icon {
+    color: var(--fl-text-muted);
+  }
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+    background-color: var(--fl-surface);
+    border-radius: var(--fl-radius-sm) var(--fl-radius-sm) 0 0;
+  }
+}
+
+.md-footer {
+  border-top: 1px solid var(--fl-border);
+}
+.md-footer-meta {
+  border-top: 1px solid var(--fl-border);
+}
+.md-footer__link:hover,
+.md-footer-meta a:hover {
+  color: var(--fl-indigo);
+}
+html .md-footer-meta.md-typeset a {
+  color: var(--fl-text-muted);
+}
+html .md-footer-meta.md-typeset a:hover {
+  color: var(--fl-indigo);
+}
+
+/* ── 3. Docs restyle ──────────────────────────────────────────────────────────────────── */
+
+.md-typeset {
+  line-height: 1.7;
 }
 
 .md-typeset h1,
 .md-typeset h2,
-.md-typeset h3 {
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  color: var(--fl-ink);
+.md-typeset h3,
+.md-typeset h4 {
+  color: var(--fl-text);
+  letter-spacing: -0.02em;
 }
 
 .md-typeset h1 {
   font-size: 2.2em;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.md-typeset h2 {
+  font-size: 1.5em;
+  font-weight: 750;
+  line-height: 1.25;
+  margin-top: 2em;
+}
+
+.md-typeset h3 {
+  font-size: 1.18em;
+  font-weight: 700;
+}
+
+.md-typeset h4 {
+  font-weight: 700;
+}
+
+.md-typeset a {
+  text-underline-offset: 0.18em;
+}
+.md-typeset a:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+
+.md-typeset hr {
+  border-bottom-color: var(--fl-border);
+}
+
+.md-typeset blockquote {
+  border-left: 4px solid var(--fl-indigo);
+  background: var(--fl-bg-subtle);
+  border-radius: 0 var(--fl-radius-sm) var(--fl-radius-sm) 0;
+  color: var(--fl-text-muted);
+  padding: 0.4em 1.1em;
+}
+
+/* Inline code and code blocks: quiet tinted chips and rounded framed blocks. */
+.md-typeset code {
+  border-radius: 0.3em;
+}
+.md-typeset :not(pre) > code {
+  border: 1px solid var(--fl-border);
+}
+.md-typeset pre > code {
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius-sm);
+}
+.md-typeset .highlight,
+.md-typeset pre {
+  border-radius: var(--fl-radius-sm);
+}
+.md-typeset .highlighttable {
+  border-radius: var(--fl-radius-sm);
+  overflow: hidden;
 }
 
 /* Fragment Mono draws >=, == and -> as ligatures; FactLang must read as typed. */
@@ -93,54 +328,343 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
   font-feature-settings: "liga" 0, "calt" 0;
 }
 
+.md-typeset kbd {
+  border-radius: 0.3em;
+}
+
+/* Tables: a rounded card with a tinted header row. */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius-sm);
+  background-color: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+  font-size: 0.68rem;
+}
+.md-typeset table:not([class]) th {
+  background-color: var(--fl-bg-subtle);
+  color: var(--fl-text);
+  font-weight: 700;
+  border-bottom: 1px solid var(--fl-border);
+}
+.md-typeset table:not([class]) td {
+  border-top-color: var(--fl-border);
+}
+.md-typeset table:not([class]) tbody tr:first-child td {
+  border-top: 0;
+}
+
+/* Admonitions: a white card with a coloured left rule, in the site's accent palette. */
+.md-typeset .admonition,
+.md-typeset details {
+  --fl-adm: var(--fl-indigo);
+  border-width: 1px 1px 1px 4px;
+  border-style: solid;
+  border-color: var(--fl-border);
+  border-left-color: var(--fl-adm);
+  border-radius: var(--fl-radius-sm);
+  background-color: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+  font-size: 0.72rem;
+}
+.md-typeset .admonition:focus-within,
+.md-typeset details:focus-within {
+  box-shadow: 0 0 0 0.2rem var(--fl-glow);
+}
+.md-typeset .admonition > .admonition-title,
+.md-typeset details > summary {
+  background-color: color-mix(in srgb, var(--fl-adm) 9%, var(--fl-surface));
+  font-weight: 700;
+  color: var(--fl-text);
+}
+.md-typeset .admonition > .admonition-title::before,
+.md-typeset details > summary::before {
+  background-color: var(--fl-adm);
+}
+.md-typeset details > summary::after {
+  color: var(--fl-adm);
+}
+.md-typeset .admonition.tip, .md-typeset details.tip,
+.md-typeset .admonition.success, .md-typeset details.success,
+.md-typeset .admonition.hint, .md-typeset details.hint { --fl-adm: var(--fl-teal); }
+.md-typeset .admonition.warning, .md-typeset details.warning,
+.md-typeset .admonition.caution, .md-typeset details.caution,
+.md-typeset .admonition.attention, .md-typeset details.attention,
+.md-typeset .admonition.question, .md-typeset details.question { --fl-adm: var(--fl-amber); }
+.md-typeset .admonition.danger, .md-typeset details.danger,
+.md-typeset .admonition.error, .md-typeset details.error,
+.md-typeset .admonition.failure, .md-typeset details.failure,
+.md-typeset .admonition.bug, .md-typeset details.bug { --fl-adm: var(--fl-rose); }
+.md-typeset .admonition.example, .md-typeset details.example,
+.md-typeset .admonition.quote, .md-typeset details.quote { --fl-adm: var(--fl-violet); }
+
+/* Content tabs (=== "Tab") follow the accent. */
+.md-typeset .tabbed-labels > label:hover {
+  color: var(--fl-indigo);
+}
+
 :focus-visible {
-  outline: 2px solid var(--fl-accent);
+  outline: 2px solid var(--fl-indigo);
   outline-offset: 2px;
 }
 
-/* -- FactLang syntax highlighting (applied by factlang.js) -------------------------- */
+/* ── 4. Components (consumed by the landing page and the playground) ─────────────────── */
+
+/* Sections: vertical rhythm; --subtle paints a full-bleed tinted band behind the section
+ * even inside a width-constrained container. */
+.fl-section {
+  padding: 2.4rem 0;
+}
+.fl-section--subtle {
+  background-color: var(--fl-bg-subtle);
+  box-shadow: 0 0 0 100vmax var(--fl-bg-subtle);
+  clip-path: inset(0 -100vmax);
+}
+.fl-section__inner {
+  max-width: 61rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+.md-typeset .fl-eyebrow,
+.fl-eyebrow {
+  display: block;
+  margin: 0 0 0.5rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fl-indigo);
+}
+.fl-gradient-text {
+  background: var(--fl-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--fl-indigo);
+}
+
+/* Cards: white surface, hairline border, a gradient top rule and lift on hover.
+ * Accent modifiers set --fl-card-accent. */
+.fl-card {
+  --fl-card-accent: var(--fl-indigo);
+  position: relative;
+  overflow: hidden;
+  display: block;
+  padding: 1.2rem 1.25rem;
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  box-shadow: var(--fl-shadow-sm);
+  color: var(--fl-text);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.fl-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--fl-card-accent), color-mix(in srgb, var(--fl-card-accent) 45%, transparent));
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+a.fl-card,
+.md-typeset a.fl-card {
+  color: var(--fl-text);
+  text-decoration: none;
+}
+.fl-card:hover,
+.fl-card:focus-within,
+a.fl-card:focus-visible {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--fl-card-accent) 40%, var(--fl-border));
+  box-shadow: var(--fl-shadow);
+}
+.fl-card:hover::before,
+.fl-card:focus-within::before,
+a.fl-card:focus-visible::before {
+  opacity: 1;
+}
+.md-typeset .fl-card h3,
+.fl-card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--fl-text);
+}
+.md-typeset .fl-card p,
+.fl-card p {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.65;
+  color: var(--fl-text-muted);
+}
+.fl-card--indigo { --fl-card-accent: var(--fl-indigo); }
+.fl-card--teal { --fl-card-accent: var(--fl-teal); }
+.fl-card--amber { --fl-card-accent: var(--fl-amber); }
+.fl-card--rose { --fl-card-accent: var(--fl-rose); }
+.fl-card--violet { --fl-card-accent: var(--fl-violet); }
+
+/* Badges: small tinted chips (dialect names, tiers, tags). Verdict modifiers reuse the
+ * verdict colours; accent modifiers use the palette. */
+.fl-badge {
+  --fl-badge-fg: var(--fl-text-muted);
+  --fl-badge-bg: var(--fl-bg-subtle);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.2em 0.65em;
+  border: 1px solid color-mix(in srgb, var(--fl-badge-fg) 30%, transparent);
+  border-radius: 0.45rem;
+  background: var(--fl-badge-bg);
+  color: var(--fl-badge-fg);
+  font-family: var(--md-code-font-family);
+  font-size: 0.66rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.fl-badge--indigo { --fl-badge-fg: var(--fl-indigo); --fl-badge-bg: color-mix(in srgb, var(--fl-indigo) 8%, var(--fl-surface)); }
+.fl-badge--teal { --fl-badge-fg: var(--fl-teal); --fl-badge-bg: color-mix(in srgb, var(--fl-teal) 8%, var(--fl-surface)); }
+.fl-badge--amber { --fl-badge-fg: var(--fl-amber); --fl-badge-bg: color-mix(in srgb, var(--fl-amber) 8%, var(--fl-surface)); }
+.fl-badge--rose { --fl-badge-fg: var(--fl-rose); --fl-badge-bg: color-mix(in srgb, var(--fl-rose) 8%, var(--fl-surface)); }
+.fl-badge--violet { --fl-badge-fg: var(--fl-violet); --fl-badge-bg: color-mix(in srgb, var(--fl-violet) 8%, var(--fl-surface)); }
+.fl-badge--pass { --fl-badge-fg: var(--fl-pass); --fl-badge-bg: var(--fl-pass-bg); }
+.fl-badge--fail { --fl-badge-fg: var(--fl-fail); --fl-badge-bg: var(--fl-fail-bg); }
+.fl-badge--no_data { --fl-badge-fg: var(--fl-nodata); --fl-badge-bg: var(--fl-nodata-bg); }
+.fl-badge--error { --fl-badge-fg: var(--fl-error); --fl-badge-bg: var(--fl-error-bg); }
+.fl-badge--unprobeable { --fl-badge-fg: var(--fl-unprobeable); --fl-badge-bg: var(--fl-unprobeable-bg); }
+
+/* Buttons: a quiet outline button and a solid gradient one. */
+.md-typeset .fl-button,
+.fl-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.62em 1.15em;
+  border-radius: 0.55rem;
+  border: 1.5px solid var(--fl-border-strong);
+  background: var(--fl-surface);
+  color: var(--fl-text);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: var(--fl-shadow-sm);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.md-typeset .fl-button:hover,
+.fl-button:hover {
+  border-color: var(--fl-indigo);
+  color: var(--fl-indigo);
+  text-decoration: none;
+}
+.md-typeset .fl-button--solid,
+.fl-button--solid {
+  background: var(--fl-indigo);
+  background-image: linear-gradient(135deg, var(--fl-violet), var(--fl-indigo));
+  border-color: transparent;
+  color: var(--fl-on-accent);
+  box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--fl-indigo) 60%, transparent);
+}
+.md-typeset .fl-button--solid:hover,
+.fl-button--solid:hover {
+  border-color: transparent;
+  color: var(--fl-on-accent);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px -6px color-mix(in srgb, var(--fl-indigo) 70%, transparent);
+}
+
+/* Copy button. Behaviour (factlang.js): copies data-copy, else the text of the element
+ * named by data-copy-target, else the <code> beside it; adds .is-copied for a moment. */
+.fl-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.25em 0.6em;
+  border: 1px solid var(--fl-border);
+  border-radius: 0.4rem;
+  background: var(--fl-surface);
+  color: var(--fl-text-muted);
+  font: inherit;
+  font-family: var(--md-text-font-family);
+  font-size: 0.62rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.fl-copy:hover {
+  color: var(--fl-indigo);
+  border-color: var(--fl-indigo);
+}
+.fl-copy.is-copied {
+  color: var(--fl-pass);
+  border-color: var(--fl-pass);
+}
+
+/* Fade-up on scroll. Hidden only once factlang.js has run (html.fl-js), so content is
+ * never invisible without the script; factlang.js adds .is-visible on intersection. */
+.fl-fade-up {
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  transition-delay: var(--fl-delay, 0ms);
+}
+.fl-js .fl-fade-up {
+  opacity: 0;
+  transform: translateY(18px);
+}
+.fl-js .fl-fade-up.is-visible,
+.fl-fade-up.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── 5. FactLang syntax highlighting (applied by factlang.js) and verdict marks ──────── */
 
 .fl-tok-verb { color: var(--fl-verb); font-weight: 600; }
 .fl-tok-attr { color: var(--fl-attr); }
 .fl-tok-kw { color: var(--fl-keyword); font-weight: 600; }
 .fl-tok-str { color: var(--fl-string); }
 .fl-tok-num { color: var(--fl-number); }
-.fl-tok-op { color: var(--fl-muted); }
+.fl-tok-op { color: var(--fl-text-muted); }
 .fl-tok-com { color: var(--fl-comment); font-style: italic; }
-.fl-tok-qid { color: var(--fl-ink); text-decoration: underline dotted var(--fl-rule); }
-
-/* -- Verdict marks (docs tables and the playground) ---------------------------------- */
+.fl-tok-qid { color: var(--fl-text); text-decoration: underline dotted var(--fl-border-strong); }
 
 .fl-verdict {
   display: inline-block;
-  padding: 0.05em 0.55em 0.1em;
-  border: 1.5px solid currentColor;
+  padding: 0.05em 0.6em 0.1em;
+  border: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
   border-radius: 999px;
+  background: var(--fl-bg-subtle);
   font-size: 0.85em;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1.4;
   white-space: nowrap;
 }
-.fl-verdict--pass { color: var(--fl-pass); }
-.fl-verdict--fail { color: var(--fl-fail); }
-.fl-verdict--no_data { color: var(--fl-nodata); }
-.fl-verdict--error { color: var(--fl-fail); border-style: dashed; }
-.fl-verdict--unprobeable { color: var(--fl-unprobeable); }
-.fl-verdict--invalid { color: var(--fl-muted); border-style: dotted; }
+.fl-verdict--pass { color: var(--fl-pass); background: var(--fl-pass-bg); }
+.fl-verdict--fail { color: var(--fl-fail); background: var(--fl-fail-bg); }
+.fl-verdict--no_data { color: var(--fl-nodata); background: var(--fl-nodata-bg); }
+.fl-verdict--error { color: var(--fl-error); background: var(--fl-error-bg); border-style: dashed; }
+.fl-verdict--unprobeable { color: var(--fl-unprobeable); background: var(--fl-unprobeable-bg); }
+.fl-verdict--invalid { color: var(--fl-text-muted); background: var(--fl-bg-subtle); border-style: dotted; }
 
-/* -- Landing page ----------------------------------------------------------------------- */
-
+/* ── 6. Landing hero, claim ledger and the current landing sections ─────────────────── */
 
 .fl-hero {
-  background: var(--fl-paper);
-  border-bottom: 1px solid var(--fl-rule);
-  color: var(--fl-ink);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 60% 70% at 85% 30%, var(--fl-glow), transparent 70%),
+    radial-gradient(ellipse 50% 60% at 10% 0%, color-mix(in srgb, var(--fl-violet) 9%, transparent), transparent 70%),
+    var(--fl-bg);
+  border-bottom: 1px solid var(--fl-border);
+  color: var(--fl-text);
 }
 
 .fl-hero__inner {
   max-width: 61rem;
   margin: 0 auto;
-  padding: 3.2rem 1rem 3rem;
+  padding: 3.4rem 1rem 3.2rem;
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   gap: 2.4rem;
@@ -152,15 +676,15 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
   font-size: clamp(1.9rem, 3.4vw, 2.75rem);
   line-height: 1.08;
   font-weight: 800;
-  letter-spacing: -0.03em;
-  color: var(--fl-ink);
+  letter-spacing: -0.035em;
+  color: var(--fl-text);
 }
 
 .fl-hero p {
   margin: 0 0 1.4rem;
   font-size: 0.86rem;
-  line-height: 1.6;
-  color: var(--fl-muted);
+  line-height: 1.65;
+  color: var(--fl-text-muted);
   max-width: 34em;
 }
 
@@ -171,69 +695,47 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
   align-items: center;
 }
 
-.md-typeset .fl-button,
-.fl-button {
-  display: inline-block;
-  padding: 0.6em 1.1em;
-  border-radius: 0.4rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-decoration: none;
-  border: 1.5px solid var(--fl-ink);
-  color: var(--fl-ink);
-  background: transparent;
-}
-.fl-button:hover { background: var(--fl-surface); }
-.md-typeset .fl-button--solid,
-.fl-button--solid {
-  background: var(--fl-ink);
-  color: var(--fl-paper);
-}
-.md-typeset .fl-button--solid:hover,
-.fl-button--solid:hover { background: var(--fl-accent); border-color: var(--fl-accent); color: #fff; }
-[data-md-color-scheme="slate"] .md-typeset .fl-button--solid:hover,
-[data-md-color-scheme="slate"] .fl-button--solid:hover { color: #0f1528; }
-
 .fl-install {
   margin-top: 1.1rem;
   font-family: var(--md-code-font-family);
   font-size: 0.72rem;
-  color: var(--fl-muted);
+  color: var(--fl-text-muted);
 }
 .fl-install code {
   background: var(--fl-surface);
-  border: 1px solid var(--fl-rule);
-  border-radius: 0.3rem;
-  padding: 0.25em 0.5em;
-  color: var(--fl-ink);
+  border: 1px solid var(--fl-border);
+  border-radius: 0.4rem;
+  padding: 0.3em 0.55em;
+  color: var(--fl-text);
 }
 
 /* The ledger: claims on the left, the data's answer in the margin. */
 .fl-ledger {
   background: var(--fl-surface);
-  border: 1px solid var(--fl-rule);
-  border-radius: 0.6rem;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
   padding: 0.4rem 0;
   font-family: var(--md-code-font-family);
   font-size: 0.68rem;
-  box-shadow: 0 1px 0 var(--fl-rule), 0 18px 40px -28px #17203a66;
+  box-shadow: var(--fl-shadow);
 }
 
 .fl-ledger__head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 13.5rem;
   padding: 0.5rem 1rem 0.6rem;
-  border-bottom: 1px solid var(--fl-rule);
+  border-bottom: 1px solid var(--fl-border);
   font-family: var(--md-text-font-family);
   font-size: 0.68rem;
-  color: var(--fl-muted);
+  font-weight: 600;
+  color: var(--fl-text-muted);
 }
 
 .fl-ledger__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 13.5rem;
   align-items: stretch;
-  border-bottom: 1px dashed var(--fl-rule);
+  border-bottom: 1px dashed var(--fl-border);
 }
 .fl-ledger__row:last-child { border-bottom: 0; }
 
@@ -245,9 +747,9 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
 
 .fl-ledger__margin {
   padding: 0.6rem 1rem 0.7rem;
-  border-left: 2px solid var(--fl-rule);
+  border-left: 2px solid var(--fl-border);
   line-height: 1.45;
-  color: var(--fl-muted);
+  color: var(--fl-text-muted);
 }
 
 .fl-ledger__margin .fl-verdict {
@@ -277,7 +779,95 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
   transform: none;
 }
 
+.fl-ledger__foot {
+  padding: 0.55rem 1rem 0.3rem;
+  border-top: 1px solid var(--fl-border);
+  font-family: var(--md-text-font-family);
+  font-size: 0.64rem;
+  color: var(--fl-text-muted);
+}
+
+.md-typeset .fl-lead {
+  font-size: 0.95rem;
+  line-height: 1.65;
+  max-width: 40em;
+  color: var(--fl-text-muted);
+}
+
+.fl-trio {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  gap: 0;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  overflow: hidden;
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+}
+.fl-trio > div { padding: 0.9rem 1rem; }
+.fl-trio > div + div { border-left: 1px solid var(--fl-border); }
+.md-typeset .fl-trio h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--fl-text-muted);
+  font-weight: 600;
+}
+.md-typeset .fl-trio p { font-size: 0.74rem; margin: 0 0 0.5rem; }
+.md-typeset .fl-trio pre { margin: 0; }
+.md-typeset .fl-trio ul { margin: 0; padding: 0; list-style: none; font-size: 0.72rem; }
+.md-typeset .fl-trio li { margin: 0 0 0.45rem; padding: 0; }
+.md-typeset .fl-trio mark {
+  background: var(--fl-glow);
+  color: inherit;
+  border-bottom: 1.5px solid var(--fl-indigo);
+  padding: 0 0.1em;
+}
+
+.fl-uses { border-top: 1px solid var(--fl-border); }
+.fl-use {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 1.6rem;
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--fl-border);
+  align-items: start;
+}
+.md-typeset .fl-use h3 { margin: 0 0 0.3rem; font-size: 0.92rem; }
+.md-typeset .fl-use p { margin: 0; font-size: 0.76rem; color: var(--fl-text-muted); }
+.md-typeset .fl-use pre { margin: 0; }
+
+.fl-promises {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 2rem;
+}
+.md-typeset .fl-promises p { margin: 0 0 0.9rem; font-size: 0.76rem; }
+.md-typeset .fl-promises strong { color: var(--fl-text); }
+
+/* ── 7. Reduced motion, responsive ───────────────────────────────────────────────────── */
+
 @media (prefers-reduced-motion: reduce) {
+  .fl-fade-up,
+  .fl-js .fl-fade-up,
+  .fl-js .fl-fade-up.is-visible {
+    opacity: 1;
+    transform: none;
+    transition: none;
+    animation: none;
+  }
+  .fl-card,
+  .fl-card::before,
+  .fl-button,
+  .fl-copy {
+    transition: none;
+  }
+  .fl-card:hover,
+  .fl-card:focus-within,
+  a.fl-card:focus-visible,
+  .fl-button:hover,
+  .fl-button--solid:hover {
+    transform: none;
+  }
   .fl-ledger.fl-anim .fl-ledger__claim,
   .fl-ledger.fl-anim .fl-ledger__margin > * {
     clip-path: none;
@@ -287,77 +877,10 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
   }
 }
 
-.fl-ledger__foot {
-  padding: 0.55rem 1rem 0.3rem;
-  border-top: 1px solid var(--fl-rule);
-  font-family: var(--md-text-font-family);
-  font-size: 0.64rem;
-  color: var(--fl-muted);
-}
-
-/* Landing sections (written in Markdown with md_in_html). */
-.fl-section { margin: 2.6rem 0; }
-
-.md-typeset .fl-lead {
-  font-size: 0.95rem;
-  line-height: 1.6;
-  max-width: 40em;
-  color: var(--fl-muted);
-}
-
-.fl-trio {
-  display: grid;
-  grid-template-columns: 1fr 1.25fr 1fr;
-  gap: 0;
-  border: 1px solid var(--fl-rule);
-  border-radius: 0.5rem;
-  overflow: hidden;
-  background: var(--fl-surface);
-}
-.fl-trio > div { padding: 0.9rem 1rem; }
-.fl-trio > div + div { border-left: 1px solid var(--fl-rule); }
-.md-typeset .fl-trio h3 {
-  margin: 0 0 0.5rem;
-  font-size: 0.78rem;
-  color: var(--fl-muted);
-  font-weight: 600;
-}
-.md-typeset .fl-trio p { font-size: 0.74rem; margin: 0 0 0.5rem; }
-.md-typeset .fl-trio pre { margin: 0; }
-.md-typeset .fl-trio ul { margin: 0; padding: 0; list-style: none; font-size: 0.72rem; }
-.md-typeset .fl-trio li { margin: 0 0 0.45rem; padding: 0; }
-.md-typeset .fl-trio mark {
-  background: var(--md-accent-fg-color--transparent);
-  color: inherit;
-  border-bottom: 1.5px solid var(--fl-accent);
-  padding: 0 0.1em;
-}
-
-.fl-uses { border-top: 1px solid var(--fl-rule); }
-.fl-use {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 1.6rem;
-  padding: 1.1rem 0;
-  border-bottom: 1px solid var(--fl-rule);
-  align-items: start;
-}
-.md-typeset .fl-use h3 { margin: 0 0 0.3rem; font-size: 0.92rem; }
-.md-typeset .fl-use p { margin: 0; font-size: 0.76rem; color: var(--fl-muted); }
-.md-typeset .fl-use pre { margin: 0; }
-
-.fl-promises {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 2rem;
-}
-.md-typeset .fl-promises p { margin: 0 0 0.9rem; font-size: 0.76rem; }
-.md-typeset .fl-promises strong { color: var(--fl-ink); }
-
 @media screen and (max-width: 60em) {
   .fl-hero__inner { grid-template-columns: minmax(0, 1fr); padding-top: 2rem; gap: 1.6rem; }
   .fl-trio { grid-template-columns: minmax(0, 1fr); }
-  .fl-trio > div + div { border-left: 0; border-top: 1px solid var(--fl-rule); }
+  .fl-trio > div + div { border-left: 0; border-top: 1px solid var(--fl-border); }
   .fl-use { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
   .fl-promises { grid-template-columns: minmax(0, 1fr); }
 }
@@ -366,5 +889,6 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
   .fl-ledger__head,
   .fl-ledger__row { grid-template-columns: minmax(0, 1fr); }
   .fl-ledger__head span:last-child { display: none; }
-  .fl-ledger__margin { border-left: 0; border-top: 1px dotted var(--fl-rule); padding-top: 0.4rem; }
+  .fl-ledger__margin { border-left: 0; border-top: 1px dotted var(--fl-border); padding-top: 0.4rem; }
+  .fl-section { padding: 1.8rem 0; }
 }

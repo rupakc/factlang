@@ -118,7 +118,7 @@ plugins:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
-  - Playground: playground.md
+  - Playground · live verdicts: playground.md
   - Guide:
       - The language: guide/language.md
       - Standard verbs: guide/verbs.md

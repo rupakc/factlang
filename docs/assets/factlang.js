@@ -1,7 +1,11 @@
-/* FactLang site script: syntax highlighting for FactLang code blocks and the landing-page
- * ledger animation. No dependencies; safe to run more than once (Material instant nav). */
+/* FactLang site script: syntax highlighting for FactLang code blocks, the landing-page
+ * ledger animation, fade-up on scroll (.fl-fade-up -> .is-visible) and copy buttons
+ * (.fl-copy). No dependencies; safe to run more than once (Material instant nav). */
 (function () {
   "use strict";
+
+  /* Lets the stylesheet hide .fl-fade-up content only when this script runs. */
+  document.documentElement.classList.add("fl-js");
 
   var FILTER_KEYWORDS = {
     WHERE: 1, AND: 1, OR: 1, NOT: 1, IN: 1, IS: 1, NULL: 1, BETWEEN: 1,
@@ -96,9 +100,100 @@
     });
   }
 
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
+
+  /* Fade-up: one observer for the whole session; each run observes only elements not yet
+   * seen, so instant navigation never double-registers. Without IntersectionObserver or
+   * with reduced motion, everything is shown at once. */
+  var fadeObserver = null;
+
+  function revealOnScroll(root) {
+    var items = root.querySelectorAll(".fl-fade-up:not(.is-visible)");
+    if (!items.length) return;
+    if (prefersReducedMotion() || !("IntersectionObserver" in window)) {
+      Array.prototype.forEach.call(items, function (el) { el.classList.add("is-visible"); });
+      return;
+    }
+    if (!fadeObserver) {
+      fadeObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-visible");
+          fadeObserver.unobserve(entry.target);
+        });
+      }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+    }
+    Array.prototype.forEach.call(items, function (el) {
+      if (el.dataset.flFadeObserved) return;
+      el.dataset.flFadeObserved = "1";
+      fadeObserver.observe(el);
+    });
+  }
+
+  /* Copy buttons. The text is data-copy, else the text of the element matched by
+   * data-copy-target, else the first <code> in the button's parent. One delegated listener
+   * for the whole session. */
+  function copyText(button) {
+    if (button.hasAttribute("data-copy")) return button.getAttribute("data-copy");
+    var target = button.getAttribute("data-copy-target");
+    var el = target ? document.querySelector(target) : button.parentNode && button.parentNode.querySelector("code");
+    return el ? el.textContent.trim() : "";
+  }
+
+  function writeClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function (resolve, reject) {
+      var area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(area);
+      if (ok) resolve(); else reject(new Error("copy failed"));
+    });
+  }
+
+  function onCopyClick(event) {
+    var button = event.target.closest && event.target.closest(".fl-copy");
+    if (!button) return;
+    event.preventDefault();
+    var text = copyText(button);
+    if (!text) return;
+    var label = button.querySelector(".fl-copy__label");
+    if (!button.dataset.flLabel) button.dataset.flLabel = label ? label.textContent : button.textContent;
+    if (button.dataset.flAria === undefined) button.dataset.flAria = button.getAttribute("aria-label") || "";
+    writeClipboard(text).then(function () {
+      button.classList.add("is-copied");
+      if (label) label.textContent = "Copied"; else if (!button.children.length) button.textContent = "Copied";
+      button.setAttribute("aria-label", "Copied to clipboard");
+      window.clearTimeout(button._flCopyTimer);
+      button._flCopyTimer = window.setTimeout(function () {
+        button.classList.remove("is-copied");
+        if (label) label.textContent = button.dataset.flLabel;
+        else if (!button.children.length) button.textContent = button.dataset.flLabel;
+        if (button.dataset.flAria) button.setAttribute("aria-label", button.dataset.flAria);
+        else button.removeAttribute("aria-label");
+      }, 1600);
+    }, function () {
+      button.setAttribute("title", "Copy failed: select the text and copy it by hand");
+    });
+  }
+
+  if (!window.__flCopyBound) {
+    window.__flCopyBound = true;
+    document.addEventListener("click", onCopyClick);
+  }
+
   function run() {
     highlightBlocks(document);
     animateLedger(document);
+    revealOnScroll(document);
   }
 
   window.FactLangHighlight = highlight;

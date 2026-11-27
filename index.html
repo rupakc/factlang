@@ -1,0 +1,2075 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A small formal language for factual claims about a data warehouse. Every claim compiles to read-only SQL, runs over all rows and comes back as a verdict with evidence.">
+      
+      
+      
+        <link rel="canonical" href="https://rupakc.github.io/factlang/">
+      
+      
+      
+        <link rel="next" href="getting-started/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>FactLang - FactLang</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Schibsted+Grotesk:300,300i,400,400i,700,700i%7CFragment+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Schibsted Grotesk";--md-code-font:"Fragment Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="assets/factlang.css">
+    
+      <link rel="stylesheet" href="assets/playground/playground.css">
+    
+    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  
+  <meta property="og:title" content="FactLang: verdicts for claims about your data">
+  <meta property="og:description" content="A small formal language for factual claims about a data warehouse. Every claim compiles to read-only SQL, runs over all rows and comes back as a verdict with evidence.">
+
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#from-install-to-verdicts-in-three-steps" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="." title="FactLang" class="md-header__button md-logo" aria-label="FactLang" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m23 12-2.4-2.8.3-3.7-3.6-.8-1.9-3.2L12 3 8.6 1.5 6.7 4.7l-3.6.8.3 3.7L1 12l2.4 2.8-.3 3.7 3.6.8 1.9 3.2L12 21l3.4 1.5 1.9-3.2 3.6-.8-.3-3.7zm-4.3 4.9-2.7.6-1.4 2.4-2.6-1.1-2.6 1.1L8 17.5l-2.7-.6.2-2.8L3.7 12l1.8-2.1-.2-2.8L8 6.5l1.4-2.4L12 5.2l2.6-1.1L16 6.5l2.7.6-.2 2.8 1.8 2.1-1.8 2.1zm-2.1-9.3L18 9l-8 8-4-4 1.4-1.4 2.6 2.6z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FactLang
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              FactLang
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Follow the system theme"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Follow the system theme" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/rupakc/factlang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    rupakc/factlang
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+  
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="playground/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Playground · live verdicts
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="guide/language/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="extending/verbs/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Extending
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="reference/grammar/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+  
+  <section class="fl-hero" aria-labelledby="fl-hero-title">
+    <div class="fl-hero__inner">
+      <div class="fl-hero__copy">
+        <span class="fl-hero__tag"><span class="fl-hero__dot" aria-hidden="true"></span>Open source &middot; MIT &middot; v0.1.4</span>
+        <h1 id="fl-hero-title">Don&rsquo;t trust claims about your data. <span class="fl-gradient-text">Measure them.</span></h1>
+        <p>
+          FactLang is a small language for facts about data: joins, nulls, counts, allowed
+          values, freshness. Each line comes back as a verdict; the ones that measure data
+          run as read-only SQL over every matching row, with the numbers and the exact
+          query as evidence.
+        </p>
+        <div class="fl-hero__actions">
+          <a class="fl-button fl-button--solid" href="playground/">Try it live</a>
+          <a class="fl-button" href="getting-started/">Get started</a>
+        </div>
+        <div class="fl-install">
+          <div class="fl-install__cmd">
+            <span class="fl-install__prompt" aria-hidden="true">$</span>
+            <code>pip install factlang</code>
+            <button type="button" class="fl-copy" data-copy="pip install factlang" aria-label="Copy the install command"><span class="fl-copy__label">Copy</span></button>
+          </div>
+          <span class="fl-install__note">No dependencies in the core.</span>
+        </div>
+      </div>
+
+      <figure class="fl-ledger" aria-label="Six claims from an agent's answer and what the data says about each">
+        <div class="fl-ledger__head" aria-hidden="true">
+          <span>An agent's answer, written as claims</span>
+          <span>What the data says</span>
+        </div>
+        <div class="fl-ledger__row" data-verdict="fail">
+          <code class="fl-ledger__claim fl-src">JOIN orders.customer_id -&gt; customers.id CARD N:1 MATCH &gt;=99%</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--fail">fail</span>
+            <span class="fl-ledger__why">match_rate 0.9765625 &lt; 0.99</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="pass">
+          <code class="fl-ledger__claim fl-src">NULLS customers.email RATE &lt;=5%</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--pass">pass</span>
+            <span class="fl-ledger__why">null_rate 0.04 &lt;= 0.05</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="fail">
+          <code class="fl-ledger__claim fl-src">VALUES orders.status IN ['paid', 'open', 'shipped']</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--fail">fail</span>
+            <span class="fl-ledger__why">undeclared_rows 200 != 0</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="pass">
+          <code class="fl-ledger__claim fl-src">COUNT orders VALUE ==1400 WHERE status = 'paid'</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--pass">pass</span>
+            <span class="fl-ledger__why">value 1400 == 1400</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="pass">
+          <code class="fl-ledger__claim fl-src">SUM orders.amount VALUE ==209000 TOLERANCE 1%</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--pass">pass</span>
+            <span class="fl-ledger__why">value 209000 satisfies == 209000 (band 2090)</span>
+          </div>
+        </div>
+        <div class="fl-ledger__row" data-verdict="no_data">
+          <code class="fl-ledger__claim fl-src">AVG orders.amount VALUE ==100 WHERE status = 'lost'</code>
+          <div class="fl-ledger__margin">
+            <span class="fl-verdict fl-verdict--no_data">no data</span>
+            <span class="fl-ledger__why">value was not measured</span>
+          </div>
+        </div>
+        <figcaption class="fl-ledger__foot">
+          Real outcomes on the shop database from <a href="getting-started/">Getting started</a>, measured on DuckDB.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="fl-stats" aria-label="FactLang in numbers">
+    <div class="fl-stats__inner">
+      <div class="fl-stat fl-fade-up">
+        <span class="fl-stat__num" data-fact="native_dialects">11</span>
+        <span class="fl-stat__label">native SQL dialects</span>
+      </div>
+      <div class="fl-stat fl-fade-up" style="--fl-delay:80ms">
+        <span class="fl-stat__num" data-fact="verbs">19</span>
+        <span class="fl-stat__label">standard verbs</span>
+      </div>
+      <div class="fl-stat fl-fade-up" style="--fl-delay:160ms">
+        <span class="fl-stat__num" data-fact="verdicts">6</span>
+        <span class="fl-stat__label">verdicts a claim can get</span>
+      </div>
+      <div class="fl-stat fl-fade-up" style="--fl-delay:240ms">
+        <span class="fl-stat__num" data-fact="core_dependencies">0</span>
+        <span class="fl-stat__label">dependencies in the core</span>
+      </div>
+    </div>
+  </section>
+
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="." title="FactLang" class="md-nav__button md-logo" aria-label="FactLang" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m23 12-2.4-2.8.3-3.7-3.6-.8-1.9-3.2L12 3 8.6 1.5 6.7 4.7l-3.6.8.3 3.7L1 12l2.4 2.8-.3 3.7 3.6.8 1.9 3.2L12 21l3.4 1.5 1.9-3.2 3.6-.8-.3-3.7zm-4.3 4.9-2.7.6-1.4 2.4-2.6-1.1-2.6 1.1L8 17.5l-2.7-.6.2-2.8L3.7 12l1.8-2.1-.2-2.8L8 6.5l1.4-2.4L12 5.2l2.6-1.1L16 6.5l2.7.6-.2 2.8 1.8 2.1-1.8 2.1zm-2.1-9.3L18 9l-8 8-4-4 1.4-1.4 2.6 2.6z"/></svg>
+
+    </a>
+    FactLang
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/rupakc/factlang" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    rupakc/factlang
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="." class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#from-install-to-verdicts-in-three-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From install to verdicts in three steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="From install to verdicts in three steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-a-shop-to-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build a shop to check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#check-what-an-analyst-said" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check what an analyst said
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="playground/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Playground · live verdicts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/language/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The language
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/verbs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard verbs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/filters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Filters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/namespaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Namespaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/verdicts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verdicts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/evidence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/batching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Batching and fusion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide/measure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Raw measurement and sampling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents and LLMs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extending
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Extending
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/verbs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    New verbs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/packs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Value types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/dialects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dialects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/catalogs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalogs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/primitives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    IR primitives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="extending/fragments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Filter and join fragments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/grammar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Grammar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/verbs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verbs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+                
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden>
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#from-install-to-verdicts-in-three-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From install to verdicts in three steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="From install to verdicts in three steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-a-shop-to-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build a shop to check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#check-what-an-analyst-said" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check what an analyst said
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+  
+  <div class="fl-landing"><section class="fl-section fl-idea" aria-labelledby="fl-idea-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">The idea</span>
+        <h2 id="fl-idea-title">Prose cannot be checked. Claims can.</h2>
+        <p class="fl-head__sub">
+          AI agents and analysts answer questions about data in prose. A wrong sentence looks
+          exactly like a right one, so it survives, and every answer built on it is quietly
+          wrong. FactLang turns each factual sentence into one line that a machine can measure.
+        </p>
+      </div>
+      <div class="fl-idea__panel fl-fade-up">
+        <div class="fl-idea__col">
+          <h3>The answer said</h3>
+          <ul class="fl-idea__said">
+            <li>&ldquo;There are <mark>1,400 paid orders</mark>.&rdquo;</li>
+            <li>&ldquo;<mark>Every order belongs to a customer</mark>.&rdquo;</li>
+            <li>&ldquo;An order&rsquo;s status is <mark>paid, open or shipped</mark>.&rdquo;</li>
+          </ul>
+        </div>
+        <div class="fl-idea__col fl-idea__col--claims">
+          <h3>As FactLang claims</h3>
+          <pre class="fl-idea__code"><code class="fl-src" data-idea-claims>COUNT orders VALUE ==1400 WHERE status = 'paid'
+JOIN orders.customer_id -&gt; customers.id MATCH ==100%
+VALUES orders.status IN ['paid', 'open', 'shipped']</code></pre>
+        </div>
+        <div class="fl-idea__col">
+          <h3>What the data says</h3>
+          <ul class="fl-idea__says">
+            <li data-verdict="pass"><span class="fl-verdict fl-verdict--pass">pass</span> <span class="fl-idea__why">value 1400 == 1400</span></li>
+            <li data-verdict="fail"><span class="fl-verdict fl-verdict--fail">fail</span> <span class="fl-idea__why">match_rate 0.9765625 != 1</span></li>
+            <li data-verdict="fail"><span class="fl-verdict fl-verdict--fail">fail</span> <span class="fl-idea__why">undeclared_rows 200 != 0</span>, the most common being <code>refunded</code></li>
+          </ul>
+        </div>
+      </div>
+    </section><section class="fl-section fl-section--subtle" aria-labelledby="fl-who-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Who it is for</span>
+        <h2 id="fl-who-title">For everyone who has to trust a number about data</h2>
+      </div>
+      <div class="fl-grid fl-grid--3">
+        <article class="fl-card fl-card--indigo fl-fade-up">
+          <span class="fl-card__label">AI agents &amp; LLM apps</span>
+          <h3>Ground every answer in the data</h3>
+          <p>
+            The agent writes the facts in its answer as claims and FactLang measures them.
+            <span data-fact="agent_tools">3</span> tools
+            (check, lint, explain) come as JSON-schema tool specs, and
+            <code>factlang mcp</code> serves them over MCP. A per-call claim cap
+            (<span data-fact="max_claims">200</span> by default) bounds the
+            work; explain shows the SQL without running it.
+          </p>
+          <a class="fl-card__more" href="agents/">Agents and LLMs &rarr;</a>
+        </article>
+        <article class="fl-card fl-card--teal fl-fade-up" style="--fl-delay:90ms">
+          <span class="fl-card__label">Data &amp; analytics engineers</span>
+          <h3>Assumptions as plain, checkable lines</h3>
+          <p>
+            Keep what your pipelines assume in a <code>.fl</code> file next to the code.
+            <code>factlang check</code> exits <code>1</code> when a claim fails,
+            <code>3</code> when one has no data or could not be measured and <code>2</code>
+            when the file is invalid, so CI catches it. Aggregate claims over the same table and filter
+            share one scan.
+          </p>
+          <span class="fl-card__links">
+            <a class="fl-card__more" href="cli/">Command line &rarr;</a>
+            <a class="fl-card__more" href="guide/batching/">Batching and fusion &rarr;</a>
+          </span>
+        </article>
+        <article class="fl-card fl-card--rose fl-fade-up" style="--fl-delay:180ms">
+          <span class="fl-card__label">Review &amp; audit</span>
+          <h3>Evidence, not assurances</h3>
+          <p>
+            Every measured verdict carries the exact SQL, its bind parameters, the dialect
+            and its tier, and the numbers it was decided on. A claim that cannot be decided
+            says so instead of guessing:
+          </p>
+          <span class="fl-card__verdicts">
+            <span class="fl-verdict fl-verdict--no_data">no_data</span>
+            <span class="fl-verdict fl-verdict--error">error</span>
+            <span class="fl-verdict fl-verdict--unprobeable">unprobeable</span>
+          </span>
+          <span class="fl-card__links">
+            <a class="fl-card__more" href="guide/evidence/">Evidence &rarr;</a>
+            <a class="fl-card__more" href="guide/verdicts/">Verdicts &rarr;</a>
+          </span>
+        </article>
+      </div>
+    </section><section class="fl-section" aria-labelledby="fl-box-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Out of the box</span>
+        <h2 id="fl-box-title">What comes with FactLang</h2>
+        <p class="fl-head__sub">Each card opens the guide page that explains it in full.</p>
+      </div>
+      <div class="fl-grid fl-grid--3">
+        <a class="fl-card fl-card--indigo fl-feature fl-fade-up" href="guide/verbs/">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 6h16M4 12h10M4 18h13"/></svg></span>
+          <h3>19 standard verbs</h3>
+          <p>Joins, keys, nulls, allowed values, ranges, patterns, freshness, types, counts and aggregates, each a one-line claim.</p>
+          <code class="fl-feature__code fl-src">UNIQUE orders.id</code>
+        </a>
+        <a class="fl-card fl-card--teal fl-feature fl-fade-up" style="--fl-delay:80ms" href="guide/evidence/#tiers">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg></span>
+          <h3>11 native dialects</h3>
+          <p>6 are run against a real engine in CI, 5 more are checked by parsing and golden tests, and the optional sqlglot bridge covers the long tail.</p>
+          <code class="fl-feature__code">dialect="snowflake"</code>
+        </a>
+        <a class="fl-card fl-card--violet fl-feature fl-fade-up" style="--fl-delay:160ms" href="guide/evidence/">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+          <h3>Read-only by construction</h3>
+          <p>Every measured claim compiles to one <code>SELECT</code>. Each literal travels as a typed bind parameter, so no claim can carry SQL, and the exact statement is the evidence.</p>
+          <code class="fl-feature__code">WHERE status = ?  ('paid',)</code>
+        </a>
+        <a class="fl-card fl-card--amber fl-feature fl-fade-up" href="guide/batching/">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/></svg></span>
+          <h3>Batching and fusion</h3>
+          <p>Check a whole file at once. The same fact is measured once however it is spelled, and aggregate claims over the same table and filter share one scan.</p>
+          <code class="fl-feature__code">Checker(connector, fuse=True)</code>
+        </a>
+        <a class="fl-card fl-card--rose fl-feature fl-fade-up" style="--fl-delay:80ms" href="reference/diagnostics/">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg></span>
+          <h3>Diagnostics with fixes</h3>
+          <p>Stable codes, a caret under the problem and a &ldquo;did you mean&rdquo; when there is one. <code>factlang lint</code> and <code>factlang fmt</code> need no warehouse.</p>
+          <code class="fl-feature__code">error[FL300]: unknown verb UNIQE</code>
+        </a>
+        <a class="fl-card fl-card--indigo fl-feature fl-fade-up" style="--fl-delay:160ms" href="extending/verbs/">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></span>
+          <h3>Extensible</h3>
+          <p>Add your own verbs, packs, value types, dialects, connectors and IR primitives. Each has its own guide.</p>
+          <code class="fl-feature__code">pack.register(contract)</code>
+        </a>
+      </div>
+    </section><section class="fl-section fl-section--subtle" aria-labelledby="fl-how-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Under the hood</span>
+        <h2 id="fl-how-title">How a claim becomes a verdict</h2>
+        <p class="fl-head__sub">
+          One claim about the Getting started shop, followed through every stage. Each
+          artefact below is the library&rsquo;s real output.
+        </p>
+      </div>
+      <div class="fl-pipeline__claim fl-fade-up">
+        <span class="fl-pipeline__label">The claim</span>
+        <code class="fl-src" data-artefact="claim">COUNT orders VALUE ==1400 WHERE status = 'paid'</code>
+      </div>
+      <ol class="fl-steps">
+        <li class="fl-step fl-fade-up">
+          <span class="fl-step__num fl-step__num--1" aria-hidden="true">1</span>
+          <div class="fl-step__body">
+            <h3>Parse</h3>
+            <p>The line becomes a syntax tree, with one canonical spelling.</p>
+            <code class="fl-step__artefact fl-src" data-artefact="parse">COUNT orders VALUE == 1400 WHERE status = 'paid'</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:60ms">
+          <span class="fl-step__num fl-step__num--2" aria-hidden="true">2</span>
+          <div class="fl-step__body">
+            <h3>Analyse</h3>
+            <p>Names are checked against the catalog, literals are typed, and the claim gets a semantic hash: the same fact, spelled differently, hashes the same.</p>
+            <code class="fl-step__artefact" data-artefact="analyse">sha256:d67e352999849cb4&hellip;</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:120ms">
+          <span class="fl-step__num fl-step__num--3" aria-hidden="true">3</span>
+          <div class="fl-step__body">
+            <h3>Plan</h3>
+            <p>The verb&rsquo;s contract says what to measure; the result is a small plan, which batching can fuse with others.</p>
+            <code class="fl-step__artefact" data-artefact="plan">ColumnAggregate(orders, ROW_COUNT, WHERE status = p1)</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:180ms">
+          <span class="fl-step__num fl-step__num--4" aria-hidden="true">4</span>
+          <div class="fl-step__body">
+            <h3>Compile</h3>
+            <p>The plan is printed as SQL for the target dialect, here DuckDB (tier verified). The literal leaves the SQL text as a bind parameter.</p>
+            <code class="fl-step__artefact" data-artefact="compile">SELECT COUNT(*) AS row_count FROM orders WHERE status = ?</code>
+            <code class="fl-step__artefact fl-step__artefact--params" data-artefact="params">('paid',)</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:240ms">
+          <span class="fl-step__num fl-step__num--5" aria-hidden="true">5</span>
+          <div class="fl-step__body">
+            <h3>Run</h3>
+            <p>One read-only query, over every row that matches the filter.</p>
+            <code class="fl-step__artefact" data-artefact="run">row_count 1400</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:300ms">
+          <span class="fl-step__num fl-step__num--6" aria-hidden="true">6</span>
+          <div class="fl-step__body">
+            <h3>Judge</h3>
+            <p>The contract derives its facts and decides. The verdict names the numbers it was decided on.</p>
+            <code class="fl-step__artefact fl-step__artefact--judge" data-artefact="judge">pass &middot; value 1400 == 1400</code>
+          </div>
+        </li>
+      </ol>
+    </section><section class="fl-section" aria-labelledby="fl-dialects-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Dialects</span>
+        <h2 id="fl-dialects-title">Works with your warehouse</h2>
+        <p class="fl-head__sub">
+          The same claims compile to each dialect&rsquo;s own SQL. Every outcome reports its
+          dialect&rsquo;s <a href="guide/evidence/#tiers">tier</a>, so you know
+          how far that SQL has been tested.
+        </p>
+      </div>
+      <div class="fl-tiers">
+        <div class="fl-tier fl-tier--verified fl-fade-up" data-tier="verified">
+          <div class="fl-tier__head">
+            <span class="fl-badge fl-badge--pass">verified</span>
+            <p>Run against a real engine in CI, verb by verb.</p>
+          </div>
+          <ul class="fl-tier__list">
+            <li><span class="fl-badge fl-badge--teal" data-dialect="clickhouse">clickhouse</span></li>
+            <li><span class="fl-badge fl-badge--teal" data-dialect="duckdb">duckdb</span></li>
+            <li><span class="fl-badge fl-badge--teal" data-dialect="mysql">mysql</span></li>
+            <li><span class="fl-badge fl-badge--teal" data-dialect="postgres">postgres</span></li>
+            <li><span class="fl-badge fl-badge--teal" data-dialect="trino">trino</span></li>
+            <li><span class="fl-badge fl-badge--teal" data-dialect="tsql">tsql</span></li>
+          </ul>
+        </div>
+        <div class="fl-tier fl-tier--native fl-fade-up" style="--fl-delay:80ms" data-tier="native">
+          <div class="fl-tier__head">
+            <span class="fl-badge fl-badge--indigo">native</span>
+            <p>Native SQL, checked by parsing it with sqlglot in that dialect and by golden tests.</p>
+          </div>
+          <ul class="fl-tier__list">
+            <li><span class="fl-badge fl-badge--indigo" data-dialect="bigquery">bigquery</span></li>
+            <li><span class="fl-badge fl-badge--indigo" data-dialect="databricks">databricks</span></li>
+            <li><span class="fl-badge fl-badge--indigo" data-dialect="oracle">oracle</span></li>
+            <li><span class="fl-badge fl-badge--indigo" data-dialect="redshift">redshift</span></li>
+            <li><span class="fl-badge fl-badge--indigo" data-dialect="snowflake">snowflake</span></li>
+          </ul>
+        </div>
+        <div class="fl-tier fl-tier--bridge fl-fade-up" style="--fl-delay:160ms" data-tier="best_effort">
+          <div class="fl-tier__head">
+            <span class="fl-badge fl-badge--amber">best_effort</span>
+            <p>Any other dialect sqlglot can write, through the optional bridge: <code>pip install "factlang[sqlglot]"</code>.</p>
+          </div>
+          <ul class="fl-tier__list">
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="presto">presto</span></li>
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="athena">athena</span></li>
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="hive">hive</span></li>
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="teradata">teradata</span></li>
+            <li><span class="fl-badge">&hellip;</span></li>
+          </ul>
+        </div>
+      </div>
+    </section><section class="fl-section fl-section--subtle fl-quickstart" aria-label="Quick start">
+      <!-- The landing page is docs/overrides/home.html. This file is its quick start: the test
+suite runs both python blocks in order (tests/conformance/test_docs_examples.py), checks
+that the first is the Getting started shop and that the output shown is what they print
+(tests/conformance/test_landing_facts.py). -->
+
+<div class="fl-head">
+<p><span class="fl-eyebrow">Quick start</span></p>
+<h2 id="from-install-to-verdicts-in-three-steps">From install to verdicts in three steps<a class="headerlink" href="#from-install-to-verdicts-in-three-steps" title="Permanent link">&para;</a></h2>
+<p class="fl-head__sub">The shop from <a href="getting-started/">Getting started</a>, in an in-memory DuckDB database: no
+warehouse needed.</p>
+</div>
+<div class="fl-qs">
+<div class="fl-qs__step">
+<p><span class="fl-qs__num" aria-hidden="true">1</span></p>
+<div class="fl-qs__body">
+<h3 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h3>
+<p>The core has no dependencies; the <code>duckdb</code> extra adds the database this example uses.</p>
+<div class="language-bash highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"factlang[duckdb]"</span>
+</code></pre></div>
+</div>
+</div>
+<div class="fl-qs__step">
+<p><span class="fl-qs__num" aria-hidden="true">2</span></p>
+<div class="fl-qs__body">
+<h3 id="build-a-shop-to-check">Build a shop to check<a class="headerlink" href="#build-a-shop-to-check" title="Permanent link">&para;</a></h3>
+<p>500 customers and 2,000 orders, with a few things wrong on purpose.</p>
+<div class="language-python highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">duckdb</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">factlang</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">fl</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">duckdb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">    CREATE TABLE customers AS</span>
+<span class="s2">    SELECT i AS id,</span>
+<span class="s2">           CASE WHEN i % 25 = 0 THEN NULL ELSE 'customer' || i || '@example.com' END AS email</span>
+<span class="s2">    FROM range(1, 501) AS t(i)</span>
+<span class="s2">"""</span><span class="p">)</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">    CREATE TABLE orders AS</span>
+<span class="s2">    SELECT i AS id,</span>
+<span class="s2">           CASE WHEN i % 160 = 0 THEN 10000 + i ELSE 1 + (i * 7) % 500 END AS customer_id,</span>
+<span class="s2">           CASE i % 10 WHEN 0 THEN 'refunded' WHEN 1 THEN 'open' WHEN 2 THEN 'open'</span>
+<span class="s2">                       ELSE 'paid' END AS status,</span>
+<span class="s2">           CAST(5 + (i * 37) % 200 AS DECIMAL(10, 2)) AS amount,</span>
+<span class="s2">           CASE WHEN i % 10 IN (1, 2) THEN NULL</span>
+<span class="s2">                ELSE current_date - CAST(i % 30 AS INTEGER) END AS shipped_at</span>
+<span class="s2">    FROM range(1, 2001) AS t(i)</span>
+<span class="s2">"""</span><span class="p">)</span>
+
+<span class="n">connector</span> <span class="o">=</span> <span class="n">fl</span><span class="o">.</span><span class="n">DBAPIConnector</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="s2">"duckdb"</span><span class="p">)</span>
+</code></pre></div>
+</div>
+</div>
+<div class="fl-qs__step">
+<p><span class="fl-qs__num" aria-hidden="true">3</span></p>
+<div class="fl-qs__body">
+<h3 id="check-what-an-analyst-said">Check what an analyst said<a class="headerlink" href="#check-what-an-analyst-said" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span class="n">report</span> <span class="o">=</span> <span class="n">fl</span><span class="o">.</span><span class="n">Checker</span><span class="p">(</span><span class="n">connector</span><span class="p">)</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">JOIN orders.customer_id -&gt; customers.id CARD N:1 MATCH &gt;=99%</span>
+<span class="s2">NULLS customers.email RATE &lt;=5%</span>
+<span class="s2">VALUES orders.status IN ['paid', 'open', 'shipped']</span>
+<span class="s2">"""</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">outcome</span> <span class="ow">in</span> <span class="n">report</span><span class="o">.</span><span class="n">outcomes</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">outcome</span><span class="o">.</span><span class="n">verdict</span><span class="o">.</span><span class="n">value</span><span class="si">:</span><span class="s2">5</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">outcome</span><span class="o">.</span><span class="n">explanation</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>fail  match_rate 0.9765625 &lt; 0.99
+pass  null_rate 0.04 &lt;= 0.05
+fail  undeclared_rows 200 != 0
+</code></pre></div>
+</div>
+</div>
+</div>
+    </section><section class="fl-section fl-closing" aria-labelledby="fl-cta-title">
+      <div class="fl-cta fl-fade-up">
+        <h2 id="fl-cta-title">Try FactLang in your browser</h2>
+        <p>The playground runs the real library in your browser and checks claims for real: live verdicts on a sample shop database, or on your own CSV files, which never leave your machine. Nothing to install, no warehouse needed.</p>
+        <div class="fl-cta__actions">
+          <a class="fl-button fl-button--solid" href="playground/">Try it live</a>
+          <a class="fl-button" href="https://github.com/rupakc/factlang">View on GitHub</a>
+        </div>
+      </div>
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Resources</span>
+        <h2>Where to go next</h2>
+      </div>
+      <div class="fl-links">
+        <a class="fl-link fl-fade-up" href="playground/">
+          <span class="fl-link__label">Try</span>
+          <span class="fl-link__title">Playground</span>
+          <span class="fl-link__desc">Check claims in the browser: live verdicts on a sample database or your own CSV files.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:60ms" href="getting-started/">
+          <span class="fl-link__label">Start</span>
+          <span class="fl-link__title">Getting started</span>
+          <span class="fl-link__desc">From <code>pip install</code> to a report of verdicts in about five minutes.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:120ms" href="guide/language/">
+          <span class="fl-link__label">Learn</span>
+          <span class="fl-link__title">Guide</span>
+          <span class="fl-link__desc">The language, the verbs, filters, verdicts and evidence.</span>
+        </a>
+        <a class="fl-link fl-fade-up" href="agents/">
+          <span class="fl-link__label">Integrate</span>
+          <span class="fl-link__title">Agents &amp; MCP</span>
+          <span class="fl-link__desc">Tool definitions for LLMs and the MCP server.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:60ms" href="https://github.com/rupakc/factlang">
+          <span class="fl-link__label">Source</span>
+          <span class="fl-link__title">GitHub</span>
+          <span class="fl-link__desc">Code, issues and the changelog. MIT licensed.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:120ms" href="https://pypi.org/project/factlang/">
+          <span class="fl-link__label">Package</span>
+          <span class="fl-link__title">PyPI</span>
+          <span class="fl-link__desc">The <code>factlang</code> package and its release history.</span>
+        </a>
+      </div>
+    </section>
+  </div>
+
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+        
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+        
+          
+          <a href="getting-started/" class="md-footer__link md-footer__link--next" aria-label="Next: Getting started">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Getting started
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Rupak Chakraborty &middot; MIT licence
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.instant", "navigation.instant.progress", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link", "toc.follow"], "search": "assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="assets/factlang.js"></script>
+      
+        <script src="assets/playground/playground.js"></script>
+      
+    
+  </body>
+</html>

@@ -183,3 +183,20 @@ def test_script_drives_fade_up_and_copy() -> None:
     assert ".fl-fade-up" in JS
     assert ".fl-copy" in JS
     assert "clipboard" in JS
+
+
+def test_table_code_never_breaks_mid_identifier() -> None:
+    """At phone width a cell's identifier stays whole; the table scrolls instead."""
+    code_rules = [
+        body
+        for sel, body in _blocks(CSS)
+        if "table:not([class]) td code" in sel and "table:not([class]) th code" in sel
+    ]
+    assert code_rules, "no rule for code inside table cells"
+    body = " ".join(code_rules)
+    assert re.search(r"white-space\s*:\s*nowrap", body)
+    assert re.search(r"overflow-wrap\s*:\s*normal", body)
+    assert re.search(r"word-break\s*:\s*normal", body)
+    table = " ".join(b for sel, b in _blocks(CSS) if sel == ".md-typeset table:not([class])")
+    assert re.search(r"overflow-x\s*:\s*auto", table)
+    assert re.search(r"max-width\s*:\s*100%", table)

@@ -352,6 +352,20 @@ code, pre, kbd, .fl-ledger, .fl-install, .fl-pg textarea, .fl-pg__hl {
 .md-typeset table:not([class]) tbody tr:first-child td {
   border-top: 0;
 }
+/* Identifiers in cells never break mid-word (Material sets word-break: break-word on
+ * code); a table too wide for the column scrolls inside its own box instead of squeezing. */
+.md-typeset table:not([class]) td code,
+.md-typeset table:not([class]) th code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.md-typeset table:not([class]) {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
 
 /* Admonitions: a white card with a coloured left rule, in the site's accent palette. */
 .md-typeset .admonition,

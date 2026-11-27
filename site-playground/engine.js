@@ -51,6 +51,7 @@
  *
  * Interface (consumed by playground.js):
  *   startEngine({ pyodide, onStatus }) -> Promise<Engine>   (idempotent: one engine, one worker)
+ *   preloadDuckdb() -> Promise<module>   (start the CDN download early; 90 s deadline)
  *   Engine = { loadSample, loadCsv, reset, tables, check, lint, suggest, terminate, ... }
  */
 
@@ -69,6 +70,8 @@ const BOOT_MS = 300000; // instantiate downloads ~35 MB of wasm
 const CSV_MS = 120000;
 const OP_MS = 60000;
 const PING_MS = 5000;
+// the duckdb-wasm module (and apache-arrow) from the CDN: a hung download must not hang the page
+const IMPORT_DEADLINE_MS = 90000;
 // Python's own limit is timeout + this margin: only a backstop, the timer here is the clock
 const PY_MARGIN_S = 2 * BOOT_MS / 1000;
 
@@ -82,6 +85,49 @@ const DATE_INFINITY = 2147483647;
 const TIMESTAMP_INFINITY = 9223372036854775807n;
 
 let current = null; // { pyodide, promise, engine, onStatus }
+let duckdbModule = null; // the memoised download of DUCKDB_ESM (forgotten when it fails)
+
+// An error from DuckDB that is really about the missing ICU extension (time zones), as
+// opposed to, say, a binder error about a CSV column that happens to be called `timezone`:
+// the extension named as an extension, or the catalog missing an ICU function.
+const ICU_ERROR = new RegExp([
+  "\\bicu(?:\\.duckdb_extension|\\s+extension)\\b",   // "... exists in the icu extension", the .wasm URL
+  "\\bextension\\s+\"?icu\"?(?![\\w.])",              // 'Extension icu is not loaded', 'extension "icu"'
+  "Function with name \"?(?:timezone|current_date|current_time|current_timestamp|now)\"? does not exist"
+].join("|"), "i");
+const NEVER_ICU = /^\s*(?:Error:\s*)?(?:Binder|Parser|Conversion) Error\b/i;
+
+function isIcuError(message) {
+  var text = String(message || "");
+  return !NEVER_ICU.test(text) && ICU_ERROR.test(text);
+}
+
+// `importer()`, or a rejection saying the CDN failed (its own error, or no answer in `ms`).
+function loadDuckdb(importer, ms) {
+  var limit = ms || IMPORT_DEADLINE_MS;
+  var timer = null;
+  var deadline = new Promise(function (_, reject) {
+    timer = setTimeout(function () {
+      reject(new Error("could not download DuckDB from the CDN (no answer from cdn.jsdelivr.net within " +
+        Math.round(limit / 1000) + "s)"));
+    }, limit);
+  });
+  var download = Promise.resolve().then(importer).catch(function (err) {
+    throw new Error("could not download DuckDB from the CDN (" + messageOf(err) + ")");
+  });
+  download.catch(noop);
+  return Promise.race([download, deadline]).finally(function () { clearTimeout(timer); });
+}
+
+/** Start downloading the DuckDB-WASM module now (the page calls it while Pyodide starts, so
+ * the two download in parallel); startEngine reuses it. A failed download is forgotten. */
+function preloadDuckdb() {
+  if (!duckdbModule) {
+    duckdbModule = loadDuckdb(function () { return import(DUCKDB_ESM); }, IMPORT_DEADLINE_MS);
+    duckdbModule.catch(function () { duckdbModule = null; });
+  }
+  return duckdbModule;
+}
 
 function noop() {}
 
@@ -514,7 +560,7 @@ function createEngine(pyodide, duckdb, setStatus) {
   }
 
   function icuMessage(err) {
-    if (icu.loaded || !/time ?zone|\bicu\b/i.test(messageOf(err))) return err;
+    if (icu.loaded || !isIcuError(messageOf(err))) return err;
     return icuUnavailable();
   }
 
@@ -652,11 +698,13 @@ function createEngine(pyodide, duckdb, setStatus) {
 
     reset: function () {
       return task(async function () {
-        for (var i = 0; i < csv.length; i++) {
-          try { await q("DROP TABLE IF EXISTS " + ident(csv[i].name)); } catch (e) { if (e && e.workerDown) throw e; }
-          try { await guard(db.dropFile(csv[i].internal), OP_MS, "dropping a file"); } catch (e) { if (e && e.workerDown) throw e; }
-        }
+        // forget the files first: a worker crash mid-reset restarts without them, never with
+        var dropping = csv;
         csv = [];
+        for (var i = 0; i < dropping.length; i++) {
+          try { await q("DROP TABLE IF EXISTS " + ident(dropping[i].name)); } catch (e) { if (e && e.workerDown) throw e; }
+          try { await guard(db.dropFile(dropping[i].internal), OP_MS, "dropping a file"); } catch (e) { if (e && e.workerDown) throw e; }
+        }
         return allTables();
       });
     },
@@ -720,7 +768,7 @@ function createEngine(pyodide, duckdb, setStatus) {
 /** Start (once) the DuckDB side of the playground and load the sample shop.
  *
  * `pyodide` is the ready Pyodide instance with glue.py already run; `onStatus(message)` gets
- * progress text ("" when idle). Calling it again returns the same engine (the latest
+ * progress text ("" when idle). Test-only: `_importDuckdb()` replaces the CDN download. Calling it again returns the same engine (the latest
  * `onStatus` wins), so Material's instant navigation never starts a second worker. A failed
  * start is forgotten, so calling again retries. */
 export async function startEngine(options) {
@@ -741,12 +789,7 @@ export async function startEngine(options) {
   current = state;
   state.promise = (async function () {
     setStatus("Starting DuckDB in your browser…");
-    var duckdb;
-    try {
-      duckdb = await import(DUCKDB_ESM);
-    } catch (err) {
-      throw new Error("could not download DuckDB from the CDN (" + messageOf(err) + ")");
-    }
+    var duckdb = await (opts._importDuckdb ? loadDuckdb(opts._importDuckdb, IMPORT_DEADLINE_MS) : preloadDuckdb());
     var engine = await createEngine(pyodide, duckdb, setStatus);
     state.engine = engine;
     setStatus("Loading the sample shop…");
@@ -761,4 +804,7 @@ export async function startEngine(options) {
   return state.promise;
 }
 
-export { ALLOWED_HOSTS, DUCKDB_ENGINE_VERSION, DUCKDB_WASM_VERSION, LIMITS };
+export {
+  ALLOWED_HOSTS, DUCKDB_ENGINE_VERSION, DUCKDB_WASM_VERSION, IMPORT_DEADLINE_MS, LIMITS,
+  isIcuError, loadDuckdb, preloadDuckdb
+};

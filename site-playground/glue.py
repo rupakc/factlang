@@ -443,11 +443,11 @@ class PlaygroundConnector:
             pending = _awaited(self.run(sql, json.dumps(params)))
             raw = await (pending if timeout_s is None else asyncio.wait_for(pending, timeout_s))
         except asyncio.TimeoutError as exc:
-            raise _timed_out(timeout_s, exc) from None
+            raise _timed_out(timeout_s, exc) from exc
         except Exception as exc:
             if _reports_timeout(exc):
                 limit = self.timeout_s if self.timeout_s is not None else timeout_s
-                raise _timed_out(limit, exc) from None
+                raise _timed_out(limit, exc) from exc
             raise
         return QueryResult(normalise_rows(probe, decode_result(raw)))
 

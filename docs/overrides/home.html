@@ -1,22 +1,29 @@
 {% extends "main.html" %}
 
-{#- The landing page: a hero with the claim ledger, then docs/index.md as the body. The
-    ledger rows are real outcomes of the Getting started shop database; the test
-    tests/conformance/test_docs_examples.py re-checks every row against it. -#}
+{#- The landing page (site spec 5.1): hero + claim ledger and the stat strip above the
+    content column; the idea, audiences, features, pipeline and dialects in it; then
+    docs/index.md (the executed quick start); then the closing call to action.
+
+    Truthfulness (spec 2): every number and dialect list comes from config.extra.fl_facts,
+    which scripts/docs_hooks.py::site_facts reads from the code. Every claim, verdict and
+    artefact shown is a real outcome on the Getting started shop:
+    tests/conformance/test_docs_examples.py re-checks the ledger and
+    tests/conformance/test_landing_facts.py the rest. Keep the markup those tests parse. -#}
 
 {% block extrahead %}
   {{ super() }}
   <meta property="og:title" content="FactLang: verdicts for claims about your data">
   <meta property="og:description" content="{{ config.site_description }}">
-  <style>.md-content__inner > h1:first-child { display: none; }</style>
 {% endblock %}
 
 {% block tabs %}
   {{ super() }}
+  {% set facts = config.extra.fl_facts %}
   <section class="fl-hero" aria-labelledby="fl-hero-title">
     <div class="fl-hero__inner">
-      <div>
-        <h1 id="fl-hero-title">Every claim about your warehouse, checked against every row.</h1>
+      <div class="fl-hero__copy">
+        <span class="fl-hero__tag"><span class="fl-hero__dot" aria-hidden="true"></span>Open source &middot; MIT &middot; v{{ facts.version }}</span>
+        <h1 id="fl-hero-title">Every claim about your data, <span class="fl-gradient-text">checked against every row.</span></h1>
         <p>
           FactLang is a small language for facts about data: joins, nulls, counts, allowed
           values, freshness. Each line compiles to read-only SQL for your warehouse and
@@ -24,11 +31,22 @@
           evidence.
         </p>
         <div class="fl-hero__actions">
-          <a class="fl-button fl-button--solid" href="{{ 'getting-started/' | url }}">Get started</a>
-          <a class="fl-button" href="{{ 'playground/' | url }}">Try the playground</a>
+          <a class="fl-button fl-button--solid" href="{{ 'playground/' | url }}">Try it live</a>
+          <a class="fl-button" href="{{ 'getting-started/' | url }}">Get started</a>
         </div>
         <div class="fl-install">
-          <code>pip install factlang</code> &nbsp;no dependencies in the core
+          <div class="fl-install__cmd">
+            <span class="fl-install__prompt" aria-hidden="true">$</span>
+            <code>pip install factlang</code>
+            <button type="button" class="fl-copy" data-copy="pip install factlang" aria-label="Copy the install command"><span class="fl-copy__label">Copy</span></button>
+          </div>
+          <span class="fl-install__note">
+            {%- if facts.core_dependencies == 0 -%}
+              No dependencies in the core.
+            {%- else -%}
+              {{ facts.core_dependencies }} core dependencies.
+            {%- endif -%}
+          </span>
         </div>
       </div>
 
@@ -85,4 +103,332 @@
       </figure>
     </div>
   </section>
+
+  <section class="fl-stats" aria-label="FactLang in numbers">
+    <div class="fl-stats__inner">
+      <div class="fl-stat fl-fade-up">
+        <span class="fl-stat__num" data-fact="native_dialects">{{ facts.native_dialects }}</span>
+        <span class="fl-stat__label">native SQL dialects</span>
+      </div>
+      <div class="fl-stat fl-fade-up" style="--fl-delay:80ms">
+        <span class="fl-stat__num" data-fact="verbs">{{ facts.verbs }}</span>
+        <span class="fl-stat__label">standard verbs</span>
+      </div>
+      <div class="fl-stat fl-fade-up" style="--fl-delay:160ms">
+        <span class="fl-stat__num" data-fact="verdicts">{{ facts.verdicts }}</span>
+        <span class="fl-stat__label">verdicts a claim can get</span>
+      </div>
+      <div class="fl-stat fl-fade-up" style="--fl-delay:240ms">
+        <span class="fl-stat__num" data-fact="core_dependencies">{{ facts.core_dependencies }}</span>
+        <span class="fl-stat__label">dependencies in the core</span>
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block content %}
+  {% set facts = config.extra.fl_facts %}
+  <div class="fl-landing">
+
+    {#- 3. The idea -#}
+    <section class="fl-section fl-idea" aria-labelledby="fl-idea-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">The idea</span>
+        <h2 id="fl-idea-title">Prose cannot be checked. Claims can.</h2>
+        <p class="fl-head__sub">
+          AI agents and analysts answer questions about data in prose. A wrong sentence looks
+          exactly like a right one, so it survives, and every answer built on it is quietly
+          wrong. FactLang turns each factual sentence into one line that a machine can measure.
+        </p>
+      </div>
+      <div class="fl-idea__panel fl-fade-up">
+        <div class="fl-idea__col">
+          <h3>The answer said</h3>
+          <ul class="fl-idea__said">
+            <li>&ldquo;There are <mark>1,400 paid orders</mark>.&rdquo;</li>
+            <li>&ldquo;<mark>Every order belongs to a customer</mark>.&rdquo;</li>
+            <li>&ldquo;An order&rsquo;s status is <mark>paid, open or shipped</mark>.&rdquo;</li>
+          </ul>
+        </div>
+        <div class="fl-idea__col fl-idea__col--claims">
+          <h3>As FactLang claims</h3>
+          <pre class="fl-idea__code"><code class="fl-src" data-idea-claims>COUNT orders VALUE ==1400 WHERE status = 'paid'
+JOIN orders.customer_id -&gt; customers.id MATCH ==100%
+VALUES orders.status IN ['paid', 'open', 'shipped']</code></pre>
+        </div>
+        <div class="fl-idea__col">
+          <h3>What the data says</h3>
+          <ul class="fl-idea__says">
+            <li data-verdict="pass"><span class="fl-verdict fl-verdict--pass">pass</span> <span class="fl-idea__why">value 1400 == 1400</span></li>
+            <li data-verdict="fail"><span class="fl-verdict fl-verdict--fail">fail</span> <span class="fl-idea__why">match_rate 0.9765625 != 1</span></li>
+            <li data-verdict="fail"><span class="fl-verdict fl-verdict--fail">fail</span> <span class="fl-idea__why">undeclared_rows 200 != 0</span>, the most common being <code>refunded</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    {#- 4. Benefits by audience -#}
+    <section class="fl-section fl-section--subtle" aria-labelledby="fl-who-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Who it is for</span>
+        <h2 id="fl-who-title">For everyone who has to trust a number about data</h2>
+      </div>
+      <div class="fl-grid fl-grid--3">
+        <article class="fl-card fl-card--indigo fl-fade-up">
+          <span class="fl-card__label">AI agents &amp; LLM apps</span>
+          <h3>Ground every answer in the data</h3>
+          <p>
+            The agent writes the facts in its answer as claims and FactLang measures them.
+            Three tools (check, lint, explain) come as JSON-schema tool specs, and
+            <code>factlang mcp</code> serves them over MCP. A per-call claim cap (200 by
+            default) bounds the work; explain shows the SQL without running it.
+          </p>
+          <a class="fl-card__more" href="{{ 'agents/' | url }}">Agents and LLMs &rarr;</a>
+        </article>
+        <article class="fl-card fl-card--teal fl-fade-up" style="--fl-delay:90ms">
+          <span class="fl-card__label">Data &amp; analytics engineers</span>
+          <h3>Assumptions as plain, checkable lines</h3>
+          <p>
+            Keep what your pipelines assume in a <code>.fl</code> file next to the code.
+            <code>factlang check</code> exits non-zero when a claim fails or cannot be
+            measured, so CI catches it. Aggregate claims over the same table and filter
+            share one scan.
+          </p>
+          <span class="fl-card__links">
+            <a class="fl-card__more" href="{{ 'cli/' | url }}">Command line &rarr;</a>
+            <a class="fl-card__more" href="{{ 'guide/batching/' | url }}">Batching and fusion &rarr;</a>
+          </span>
+        </article>
+        <article class="fl-card fl-card--rose fl-fade-up" style="--fl-delay:180ms">
+          <span class="fl-card__label">Review &amp; audit</span>
+          <h3>Evidence, not assurances</h3>
+          <p>
+            Every measured verdict carries the exact SQL, its bind parameters, the dialect
+            and its tier, and the numbers it was decided on. A claim that cannot be decided
+            says so instead of guessing:
+          </p>
+          <span class="fl-card__verdicts">
+            <span class="fl-verdict fl-verdict--no_data">no_data</span>
+            <span class="fl-verdict fl-verdict--error">error</span>
+            <span class="fl-verdict fl-verdict--unprobeable">unprobeable</span>
+          </span>
+          <span class="fl-card__links">
+            <a class="fl-card__more" href="{{ 'guide/evidence/' | url }}">Evidence &rarr;</a>
+            <a class="fl-card__more" href="{{ 'guide/verdicts/' | url }}">Verdicts &rarr;</a>
+          </span>
+        </article>
+      </div>
+    </section>
+
+    {#- 5. Out of the box -#}
+    <section class="fl-section" aria-labelledby="fl-box-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Out of the box</span>
+        <h2 id="fl-box-title">What comes with FactLang</h2>
+        <p class="fl-head__sub">Each card opens the guide page that explains it in full.</p>
+      </div>
+      <div class="fl-grid fl-grid--3">
+        <a class="fl-card fl-card--indigo fl-feature fl-fade-up" href="{{ 'guide/verbs/' | url }}">
+          <h3>{{ facts.verbs }} standard verbs</h3>
+          <p>Joins, keys, nulls, allowed values, ranges, patterns, freshness, types, counts and aggregates, each a one-line claim.</p>
+          <code class="fl-feature__code fl-src">UNIQUE order_items.order_id WITH [line_no]</code>
+        </a>
+        <a class="fl-card fl-card--teal fl-feature fl-fade-up" style="--fl-delay:80ms" href="{{ 'guide/evidence/#tiers' | url }}">
+          <h3>{{ facts.native_dialects }} native dialects</h3>
+          <p>{{ facts.tiers.verified | length }} are run against a real engine in CI, {{ facts.tiers.native | length }} more are checked by parsing and golden tests, and the optional sqlglot bridge covers the long tail.</p>
+          <code class="fl-feature__code">dialect="snowflake"</code>
+        </a>
+        <a class="fl-card fl-card--violet fl-feature fl-fade-up" style="--fl-delay:160ms" href="{{ 'guide/evidence/' | url }}">
+          <h3>Read-only by construction</h3>
+          <p>Every measured claim compiles to one <code>SELECT</code>. Each literal travels as a typed bind parameter, so no claim can carry SQL, and the exact statement is the evidence.</p>
+          <code class="fl-feature__code">WHERE status = ?  ('paid',)</code>
+        </a>
+        <a class="fl-card fl-card--amber fl-feature fl-fade-up" href="{{ 'guide/batching/' | url }}">
+          <h3>Batching and fusion</h3>
+          <p>Check a whole file at once. The same fact is measured once however it is spelled, and aggregate claims over the same table and filter share one scan.</p>
+          <code class="fl-feature__code">Checker(connector, fuse=True)</code>
+        </a>
+        <a class="fl-card fl-card--rose fl-feature fl-fade-up" style="--fl-delay:80ms" href="{{ 'reference/diagnostics/' | url }}">
+          <h3>Diagnostics with fixes</h3>
+          <p>Stable codes, a caret under the problem and a &ldquo;did you mean&rdquo; when there is one. <code>factlang lint</code> and <code>factlang fmt</code> need no warehouse.</p>
+          <code class="fl-feature__code">error[FL300]: unknown verb UNIQE</code>
+        </a>
+        <a class="fl-card fl-card--indigo fl-feature fl-fade-up" style="--fl-delay:160ms" href="{{ 'extending/verbs/' | url }}">
+          <h3>Extensible</h3>
+          <p>Add your own verbs, packs, value types, dialects, connectors and IR primitives. Each has its own guide.</p>
+          <code class="fl-feature__code">pack.register(contract)</code>
+        </a>
+      </div>
+    </section>
+
+    {#- 6. How a claim becomes a verdict -#}
+    <section class="fl-section fl-section--subtle" aria-labelledby="fl-how-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Under the hood</span>
+        <h2 id="fl-how-title">How a claim becomes a verdict</h2>
+        <p class="fl-head__sub">
+          One claim about the Getting started shop, followed through every stage. Each
+          artefact below is the library&rsquo;s real output.
+        </p>
+      </div>
+      <div class="fl-pipeline__claim fl-fade-up">
+        <span class="fl-pipeline__label">The claim</span>
+        <code class="fl-src" data-artefact="claim">COUNT orders VALUE ==1400 WHERE status = 'paid'</code>
+      </div>
+      <ol class="fl-steps">
+        <li class="fl-step fl-fade-up">
+          <span class="fl-step__num fl-step__num--1" aria-hidden="true">1</span>
+          <div class="fl-step__body">
+            <h3>Parse</h3>
+            <p>The line becomes a syntax tree, with one canonical spelling.</p>
+            <code class="fl-step__artefact fl-src" data-artefact="parse">COUNT orders VALUE == 1400 WHERE status = 'paid'</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:60ms">
+          <span class="fl-step__num fl-step__num--2" aria-hidden="true">2</span>
+          <div class="fl-step__body">
+            <h3>Analyse</h3>
+            <p>Names are checked against the catalog, literals are typed, and the claim gets a semantic hash: the same fact, spelled differently, hashes the same.</p>
+            <code class="fl-step__artefact" data-artefact="analyse">sha256:d67e352999849cb4&hellip;</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:120ms">
+          <span class="fl-step__num fl-step__num--3" aria-hidden="true">3</span>
+          <div class="fl-step__body">
+            <h3>Plan</h3>
+            <p>The verb&rsquo;s contract says what to measure; the result is a small plan, which batching can fuse with others.</p>
+            <code class="fl-step__artefact" data-artefact="plan">ColumnAggregate(orders, ROW_COUNT, WHERE status = p1)</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:180ms">
+          <span class="fl-step__num fl-step__num--4" aria-hidden="true">4</span>
+          <div class="fl-step__body">
+            <h3>Compile</h3>
+            <p>The plan is printed as SQL for the target dialect, here DuckDB (tier verified). The literal leaves the SQL text as a bind parameter.</p>
+            <code class="fl-step__artefact" data-artefact="compile">SELECT COUNT(*) AS row_count FROM orders WHERE status = ?</code>
+            <code class="fl-step__artefact fl-step__artefact--params" data-artefact="params">('paid',)</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:240ms">
+          <span class="fl-step__num fl-step__num--5" aria-hidden="true">5</span>
+          <div class="fl-step__body">
+            <h3>Run</h3>
+            <p>One read-only query, over every row that matches the filter.</p>
+            <code class="fl-step__artefact" data-artefact="run">row_count 1400</code>
+          </div>
+        </li>
+        <li class="fl-step fl-fade-up" style="--fl-delay:300ms">
+          <span class="fl-step__num fl-step__num--6" aria-hidden="true">6</span>
+          <div class="fl-step__body">
+            <h3>Judge</h3>
+            <p>The contract derives its facts and decides. The verdict names the numbers it was decided on.</p>
+            <code class="fl-step__artefact fl-step__artefact--judge" data-artefact="judge">pass &middot; value 1400 == 1400</code>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    {#- 7. Works with your warehouse -#}
+    <section class="fl-section" aria-labelledby="fl-dialects-title">
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Dialects</span>
+        <h2 id="fl-dialects-title">Works with your warehouse</h2>
+        <p class="fl-head__sub">
+          The same claims compile to each dialect&rsquo;s own SQL. Every outcome reports its
+          dialect&rsquo;s <a href="{{ 'guide/evidence/#tiers' | url }}">tier</a>, so you know
+          how far that SQL has been tested.
+        </p>
+      </div>
+      <div class="fl-tiers">
+        <div class="fl-tier fl-tier--verified fl-fade-up" data-tier="verified">
+          <div class="fl-tier__head">
+            <span class="fl-badge fl-badge--pass">verified</span>
+            <p>Run against a real engine in CI, verb by verb.</p>
+          </div>
+          <ul class="fl-tier__list">
+            {%- for name in facts.tiers.verified %}
+            <li><span class="fl-badge fl-badge--teal" data-dialect="{{ name }}">{{ name }}</span></li>
+            {%- endfor %}
+          </ul>
+        </div>
+        <div class="fl-tier fl-tier--native fl-fade-up" style="--fl-delay:80ms" data-tier="native">
+          <div class="fl-tier__head">
+            <span class="fl-badge fl-badge--indigo">native</span>
+            <p>Native SQL, checked by parsing it with sqlglot in that dialect and by golden tests.</p>
+          </div>
+          <ul class="fl-tier__list">
+            {%- for name in facts.tiers.native %}
+            <li><span class="fl-badge fl-badge--indigo" data-dialect="{{ name }}">{{ name }}</span></li>
+            {%- endfor %}
+          </ul>
+        </div>
+        <div class="fl-tier fl-tier--bridge fl-fade-up" style="--fl-delay:160ms" data-tier="best_effort">
+          <div class="fl-tier__head">
+            <span class="fl-badge fl-badge--amber">best_effort</span>
+            <p>Any other dialect sqlglot can write, through the optional bridge: <code>pip install "factlang[sqlglot]"</code>.</p>
+          </div>
+          <ul class="fl-tier__list">
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="presto">presto</span></li>
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="athena">athena</span></li>
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="hive">hive</span></li>
+            <li><span class="fl-badge fl-badge--amber" data-bridge-dialect="teradata">teradata</span></li>
+            <li><span class="fl-badge">&hellip;</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    {#- 8. Quick start: docs/index.md (its python blocks are executed by the test suite) -#}
+    <section class="fl-section fl-section--subtle fl-quickstart" aria-label="Quick start">
+      {{ page.content }}
+    </section>
+
+    {#- 9. Closing call to action and link cards -#}
+    <section class="fl-section fl-closing" aria-labelledby="fl-cta-title">
+      <div class="fl-cta fl-fade-up">
+        <h2 id="fl-cta-title">Try FactLang in your browser</h2>
+        <p>The playground runs the real library in your browser: nothing to install, no warehouse needed.</p>
+        <div class="fl-cta__actions">
+          <a class="fl-button fl-button--solid" href="{{ 'playground/' | url }}">Try it live</a>
+          <a class="fl-button" href="{{ config.repo_url }}">View on GitHub</a>
+        </div>
+      </div>
+      <div class="fl-head fl-fade-up">
+        <span class="fl-eyebrow">Resources</span>
+        <h2>Where to go next</h2>
+      </div>
+      <div class="fl-links">
+        <a class="fl-link fl-fade-up" href="{{ 'playground/' | url }}">
+          <span class="fl-link__label">Try</span>
+          <span class="fl-link__title">Playground</span>
+          <span class="fl-link__desc">Write claims and see their diagnostics and SQL, in the browser.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:60ms" href="{{ 'getting-started/' | url }}">
+          <span class="fl-link__label">Start</span>
+          <span class="fl-link__title">Getting started</span>
+          <span class="fl-link__desc">From <code>pip install</code> to a report of verdicts in about five minutes.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:120ms" href="{{ 'guide/language/' | url }}">
+          <span class="fl-link__label">Learn</span>
+          <span class="fl-link__title">Guide</span>
+          <span class="fl-link__desc">The language, the verbs, filters, verdicts and evidence.</span>
+        </a>
+        <a class="fl-link fl-fade-up" href="{{ 'agents/' | url }}">
+          <span class="fl-link__label">Integrate</span>
+          <span class="fl-link__title">Agents &amp; MCP</span>
+          <span class="fl-link__desc">Tool definitions for LLMs and the MCP server.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:60ms" href="{{ config.repo_url }}">
+          <span class="fl-link__label">Source</span>
+          <span class="fl-link__title">GitHub</span>
+          <span class="fl-link__desc">Code, issues and the changelog. MIT licensed.</span>
+        </a>
+        <a class="fl-link fl-fade-up" style="--fl-delay:120ms" href="https://pypi.org/project/factlang/">
+          <span class="fl-link__label">Package</span>
+          <span class="fl-link__title">PyPI</span>
+          <span class="fl-link__desc">The <code>factlang</code> package and its release history.</span>
+        </a>
+      </div>
+    </section>
+  </div>
 {% endblock %}

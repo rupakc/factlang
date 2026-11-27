@@ -906,3 +906,556 @@ a.fl-card:focus-visible::before {
   .fl-ledger__margin { border-left: 0; border-top: 1px dotted var(--fl-border); padding-top: 0.4rem; }
   .fl-section { padding: 1.8rem 0; }
 }
+
+/* ── landing ───────────────────────────────────────────────────────────────────────────
+ * The home page (docs/overrides/home.html + docs/index.md), in the order of its sections:
+ * hero tag and install line, stat strip, section heads, the idea, audience and feature
+ * cards, the pipeline, dialect tiers, quick start, call to action and link cards; then
+ * its reduced-motion and responsive rules. Consumes the tokens and components above. */
+
+/* Hero additions: the release tag and a one-line install command with a copy button. */
+.fl-hero__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-bottom: 1.1rem;
+  padding: 0.3em 0.85em 0.3em 0.7em;
+  border: 1px solid var(--fl-border);
+  border-radius: 999px;
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+  color: var(--fl-text-muted);
+  font-size: 0.66rem;
+  font-weight: 650;
+}
+.fl-hero__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--fl-teal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fl-teal) 22%, transparent);
+}
+.fl-install {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.9rem;
+  margin-top: 1.3rem;
+}
+.fl-install__cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  max-width: 100%;
+  padding: 0.3rem 0.3rem 0.3rem 0.8rem;
+  border: 1px solid var(--fl-border);
+  border-radius: 0.6rem;
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+}
+.fl-install__prompt {
+  color: var(--fl-indigo);
+  font-family: var(--md-code-font-family);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+.fl-install .fl-install__cmd code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fl-text);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+.fl-install__note {
+  font-family: var(--md-text-font-family);
+  font-size: 0.7rem;
+  color: var(--fl-text-muted);
+}
+
+/* The ledger is a <figure>, outside .md-typeset: drop the browser's 40px figure margins,
+ * which squeezed it to ~240px on a phone. */
+.fl-hero .fl-ledger { margin: 0; min-width: 0; }
+
+/* Stat strip: four numbers read from the code at build time. */
+.fl-stats {
+  background: var(--fl-surface);
+  border-bottom: 1px solid var(--fl-border);
+}
+.fl-stats__inner {
+  max-width: 61rem;
+  margin: 0 auto;
+  padding: 1.3rem 1rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+.fl-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.15rem;
+}
+.fl-stat__num {
+  font-size: 1.9rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  background: var(--fl-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--fl-indigo);
+}
+.fl-stat__label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--fl-text-muted);
+}
+
+/* Section heads: eyebrow, title, one-line subtitle. */
+.fl-landing .fl-section:first-child { padding-top: 1rem; }
+.fl-head {
+  max-width: 44rem;
+  margin-bottom: 1.5rem;
+}
+.md-typeset .fl-head h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.55rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+.md-typeset .fl-head__sub,
+.fl-head__sub {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--fl-text-muted);
+}
+
+/* The idea: what an answer said, as claims, and what the data says. */
+.fl-idea__panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr);
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow);
+  overflow: hidden;
+}
+.fl-idea__col { padding: 1rem 1.1rem; min-width: 0; }
+.fl-idea__col + .fl-idea__col { border-left: 1px solid var(--fl-border); }
+.fl-idea__col--claims { background: var(--fl-bg-subtle); }
+.md-typeset .fl-idea__col h3 {
+  margin: 0 0 0.7rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fl-text-muted);
+}
+.md-typeset .fl-idea__col ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.74rem;
+}
+.md-typeset .fl-idea__col li {
+  margin: 0 0 0.7rem;
+  padding: 0;
+  line-height: 1.55;
+}
+.md-typeset .fl-idea__col li:last-child { margin-bottom: 0; }
+.md-typeset .fl-idea__said mark {
+  background: var(--fl-glow);
+  color: inherit;
+  border-bottom: 1.5px solid var(--fl-indigo);
+  padding: 0 0.1em;
+}
+.md-typeset pre.fl-idea__code {
+  margin: 0;
+}
+.md-typeset pre.fl-idea__code > code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.68rem;
+  line-height: 2.05;
+  white-space: pre;
+  overflow-x: auto;
+}
+.fl-idea__why {
+  font-family: var(--md-code-font-family);
+  font-size: 0.66rem;
+  color: var(--fl-text);
+}
+
+/* Card grids: audiences, features. */
+.fl-grid {
+  display: grid;
+  gap: 1rem;
+}
+.fl-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.fl-grid > .fl-card {
+  display: flex;
+  flex-direction: column;
+}
+.md-typeset .fl-card__label,
+.fl-card__label {
+  display: block;
+  margin-bottom: 0.45rem;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fl-card-accent);
+}
+.md-typeset .fl-card p code { font-size: 0.85em; }
+.fl-card__verdicts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.7rem;
+  font-size: 0.72rem;
+}
+.fl-card__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.1rem;
+  margin-top: auto;
+  padding-top: 0.9rem;
+}
+.fl-card > .fl-card__more {
+  margin-top: auto;
+  padding-top: 0.9rem;
+}
+.md-typeset .fl-card__more,
+.fl-card__more {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--fl-card-accent);
+  text-decoration: none;
+}
+.md-typeset .fl-card__more:hover { text-decoration: underline; }
+.md-typeset .fl-feature p { margin-bottom: 0.9rem; }
+.md-typeset .fl-feature__code,
+.fl-feature__code {
+  display: block;
+  margin-top: auto;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius-sm);
+  background: var(--fl-bg-subtle);
+  color: var(--fl-text);
+  font-size: 0.64rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The pipeline: one claim through six numbered stages, each with its real artefact. */
+.fl-pipeline__claim {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  margin-bottom: 1.1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+}
+.fl-pipeline__label {
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fl-text-muted);
+}
+.md-typeset .fl-pipeline__claim code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.md-typeset ol.fl-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.md-typeset ol.fl-steps > li.fl-step {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.8rem;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+}
+.fl-step__num {
+  --fl-step-accent: var(--fl-indigo);
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--fl-step-accent);
+  color: var(--fl-on-accent);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.fl-step__num--2 { --fl-step-accent: var(--fl-violet); }
+.fl-step__num--3 { --fl-step-accent: var(--fl-teal); }
+.fl-step__num--4 { --fl-step-accent: var(--fl-amber); }
+.fl-step__num--5 { --fl-step-accent: var(--fl-rose); }
+.fl-step__num--6 { --fl-step-accent: var(--fl-pass); }
+.fl-step__body { min-width: 0; }
+.md-typeset .fl-step__body h3 {
+  margin: 0.2rem 0 0.3rem;
+  font-size: 0.86rem;
+}
+.md-typeset .fl-step__body p {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--fl-text-muted);
+}
+.md-typeset .fl-step__artefact,
+.fl-step__artefact {
+  display: block;
+  margin-top: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius-sm);
+  background: var(--fl-bg-subtle);
+  color: var(--fl-text);
+  font-size: 0.62rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.md-typeset .fl-step__artefact--params {
+  margin-top: 0.3rem;
+  color: var(--fl-string);
+}
+.md-typeset .fl-step__artefact--judge {
+  border-color: color-mix(in srgb, var(--fl-pass) 35%, transparent);
+  background: var(--fl-pass-bg);
+  color: var(--fl-pass);
+  font-weight: 600;
+}
+
+/* Dialect tiers: badges generated from the dialect registry. */
+.fl-tiers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+.fl-tier {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+}
+.md-typeset .fl-tier__head p {
+  margin: 0.55rem 0 0.8rem;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--fl-text-muted);
+}
+.md-typeset ul.fl-tier__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.md-typeset ul.fl-tier__list > li {
+  margin: 0;
+  padding: 0;
+}
+.fl-tier .fl-badge { font-size: 0.7rem; }
+
+/* Quick start (docs/index.md): three numbered steps. */
+.fl-qs {
+  display: grid;
+  gap: 1.2rem;
+}
+.fl-qs__step {
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr);
+  gap: 0.9rem;
+}
+.fl-qs__num {
+  display: grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  background: var(--fl-indigo);
+  background-image: linear-gradient(135deg, var(--fl-violet), var(--fl-indigo));
+  color: var(--fl-on-accent);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+.fl-qs__body { min-width: 0; }
+.md-typeset .fl-qs__body h3 {
+  margin: 0.25rem 0 0.35rem;
+  font-size: 0.92rem;
+}
+.md-typeset .fl-qs__body p {
+  margin: 0 0 0.6rem;
+  font-size: 0.76rem;
+  color: var(--fl-text-muted);
+}
+.md-typeset .fl-qs__body .highlight { margin: 0.5rem 0 0.7rem; }
+.md-typeset .fl-quickstart .headerlink { display: none; }
+
+/* Closing call to action and link cards. */
+.fl-cta {
+  margin-bottom: 2.6rem;
+  padding: 2.2rem 1.5rem;
+  border-radius: calc(var(--fl-radius) + 4px);
+  background: var(--fl-indigo);
+  background-image: var(--fl-gradient);
+  color: var(--fl-on-accent);
+  text-align: center;
+  box-shadow: var(--fl-shadow);
+}
+.md-typeset .fl-cta h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--fl-on-accent);
+}
+.md-typeset .fl-cta p {
+  margin: 0 auto 1.2rem;
+  max-width: 32em;
+  font-size: 0.84rem;
+  color: var(--fl-on-accent);
+}
+.fl-cta__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+}
+.md-typeset .fl-cta .fl-button--solid {
+  background: var(--fl-surface);
+  color: var(--fl-indigo);
+  box-shadow: var(--fl-shadow-sm);
+}
+.md-typeset .fl-cta .fl-button--solid:hover { color: var(--fl-indigo); }
+.md-typeset .fl-cta .fl-button:not(.fl-button--solid) {
+  background: transparent;
+  border-color: var(--fl-on-accent);
+  color: var(--fl-on-accent);
+  box-shadow: none;
+}
+.md-typeset .fl-cta .fl-button:not(.fl-button--solid):hover {
+  background: color-mix(in srgb, var(--fl-on-accent) 12%, transparent);
+}
+.fl-links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+.md-typeset a.fl-link,
+a.fl-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--fl-border);
+  border-radius: var(--fl-radius);
+  background: var(--fl-surface);
+  box-shadow: var(--fl-shadow-sm);
+  color: var(--fl-text);
+  text-decoration: none;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.md-typeset a.fl-link:hover,
+a.fl-link:focus-visible {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--fl-indigo) 40%, var(--fl-border));
+  box-shadow: var(--fl-shadow);
+  text-decoration: none;
+}
+.fl-link__label {
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fl-indigo);
+}
+.fl-link__title {
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+.fl-link__desc {
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--fl-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset a.fl-link,
+  a.fl-link { transition: none; }
+  .md-typeset a.fl-link:hover,
+  a.fl-link:focus-visible { transform: none; }
+}
+
+@media screen and (max-width: 60em) {
+  .fl-grid--3,
+  .md-typeset ol.fl-steps,
+  .fl-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fl-tiers,
+  .fl-idea__panel { grid-template-columns: minmax(0, 1fr); }
+  .fl-idea__col + .fl-idea__col { border-left: 0; border-top: 1px solid var(--fl-border); }
+}
+
+@media screen and (max-width: 44.9375em) {
+  .fl-stats__inner { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 1.1rem; }
+  .fl-grid--3,
+  .md-typeset ol.fl-steps,
+  .fl-links { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Phones: a compact hero whose ledger and install line use the full width. */
+@media screen and (max-width: 34em) {
+  .fl-hero__inner { padding: 1.5rem 1rem 1.8rem; gap: 1.4rem; }
+  .fl-hero h1 { font-size: 1.75rem; }
+  .fl-hero p { font-size: 0.8rem; margin-bottom: 1.1rem; }
+  .fl-hero__actions .fl-button { flex: 1 1 auto; justify-content: center; }
+  .fl-install { flex-direction: column; align-items: stretch; gap: 0.4rem; }
+  .fl-install__cmd { justify-content: space-between; }
+  .fl-install .fl-install__cmd code { flex: 1 1 auto; }
+  .fl-ledger { font-size: 0.64rem; }
+  .fl-ledger__claim { padding: 0.55rem 0.85rem 0.25rem; }
+  .fl-ledger__margin {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 0.5rem;
+    padding: 0.15rem 0.85rem 0.6rem;
+    border-top: 0;
+  }
+  .fl-ledger__margin .fl-verdict { margin-bottom: 0; }
+  .fl-ledger__why { display: inline; }
+  .fl-stat__num { font-size: 1.6rem; }
+  .md-typeset .fl-head h2 { font-size: 1.3rem; }
+  .fl-cta { padding: 1.6rem 1rem; }
+  .fl-qs__step { grid-template-columns: minmax(0, 1fr); gap: 0.4rem; }
+  .fl-qs__num { width: 1.8rem; height: 1.8rem; font-size: 0.75rem; }
+}

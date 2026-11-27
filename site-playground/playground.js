@@ -386,6 +386,7 @@
     var csvErrors = root.querySelector("#fl-pg-csv-errors");
     var suggestBox = root.querySelector("#fl-pg-suggest");
     var suggestList = root.querySelector("#fl-pg-suggest-list");
+    var dataToggle = root.querySelector("#fl-pg-data-toggle");
 
     var lastAction = null;
     var lintTimer = null;
@@ -595,11 +596,29 @@
           '<button type="button" class="fl-pg__link" data-suggest="' + esc(t.name) + '">Suggest claims about ' + esc(t.name) + "</button>" +
           "</details>";
       }).join("");
+      labelDataToggle(tables.length);
       // keep only suggestions for tables that are still loaded
       var names = tables.map(function (t) { return t.name; });
       Object.keys(shared.suggestions).forEach(function (k) { if (names.indexOf(k) < 0) delete shared.suggestions[k]; });
       renderSuggestions();
       refresh();
+    }
+
+    // Phones show the table list collapsed (the toggle is hidden on wider screens).
+    function labelDataToggle(n) {
+      if (!dataToggle) return;
+      var open = drop.classList.contains("is-expanded");
+      dataToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      dataToggle.textContent = open ? "Hide tables" : "Show tables" + (n ? " (" + n + ")" : "");
+    }
+
+    // Bring the suggestions for a table just loaded into view, and mark them for a moment.
+    function showSuggestions() {
+      if (suggestBox.hidden) return;
+      var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      try { suggestBox.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" }); } catch (e) { suggestBox.scrollIntoView(false); }
+      suggestBox.classList.add("is-fresh");
+      window.setTimeout(function () { suggestBox.classList.remove("is-fresh"); }, 2500);
     }
 
     function renderSuggestions() {
@@ -675,6 +694,7 @@
               ? "Loaded " + out.tables.map(function (t) { return t.name + " (" + plural(t.rows, "row") + ")"; }).join(", ") + "."
               : "");
             if (lastAction === "check") markStaleData();
+            if (names.length) showSuggestions();
           });
         });
       }).catch(function (err) {
@@ -759,6 +779,12 @@
       fileInput.value = "";
     });
     resetButton.addEventListener("click", reset);
+    if (dataToggle) {
+      dataToggle.addEventListener("click", function () {
+        drop.classList.toggle("is-expanded");
+        labelDataToggle(engine ? engine.tables().length : 0);
+      });
+    }
     root.addEventListener("click", function (ev) {
       var target = ev.target.closest ? ev.target.closest("[data-suggest], [data-claim]") : null;
       if (!target || target.disabled || !root.contains(target)) return;

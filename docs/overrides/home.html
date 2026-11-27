@@ -192,8 +192,9 @@ VALUES orders.status IN ['paid', 'open', 'shipped']</code></pre>
           <h3>Assumptions as plain, checkable lines</h3>
           <p>
             Keep what your pipelines assume in a <code>.fl</code> file next to the code.
-            <code>factlang check</code> exits non-zero when a claim fails or cannot be
-            measured, so CI catches it. Aggregate claims over the same table and filter
+            <code>factlang check</code> exits <code>1</code> when a claim fails,
+            <code>3</code> when one has no data or could not be measured and <code>2</code>
+            when the file is invalid, so CI catches it. Aggregate claims over the same table and filter
             share one scan.
           </p>
           <span class="fl-card__links">
@@ -231,31 +232,37 @@ VALUES orders.status IN ['paid', 'open', 'shipped']</code></pre>
       </div>
       <div class="fl-grid fl-grid--3">
         <a class="fl-card fl-card--indigo fl-feature fl-fade-up" href="{{ 'guide/verbs/' | url }}">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 6h16M4 12h10M4 18h13"/></svg></span>
           <h3>{{ facts.verbs }} standard verbs</h3>
           <p>Joins, keys, nulls, allowed values, ranges, patterns, freshness, types, counts and aggregates, each a one-line claim.</p>
           <code class="fl-feature__code fl-src">UNIQUE orders.id</code>
         </a>
         <a class="fl-card fl-card--teal fl-feature fl-fade-up" style="--fl-delay:80ms" href="{{ 'guide/evidence/#tiers' | url }}">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg></span>
           <h3>{{ facts.native_dialects }} native dialects</h3>
           <p>{{ facts.tiers.verified | length }} are run against a real engine in CI, {{ facts.tiers.native | length }} more are checked by parsing and golden tests, and the optional sqlglot bridge covers the long tail.</p>
           <code class="fl-feature__code">dialect="snowflake"</code>
         </a>
         <a class="fl-card fl-card--violet fl-feature fl-fade-up" style="--fl-delay:160ms" href="{{ 'guide/evidence/' | url }}">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
           <h3>Read-only by construction</h3>
           <p>Every measured claim compiles to one <code>SELECT</code>. Each literal travels as a typed bind parameter, so no claim can carry SQL, and the exact statement is the evidence.</p>
           <code class="fl-feature__code">WHERE status = ?  ('paid',)</code>
         </a>
         <a class="fl-card fl-card--amber fl-feature fl-fade-up" href="{{ 'guide/batching/' | url }}">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/></svg></span>
           <h3>Batching and fusion</h3>
           <p>Check a whole file at once. The same fact is measured once however it is spelled, and aggregate claims over the same table and filter share one scan.</p>
           <code class="fl-feature__code">Checker(connector, fuse=True)</code>
         </a>
         <a class="fl-card fl-card--rose fl-feature fl-fade-up" style="--fl-delay:80ms" href="{{ 'reference/diagnostics/' | url }}">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg></span>
           <h3>Diagnostics with fixes</h3>
           <p>Stable codes, a caret under the problem and a &ldquo;did you mean&rdquo; when there is one. <code>factlang lint</code> and <code>factlang fmt</code> need no warehouse.</p>
           <code class="fl-feature__code">error[FL300]: unknown verb UNIQE</code>
         </a>
         <a class="fl-card fl-card--indigo fl-feature fl-fade-up" style="--fl-delay:160ms" href="{{ 'extending/verbs/' | url }}">
+          <span class="fl-feature__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></span>
           <h3>Extensible</h3>
           <p>Add your own verbs, packs, value types, dialects, connectors and IR primitives. Each has its own guide.</p>
           <code class="fl-feature__code">pack.register(contract)</code>

@@ -734,16 +734,21 @@ a.fl-card:focus-visible::before {
   box-shadow: var(--fl-shadow);
 }
 
+/* The head's cells take the same paddings and rule as the rows' cells below, so each
+ * label starts exactly where its column's content starts. */
 .fl-ledger__head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 13.5rem;
-  padding: 0.5rem 1rem 0.6rem;
+  padding: 0;
   border-bottom: 1px solid var(--fl-border);
   font-family: var(--md-text-font-family);
   font-size: 0.68rem;
   font-weight: 600;
   color: var(--fl-text-muted);
 }
+
+.fl-ledger__head > span { padding: 0.5rem 1rem 0.6rem; }
+.fl-ledger__head > span + span { border-left: 2px solid transparent; }
 
 .fl-ledger__row {
   display: grid;
@@ -1145,6 +1150,18 @@ a.fl-card:focus-visible::before {
 }
 .md-typeset .fl-card__more:hover { text-decoration: underline; }
 .md-typeset .fl-feature p { margin-bottom: 0.9rem; }
+.fl-feature__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin-bottom: 0.55rem;
+  border-radius: var(--fl-radius-sm);
+  color: var(--fl-card-accent);
+  background: color-mix(in srgb, var(--fl-card-accent) 10%, var(--fl-surface));
+  border: 1px solid color-mix(in srgb, var(--fl-card-accent) 22%, transparent);
+}
+.fl-feature__icon svg { display: block; }
 .md-typeset .fl-feature__code,
 .fl-feature__code {
   display: block;
@@ -1325,6 +1342,12 @@ a.fl-card:focus-visible::before {
 }
 .md-typeset .fl-qs__body .highlight { margin: 0.5rem 0 0.7rem; }
 .md-typeset .fl-quickstart .headerlink { display: none; }
+/* Leave room for Material's copy button so it never sits on top of code text: on narrow
+ * screens the lines overflow under it, so the code starts below the button instead. */
+.md-typeset .fl-quickstart .highlight pre > code { padding-right: 2.6em; }
+@media screen and (max-width: 50em) {
+  .md-typeset .fl-quickstart .highlight pre > code { padding-top: 2.4em; }
+}
 
 /* Closing call to action and link cards. */
 .fl-cta {

@@ -196,3 +196,11 @@ def test_the_limits_hint_states_the_engine_limits() -> None:
 def test_no_unmeasured_download_size_is_stated() -> None:
     page = PAGE.read_text(encoding="utf-8")
     assert not re.search(r"downloads? (about )?\d+\s*MB", page)
+
+
+def test_the_documented_table_name_example_is_what_the_glue_does(glue: ModuleType) -> None:
+    page = PAGE.read_text(encoding="utf-8")
+    found = re.search(r"So `([^`]+)` becomes `([^`]+)`", page)
+    assert found, "the table-naming example"
+    assert glue.table_name_for(found.group(1), []) == found.group(2)
+    assert glue.table_name_for("orders.csv", ["orders"]) == "orders_2"

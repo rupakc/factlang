@@ -77,8 +77,11 @@
 
 /* ── layout: data panel | editor | results ──────────────────────────────────────────── */
 
-/* This page only: a wider content grid, so the three columns have room. */
-body:has(#fl-playground) .md-grid { max-width: 72rem; }
+/* This page only: a wider content column so the three playground columns have room. Only
+ * the main column widens (header, tabs and footer keep the site grid), and the prose around
+ * the playground keeps a readable measure. */
+body:has(#fl-playground) .md-main .md-grid { max-width: 72rem; }
+body:has(#fl-playground) .md-content .md-typeset > :not(#fl-playground) { max-width: 46rem; }
 
 /* .fl-pg__panes is a wrapper for markup order only; its children sit in the layout grid. */
 .fl-pg__layout {
@@ -250,7 +253,9 @@ body:has(#fl-playground) .md-grid { max-width: 72rem; }
 .md-typeset .fl-pg__csv-error summary::before,
 .md-typeset .fl-pg__csv-error summary::after { display: none; }
 
-.fl-pg__suggest { margin-top: 0.8rem; }
+.fl-pg__suggest { margin: 0.8rem -0.45rem 0; padding: 0.45rem; border-radius: var(--fl-radius-sm); transition: box-shadow 0.3s ease; }
+.fl-pg__suggest.is-fresh { box-shadow: 0 0 0 2px var(--fl-indigo), 0 0 0 6px var(--fl-glow); }
+.fl-pg__data-toggle { display: none; font-size: 0.62rem; }
 .md-typeset .fl-pg__suggest h3 { margin: 0; font-size: 0.74rem; font-weight: 700; }
 .md-typeset .fl-pg__sgroup h4 { margin: 0.6rem 0 0.25rem; font-size: 0.64rem; font-family: var(--md-code-font-family); color: var(--fl-text-muted); }
 .md-typeset .fl-pg__sgroup ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.25rem; }
@@ -507,12 +512,15 @@ body:has(#fl-playground) .md-grid { max-width: 72rem; }
   .fl-pg__tables { grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); align-items: start; }
 }
 
-/* Phones: the claims first, then their results, then the data panel. */
+/* Phones: the claims, then the data panel with its table list collapsed (Load CSV and the
+ * suggestions stay in reach), then the results. */
 @media screen and (max-width: 50em) {
   .fl-pg__layout { grid-template-columns: minmax(0, 1fr); }
   .fl-pg__editor { order: 1; min-height: 16rem; border-right: 0; border-bottom: 1px solid var(--fl-border); }
-  .fl-pg__out { order: 2; max-height: none; border-bottom: 1px solid var(--fl-border); }
-  .fl-pg__data { order: 3; border-bottom: 0; }
+  .fl-pg__data { order: 2; }
+  .fl-pg__out { order: 3; max-height: none; }
+  .fl-pg__data-toggle { display: inline; }
+  .fl-pg__data:not(.is-expanded) .fl-pg__tables { display: none; }
   .fl-pg__spacer { display: none; }
   .fl-pg__field { flex: 1 1 100%; }
   .fl-pg select { flex: 1 1 auto; max-width: none; }
@@ -523,4 +531,5 @@ body:has(#fl-playground) .md-grid { max-width: 72rem; }
   .fl-pg__sugg,
   .fl-pg__table > summary .fl-pg__tname::before { transition: none; }
   .fl-pg__engine.is-loading::before { animation: none; }
+  .fl-pg__suggest { transition: none; }
 }

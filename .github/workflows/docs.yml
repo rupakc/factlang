@@ -3,7 +3,8 @@ name: Docs
 # Build the documentation site and the in-browser playground, run the browser e2e suite
 # against that build, then publish them to the gh-pages branch (the repository's Pages
 # source). Runs only after CI has succeeded on a push to main, and builds exactly the commit
-# CI judged; the publish waits for the e2e job.
+# CI judged; the publish waits for the e2e job. Only the head of main is published: a green
+# older commit whose successor is red or has no CI run is not published until main is green.
 on:
   workflow_run:
     workflows: [CI]

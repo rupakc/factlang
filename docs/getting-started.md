@@ -180,7 +180,8 @@ report, an invalid claim is an `invalid` outcome and the other claims still run.
 ## No warehouse? Compile instead
 
 `fl.compile` renders the SQL for any dialect without connecting to anything. This is what
-the [playground](playground.md) does in your browser.
+the [playground](playground.md)'s Explain SQL does; its Check runs the claims for real, on
+DuckDB in your browser.
 
 ```python
 for probe in fl.compile("NULLS customers.email RATE <=5%", dialect="snowflake"):

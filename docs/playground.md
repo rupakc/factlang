@@ -39,6 +39,7 @@ to a server.
     <aside id="fl-pg-data" class="fl-pg__data" aria-labelledby="fl-pg-data-title">
       <div class="fl-pg__data-head">
         <h2 id="fl-pg-data-title" class="fl-pg__data-title">Data</h2>
+        <button type="button" class="fl-pg__link fl-pg__data-toggle" id="fl-pg-data-toggle" aria-expanded="false" aria-controls="fl-pg-tables">Show tables</button>
         <span class="fl-pg__engine" id="fl-pg-engine">DuckDB not started</span>
       </div>
       <p class="fl-pg__privacy">Files are read in your browser and never uploaded.</p>
@@ -99,9 +100,11 @@ and 2,000 `orders`. The two *Sample shop* examples run on it; the first is the c
 the home page.
 
 **Load CSV** (or drop files on the *Data* panel) adds each file as a table next to the sample
-tables. The table name comes from the file name: lower-cased, characters other than letters,
-digits and `_` replaced by `_`. Columns keep their CSV names; each one is listed with the way
-a claim writes it. The files are read by DuckDB inside your browser tab and never uploaded,
+tables. The table name comes from the file name: its last extension is dropped, it is
+lower-cased, every character other than a letter, a digit or an underscore becomes an
+underscore, a name starting with a digit gets the prefix `t_`, and a name already loaded gets
+`_2`, `_3`, … appended. So `2024 Sales.v2.csv` becomes `t_2024_sales_v2`. Columns keep their
+CSV names; each one is listed with the way a claim writes it. The files are read by DuckDB inside your browser tab and never uploaded,
 and a share link carries the claims only, never your data. After loading, the panel offers
 suggested claims about the new table: starting points, not facts, so some of them can fail.
 

@@ -101,3 +101,10 @@ Cold-read done (this revision). The plan splits the work into goldfish tasks wit
 
 ## 9. Left to the builder
 Exact copy (within §5 and §2's truthfulness rule), markup, class names, file split inside `site-playground/`, animation details, worker structure, mvp/eh bundle selection.
+
+## 10. Amendments (during build)
+- **One extra allowed host for the playground: `extensions.duckdb.org`.** DuckDB-WASM 1.32.0 has no ICU (time zones) built in. `engine.js` loads the ICU extension explicitly at boot from the URL pinned by the engine version (`/v1.4.3/wasm_<bundle>/icu.duckdb_extension.wasm`), sets `TimeZone = 'UTC'` and then disables extension autoload. If ICU cannot be loaded, FRESH and other "now"-relative claims come back as ERROR saying so, never as a verdict. `ALLOWED_HOSTS` = jsDelivr + this host.
+- **Material theme hosts on every page:** `fonts.googleapis.com`, `fonts.gstatic.com` (theme fonts) and `api.github.com` (the repository widget). They are site chrome, not playground traffic, and the e2e suite allows them separately.
+- **The docs workflow's test job is named `e2e`.**
+- **Only the head of `main` is published.** Each commit's docs run is kept (never cancelled); a run whose commit is no longer main's head skips the publish and stays green.
+- **No download size is stated** on the page (the earlier "about 10 MB" was wrong once DuckDB-WASM, ~34 MB raw, was added). §8's "~10 MB per run" likewise understates it.

@@ -175,3 +175,24 @@ def test_built_page_has_the_live_playground(built_playground: Path) -> None:
     assets = built_playground / "assets" / "playground"
     for name in ("playground.js", "playground.css", "engine.js", "glue.py", "wheel.json"):
         assert (assets / name).exists(), name
+
+
+def test_the_limits_hint_states_the_engine_limits() -> None:
+    engine = (ROOT / "site-playground" / "engine.js").read_text(encoding="utf-8")
+    found = re.search(
+        r"LIMITS = Object\.freeze\(\{ fileBytes: (\d+) \* MB, "
+        r"totalBytes: (\d+) \* MB, files: (\d+) \}\)",
+        engine,
+    )
+    assert found, "engine.js LIMITS changed shape: update this test"
+    per_file, total, files = found.groups()
+    hint = re.search(
+        r"Up to (\d+) files, (\d+)&nbsp;MB each, (\d+)&nbsp;MB in total", PAGE.read_text()
+    )
+    assert hint, "the limits hint"
+    assert hint.groups() == (files, per_file, total)
+
+
+def test_no_unmeasured_download_size_is_stated() -> None:
+    page = PAGE.read_text(encoding="utf-8")
+    assert not re.search(r"downloads? (about )?\d+\s*MB", page)

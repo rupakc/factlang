@@ -63,16 +63,16 @@ to a server.
       <div class="fl-pg__editor">
         <div class="fl-pg__hl" aria-hidden="true"><code></code></div>
         <textarea id="fl-pg-source" spellcheck="false" autocapitalize="off" autocomplete="off"
-          aria-label="FactLang claims, one per line" wrap="off"></textarea>
+          aria-label="FactLang claims, one per line" wrap="soft"></textarea>
       </div>
       <div class="fl-pg__out" aria-live="polite">
-        <div class="fl-pg__status" id="fl-pg-status">Starting Python in your browser. The first visit downloads about 10 MB; later visits are cached.</div>
+        <div class="fl-pg__status" id="fl-pg-status">Starting Python in your browser. The first visit downloads Python and DuckDB once; later visits are cached.</div>
         <div id="fl-pg-result"></div>
       </div>
     </div>
   </div>
   <div class="fl-pg__foot">
-    <span><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> runs Check. Check always runs DuckDB, in your browser; the dialect menu changes Explain SQL only.</span>
+    <span><kbd>Ctrl</kbd>/<kbd class="fl-pg__cmd" title="Command">⌘</kbd> + <kbd>Enter</kbd> runs Check. Check always runs DuckDB, in your browser; the dialect menu changes Explain SQL only.</span>
     <button type="button" class="fl-pg__link" id="fl-pg-share">Copy a link to these claims</button>
   </div>
   <noscript>The playground needs JavaScript. Every example on this site also runs locally: <code>pip install factlang</code>.</noscript>

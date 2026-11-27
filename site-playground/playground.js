@@ -123,6 +123,8 @@
     engine: null, // the ready Engine, once started
     inflight: null, // the label of the running Check / CSV load / Reset (one at a time)
     suggestions: {}, // table name -> suggested claims
+    text: null, // the editor text, kept across page visits
+    example: "0", // the chosen example, ditto
     mounts: [] // live page views, refreshed when `inflight` changes
   };
 
@@ -297,18 +299,24 @@
 
   function okInWords(data) {
     var counts = data.counts || {};
+    var parts = [];
+    if (counts.fail) parts.push(counts.fail + " failed");
+    if (counts.error) parts.push(counts.error + " could not be measured");
+    if (counts.invalid) parts.push(counts.invalid + " " + (counts.invalid === 1 ? "is" : "are") + " invalid");
+    if (counts.no_data) parts.push(counts.no_data + " had no data to decide on");
+    if (counts.unprobeable) parts.push(counts.unprobeable + " cannot be measured by design");
+    var detail = parts.length ? parts.join(", ") : "";
     if (data.verified) {
       return "<strong>Verified.</strong> Every claim that can be measured was measured and passed " +
         "(<code>Report.verified</code> and <code>Report.ok</code> are both true).";
     }
     if (data.ok) {
-      var why = counts.no_data ? plural(counts.no_data, "claim") + " had no data to decide on" : "nothing was measured";
-      return "<strong>OK, not verified.</strong> Nothing failed and nothing errored, but " + esc(why) +
+      return "<strong>OK, not verified.</strong> Nothing failed and nothing errored, but " +
+        esc(detail || "nothing was measured") +
         " (<code>Report.ok</code> is true, <code>Report.verified</code> is false).";
     }
-    var bad = (counts.fail || 0) + (counts.error || 0) + (counts.invalid || 0);
-    return "<strong>Not OK.</strong> " + (bad ? esc(plural(bad, "claim")) + (bad === 1 ? " failed, could not be measured or is invalid" : " failed, could not be measured or are invalid")
-      : "the claims have an error that is not a claim of its own") +
+    return "<strong>Not OK.</strong> " +
+      esc(detail || "the claims have an error that is not a claim of its own") +
       " (<code>Report.ok</code> and <code>Report.verified</code> are false).";
   }
 
@@ -413,7 +421,17 @@
 
     // Enable each control for what is ready; nothing that touches the database while a Check,
     // a CSV load or a Reset is running (the engine serialises queries, not whole operations).
+    function alive() {
+      return document.body.contains(root);
+    }
+
     function refresh() {
+      if (!alive()) {
+        // a page left by instant navigation: never run a check or touch the engine again
+        wantCheck = false;
+        shared.mounts = shared.mounts.filter(function (m) { return m !== view; });
+        return;
+      }
       var busy = !!shared.inflight;
       buttons.forEach(function (b) { if (b !== checkButton) b.disabled = !py; });
       checkButton.disabled = !engine || busy;
@@ -445,10 +463,27 @@
       if (savedDialect) dialect.value = savedDialect;
     } catch (e) { /* storage may be unavailable */ }
 
-    var shared_ = /^#claims=/.test(location.hash) ? decodeShare(location.hash.slice(8)) : null;
-    source.value = shared_ !== null ? shared_ : EXAMPLES[0].text;
-    var initialAction = shared_ !== null ? "check" : EXAMPLES[0].action;
+    // a share link wins; then the text left on an earlier visit; then the first example
+    var linked = /^#claims=/.test(location.hash) ? decodeShare(location.hash.slice(8)) : null;
+    var initialAction;
+    if (linked !== null) {
+      source.value = linked;
+      initialAction = "check";
+    } else if (shared.text !== null) {
+      source.value = shared.text;
+      example.value = shared.example;
+      var same = EXAMPLES.filter(function (ex) { return ex.text === shared.text; })[0];
+      initialAction = same ? same.action : "lint";
+    } else {
+      source.value = EXAMPLES[0].text;
+      initialAction = EXAMPLES[0].action;
+    }
     paint();
+
+    function remember() {
+      shared.text = source.value;
+      shared.example = example.value;
+    }
 
     function markStale() {
       if (lastAction !== "check" || checkedText === null || source.value === checkedText) return;
@@ -472,7 +507,7 @@
     }
 
     function run(action) {
-      if (!py) return;
+      if (!py || !alive()) return;
       if (action === "check") { runCheck(); return; }
       lastAction = action;
       pressed(action);
@@ -485,7 +520,7 @@
           data = JSON.parse(py.globals.get("fl_format")(text));
           result.innerHTML = renderFormat(data);
           var apply = result.querySelector("[data-apply]");
-          if (apply) apply.addEventListener("click", function () { source.value = data.text; paint(); });
+          if (apply) apply.addEventListener("click", function () { source.value = data.text; paint(); remember(); });
         } else {
           data = JSON.parse(py.globals.get("fl_explain")(text, dialect.value));
           result.innerHTML = renderExplain(data);
@@ -500,6 +535,9 @@
     }
 
     function runCheck() {
+      if (!alive()) return;
+      // a Check is already running: the button says "Checking…"; a second one is not queued
+      if (shared.inflight === "check") return;
       if (!engine || shared.inflight) {
         // not ready yet: lint now, check the moment the database is free
         wantCheck = true;
@@ -525,11 +563,13 @@
       exclusive("check", function () {
         return engine.check(text).then(function (data) {
           checkedText = text;
+          // the visitor asked for Lint / Format / Explain meanwhile: keep what they asked for
+          if (lastAction !== "check") return;
           result.innerHTML = renderCheck(data, ctx);
-          if (lastAction === "check") markStale();
+          markStale();
         });
       }).catch(function (err) {
-        showError("Check could not run: " + messageOf(err));
+        if (lastAction === "check") showError("Check could not run: " + messageOf(err));
       });
     }
 
@@ -671,6 +711,7 @@
 
     function onEdit() {
       paint();
+      remember();
       if (!py) return;
       window.clearTimeout(lintTimer);
       if (lastAction === "check") { markStale(); return; }
@@ -699,6 +740,7 @@
       var ex = EXAMPLES[Number(example.value)];
       source.value = ex.text;
       paint();
+      remember();
       checkedText = null;
       wantCheck = false;
       run(ex.action);

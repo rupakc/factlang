@@ -61,14 +61,15 @@
 .fl-pg__link:focus-visible,
 .fl-pg__sugg:focus-visible,
 .fl-pg summary:focus-visible { outline: 2px solid var(--fl-indigo); outline-offset: 2px; }
+/* no coloured glow: it would show through the translucent sticky header when scrolled under */
 .fl-pg__btn--primary {
   min-width: 6.2rem;
   border-color: transparent;
   background: var(--fl-gradient);
   color: var(--fl-on-accent);
-  box-shadow: 0 6px 16px -8px var(--fl-indigo);
+  box-shadow: var(--fl-shadow-sm);
 }
-.fl-pg__btn--primary:hover:not(:disabled) { color: var(--fl-on-accent); border-color: transparent; box-shadow: 0 8px 20px -8px var(--fl-indigo); }
+.fl-pg__btn--primary:hover:not(:disabled) { color: var(--fl-on-accent); border-color: transparent; filter: brightness(1.06); }
 .fl-pg__btn--quiet { background: transparent; }
 .fl-pg__btn[aria-pressed="true"]:not(.fl-pg__btn--primary) { border-color: var(--fl-indigo); box-shadow: inset 0 -2px 0 var(--fl-indigo); }
 .fl-pg__btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -76,16 +77,16 @@
 
 /* ── layout: data panel | editor | results ──────────────────────────────────────────── */
 
+/* This page only: a wider content grid, so the three columns have room. */
+body:has(#fl-playground) .md-grid { max-width: 72rem; }
+
+/* .fl-pg__panes is a wrapper for markup order only; its children sit in the layout grid. */
 .fl-pg__layout {
   display: grid;
-  grid-template-columns: 16.5rem minmax(0, 1fr);
+  grid-template-columns: 15rem minmax(0, 1.35fr) minmax(22rem, 1fr);
 }
-
-.fl-pg__panes {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  min-height: 28rem;
-}
+.fl-pg__panes { display: contents; }
+.fl-pg__editor { min-height: 28rem; }
 
 /* ── data panel ──────────────────────────────────────────────────────────────────────── */
 
@@ -278,20 +279,30 @@
   background: var(--fl-surface);
 }
 
+/* The textarea (transparent text, real caret) lies exactly over the highlighted copy: same
+ * box, font, padding, soft wrapping and scrollbar gutter, so both wrap at the same column. */
 .fl-pg__hl,
 .fl-pg__editor textarea {
   position: absolute;
   inset: 0;
+  box-sizing: border-box;
   margin: 0;
   padding: 0.8rem 0.9rem;
   font-family: var(--md-code-font-family);
   font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0;
   line-height: 1.7;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
   tab-size: 4;
   border: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
+.fl-pg__hl { overflow-y: hidden; }
 
 .md-typeset .fl-pg__hl { background: transparent; color: var(--fl-text); pointer-events: none; }
 .md-typeset .fl-pg__hl code {
@@ -299,12 +310,16 @@
   margin: 0;
   padding: 0;
   border: 0;
+  border-radius: 0;
   background: none;
   box-shadow: none;
   color: inherit;
   font: inherit;
+  letter-spacing: inherit;
   line-height: inherit;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .fl-pg__editor textarea {
@@ -469,6 +484,9 @@
   background: var(--fl-bg-subtle);
 }
 
+.md-typeset .fl-pg__foot kbd { font-size: 0.62rem; vertical-align: baseline; }
+.md-typeset .fl-pg__foot kbd.fl-pg__cmd { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 0.78rem; line-height: 1; padding: 0.05rem 0.3rem; }
+
 .fl-pg__link {
   font: inherit;
   color: var(--fl-indigo);
@@ -484,15 +502,17 @@
 /* ── responsive, reduced motion ──────────────────────────────────────────────────────── */
 
 @media screen and (max-width: 76.25em) {
-  .fl-pg__layout { grid-template-columns: 1fr; }
-  .fl-pg__data { border-right: 0; border-bottom: 1px solid var(--fl-border); max-height: none; }
+  .fl-pg__layout { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+  .fl-pg__data { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--fl-border); max-height: none; }
   .fl-pg__tables { grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); align-items: start; }
 }
 
+/* Phones: the claims first, then their results, then the data panel. */
 @media screen and (max-width: 50em) {
-  .fl-pg__panes { grid-template-columns: 1fr; }
-  .fl-pg__editor { min-height: 16rem; border-right: 0; border-bottom: 1px solid var(--fl-border); }
-  .fl-pg__out { max-height: none; }
+  .fl-pg__layout { grid-template-columns: minmax(0, 1fr); }
+  .fl-pg__editor { order: 1; min-height: 16rem; border-right: 0; border-bottom: 1px solid var(--fl-border); }
+  .fl-pg__out { order: 2; max-height: none; border-bottom: 1px solid var(--fl-border); }
+  .fl-pg__data { order: 3; border-bottom: 0; }
   .fl-pg__spacer { display: none; }
   .fl-pg__field { flex: 1 1 100%; }
   .fl-pg select { flex: 1 1 auto; max-width: none; }

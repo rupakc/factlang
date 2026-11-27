@@ -1,6 +1,6 @@
 # FactLang documentation site — redesign and live-verdict playground
 
-Status: DRAFT for approval (cold-read gaps resolved) · Date: 2026-11-27 · Process: Elephant-Goldfish (spec → cold-read → plan → goldfish tasks → per-task reviews → whole-branch review → deploy)
+Status: APPROVED by owner 2026-11-27 (cold-read gaps resolved) · Date: 2026-11-27 · Process: Elephant-Goldfish (spec → cold-read → plan → goldfish tasks → per-task reviews → whole-branch review → deploy)
 Base: `main` at 0.1.4 (`87c94dd`). Binding parent: `docs/specs/2026-11-24-factlang-design.md` (naming rules, layering, no forbidden names).
 
 ## 1. Intent and why

@@ -96,6 +96,17 @@ class Seen:
         return out
 
 
+# What Playwright says when the page, context or browser that issued a request is gone: the
+# test that made the request has ended (a later test's teardown used to report it as "the CDN
+# stayed down"). Nobody is waiting for the answer, so it is not a CDN failure.
+_CLOSED = ("has been closed", "target closed", "browser has disconnected")
+
+
+def closed_target(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _CLOSED)
+
+
 class CdnCache:
     """Fetch CDN responses with retries, once per session."""
 
@@ -112,10 +123,18 @@ class CdnCache:
         if hit is None:
             hit = self._fetch(route)
             if hit is None:
-                route.abort()
+                try:
+                    route.abort()
+                except Exception as exc:
+                    if not closed_target(exc):
+                        raise
                 return
         status, headers, body = hit
-        route.fulfill(status=status, headers=headers, body=body)
+        try:
+            route.fulfill(status=status, headers=headers, body=body)
+        except Exception as exc:
+            if not closed_target(exc):
+                raise
 
     def _fetch(self, route: Any) -> tuple[int, dict[str, str], bytes] | None:
         last = ""
@@ -127,12 +146,20 @@ class CdnCache:
             try:
                 response = route.fetch(timeout=min(CDN_ATTEMPT_MS, left))
             except Exception as exc:  # network error or attempt timeout: retry
+                if closed_target(exc):
+                    return None  # the requesting page is gone: not a CDN failure
                 last = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
                 continue
             if response.status >= 500:
                 last = f"HTTP {response.status}"
                 continue
-            body = response.body()
+            try:
+                body = response.body()
+            except Exception as exc:
+                if closed_target(exc):
+                    return None
+                last = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+                continue
             # the body is already decoded: drop the transfer headers that describe the wire form
             headers = {
                 k: v

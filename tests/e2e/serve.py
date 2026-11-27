@@ -7,7 +7,8 @@ on macOS the overflow is reset (measured: ``net::ERR_CONNECTION_RESET`` on
 threaded server with a deeper backlog, bound to 127.0.0.1 only.
 
 ``base`` (e.g. ``/factlang/``) serves the site under that path, as GitHub Pages does for a
-project site; every URL outside it is a 404 HTML page, as there. Serving from ``/`` hides
+project site; a missing page inside it gets the site's ``404.html``, every URL outside it a
+plain 404 HTML page, as there. Serving from ``/`` hides
 URL bugs that resolve one level too high: they land on the site root and still work
 (2026-11-27: the playground reached by instant navigation from a guide page fetched
 ``/assets/playground/wheel.json``, a 404 under ``/factlang/`` only).
@@ -36,6 +37,23 @@ class Handler(SimpleHTTPRequestHandler):
             # a path that cannot exist: SimpleHTTPRequestHandler answers 404 (HTML)
             return os.path.join(self.directory, "__outside_base__", "missing")
         return super().translate_path("/" + path[len(self.base) :])
+
+    def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
+        """A missing page inside the site gets the site's own ``404.html`` (status 404), as
+        GitHub Pages answers; outside the site, the plain error page."""
+        page = os.path.join(self.directory, "404.html")
+        inside = urlsplit(self.path).path.startswith(self.base)
+        if code != 404 or not inside or not os.path.isfile(page):
+            super().send_error(code, message, explain)
+            return
+        with open(page, "rb") as handle:
+            body = handle.read()
+        self.send_response(404)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
 
 def normalise_base(base: str) -> str:

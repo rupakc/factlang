@@ -103,18 +103,20 @@ def table_names(files: list[str]) -> list[str]:
 # -- driving the page ---------------------------------------------------------------------------
 
 
-def site_errors(seen: Seen, site_url: str) -> list[tuple[int, str]]:
+def site_errors(seen: Seen, site_url: str, allow: tuple[str, ...] = ()) -> list[tuple[int, str]]:
     """Every 4xx/5xx answer from the site's own origin (scheme, host and port), inside the
     site's path or not: a URL that resolves one level too high leaves the site's path but
     not its origin (2026-11-27: ``https://rupakc.github.io/assets/playground/wheel.json``).
     Other hosts (the CDNs, ``api.github.com``'s rate limit) are not the site's to answer."""
     origin = "{0.scheme}://{0.netloc}/".format(urlsplit(site_url))
     return [
-        (r.status, r.url) for r in seen.responses if r.url.startswith(origin) and r.status >= 400
+        (r.status, r.url)
+        for r in seen.responses
+        if r.url.startswith(origin) and r.status >= 400 and r.url not in allow
     ]
 
 
-def wait_engine_ready(page: Any, seen: Seen, site_url: str) -> None:
+def wait_engine_ready(page: Any, seen: Seen, site_url: str, allow: tuple[str, ...] = ()) -> None:
     """Wait until DuckDB is ready on the playground ``page``; fail at once, with the page's
     state, if a request to the site failed or the site answered 4xx/5xx."""
     try:
@@ -126,8 +128,8 @@ def wait_engine_ready(page: Any, seen: Seen, site_url: str) -> None:
                 if r.failure and r.url.startswith(site_url) and "aborted" not in r.failure.lower()
             ]
             assert not broken, f"the site server failed requests: {broken}"
-            assert not site_errors(seen, site_url), (
-                f"the site answered {site_errors(seen, site_url)}"
+            assert not site_errors(seen, site_url, allow), (
+                f"the site answered {site_errors(seen, site_url, allow)}"
             )
             if page.locator("#fl-pg-engine.is-ready").count():
                 break
@@ -362,6 +364,93 @@ def test_playground_reached_by_instant_navigation_starts_and_checks(
     check_rendered_links(page, site_url)
     assert site_errors(seen, site_url) == []
     assert seen.page_errors == []
+
+
+_CLICK_LINK = r"""(pattern) => {
+  const re = new RegExp(pattern);
+  const a = [...document.querySelectorAll('a[href]')].find(a => re.test(a.getAttribute('href')));
+  if (!a) return false;
+  a.click();
+  return true;
+}"""
+
+
+def instant_click(page: Any, pattern: str, url_glob: str) -> None:
+    """Click the first link whose href matches ``pattern`` and wait for ``url_glob``."""
+    assert page.evaluate(_CLICK_LINK, pattern) is True, f"no link matching {pattern} on {page.url}"
+    page.wait_for_url(url_glob)
+
+
+def assert_checks_after_entry(
+    page: Any, seen: Seen, site_url: str, allow: tuple[str, ...] = ()
+) -> None:
+    """The playground, entered without a reload, starts and gives the library's verdicts."""
+    page.wait_for_selector("#fl-playground")
+    assert page.evaluate("window.__marker") == 7, "a full page load: not instant navigation"
+    wait_engine_ready(page, seen, site_url, allow)
+    wait_idle_verdicts(page)
+    assert run_check(page, default_example()) == expected(default_example())
+    assert worker_counts(page) == {"blob": 1, "pyodide": 1}
+    assert seen.page_errors == []
+
+
+def test_back_and_forward_into_the_playground(make_context: Context, site_url: str) -> None:
+    context, seen = make_context()
+    page = context.new_page()
+    page.goto(site_url + "guide/verdicts/", wait_until="networkidle")
+    page.evaluate("window.__marker = 7")
+    instant_click(page, r"(^|/)reference/diagnostics/$", "**/reference/diagnostics/")
+    instant_click(page, r"(^|/)playground/$", "**/playground/")
+    page.wait_for_selector("#fl-playground")
+    page.go_back()
+    page.wait_for_url("**/reference/diagnostics/")
+    page.go_back()
+    page.wait_for_url("**/guide/verdicts/")
+    page.go_forward()
+    page.wait_for_url("**/reference/diagnostics/")
+    page.go_forward()
+    page.wait_for_url("**/playground/")
+    assert_checks_after_entry(page, seen, site_url)
+    assert page.locator("#fl-playground").count() == 1
+    assert site_errors(seen, site_url) == []
+
+
+# Neither document.currentScript nor document.scripts tells playground.js where it lives: it
+# falls back to Material's __md_scope (the site root, an absolute URL).
+_NO_CURRENT_SCRIPT = """
+Object.defineProperty(Document.prototype, "currentScript", { configurable: true, get: () => null });
+Object.defineProperty(Document.prototype, "scripts", {
+  configurable: true, get: () => document.createElement("div").children
+});
+"""
+
+
+def test_asset_base_fallback_without_current_script(make_context: Context, site_url: str) -> None:
+    context, seen = make_context()
+    context.add_init_script(_NO_CURRENT_SCRIPT)
+    page = context.new_page()
+    page.goto(site_url + "guide/verdicts/", wait_until="networkidle")
+    assert page.evaluate("document.currentScript === null && document.scripts.length === 0")
+    page.evaluate("window.__marker = 7")
+    instant_click(page, r"(^|/)playground/$", "**/playground/")
+    assert_checks_after_entry(page, seen, site_url)
+    check_rendered_links(page, site_url)
+    assert site_errors(seen, site_url) == []
+
+
+def test_playground_entered_from_the_404_page(make_context: Context, site_url: str) -> None:
+    """The host answers an unknown URL with the site's 404 page (serve.py does, as GitHub
+    Pages does), at whatever depth the URL had; the playground is entered from there."""
+    context, seen = make_context()
+    page = context.new_page()
+    missing = site_url + "no/such/page/"
+    response = page.goto(missing, wait_until="networkidle")
+    assert response is not None and response.status == 404
+    assert page.locator("#fl-playground").count() == 0
+    page.evaluate("window.__marker = 7")
+    instant_click(page, r"(^|/)playground/$", "**/playground/")
+    assert_checks_after_entry(page, seen, site_url, allow=(missing,))
+    assert site_errors(seen, site_url) == [(404, missing)]
 
 
 def test_missing_asset_is_reported_by_url_and_status(make_context: Context, site_url: str) -> None:

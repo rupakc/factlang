@@ -11,10 +11,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# One deploy at a time; a newer commit supersedes a queued one.
+# One run per commit, never cancelled: cancelling could drop the NEWEST commit's run when an
+# older commit's CI finishes later. Stale commits are skipped instead (the head-of-main checks
+# below), and publishing itself is serialised by the build-and-deploy job's own group.
 concurrency:
-  group: docs-pages
-  cancel-in-progress: true
+  group: docs-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -39,39 +41,66 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: actions/setup-python@v5
+      # Only the commit at the head of main is tested and published; an older commit's run
+      # (its CI finished late) skips its remaining steps and stays green.
+      - name: Is this commit still the head of main?
+        id: current
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ -z "$head" ]; then
+            echo "cannot read main from origin"; exit 1
+          fi
+          if [ "$head" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "main is now at $head, not $SHA: skipping"
+          fi
+      - if: steps.current.outputs.current == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
       # playground: the e2e expectations run on duckdb 1.4.3, the engine DuckDB-WASM embeds
-      - name: Install
+      - if: steps.current.outputs.current == 'true'
+        name: Install
         run: |
           pip install -e ".[dev,docs,playground,e2e]"
           python -c "import duckdb; assert duckdb.__version__ == '1.4.3', duckdb.__version__"
-      - name: Build the wheel the playground installs
+      - if: steps.current.outputs.current == 'true'
+        name: Build the wheel the playground installs
         run: python -m build --wheel
-      - name: Generate the verb reference
+      - if: steps.current.outputs.current == 'true'
+        name: Generate the verb reference
         run: python scripts/gen_reference.py
-      - name: Build the site
+      - if: steps.current.outputs.current == 'true'
+        name: Build the site
         run: mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
-      - name: Playwright version (the browser cache key)
+      - if: steps.current.outputs.current == 'true'
+        name: Playwright version (the browser cache key)
         id: pw
         run: echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - if: steps.current.outputs.current == 'true'
+        uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium-webkit
-      - name: Install the browsers (Chromium, WebKit) and their system dependencies
+      - if: steps.current.outputs.current == 'true'
+        name: Install the browsers (Chromium, WebKit) and their system dependencies
         run: |
           for attempt in 1 2 3; do
             python -m playwright install --with-deps chromium webkit && exit 0
             echo "playwright install failed (attempt $attempt), retrying"; sleep $((attempt * 15))
           done
           exit 1
-      - name: Browser e2e against the built site
+      - if: steps.current.outputs.current == 'true'
+        name: Browser e2e against the built site
         env:
           FL_SITE_URL: http://127.0.0.1:8000/
           FL_E2E_WEBKIT: "1"
@@ -84,6 +113,9 @@ jobs:
 
   build-and-deploy:
     needs: e2e
+    concurrency:
+      group: docs-publish
+      cancel-in-progress: false
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -94,47 +126,69 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      # An older run that finishes late must not publish over a newer commit: publish only
-      # while the commit is still the head of main (a newer push brings its own run).
+      # Only the commit at the head of main is tested and published; an older commit's run
+      # (its CI finished late) skips its remaining steps and stays green.
       - name: Is this commit still the head of main?
         id: current
         env:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
+          set -euo pipefail
           head=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [ "$head" = "$SHA" ]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "main is now at $head, not $SHA: not publishing"
+          if [ -z "$head" ]; then
+            echo "cannot read main from origin"; exit 1
           fi
-      - if: steps.current.outputs.publish == 'true'
+          if [ "$head" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "main is now at $head, not $SHA: skipping"
+          fi
+      - if: steps.current.outputs.current == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-      - if: steps.current.outputs.publish == 'true'
+      - if: steps.current.outputs.current == 'true'
         name: Install
         run: pip install build -e ".[docs]"
-      - if: steps.current.outputs.publish == 'true'
+      - if: steps.current.outputs.current == 'true'
         name: Build the wheel the playground installs
         run: python -m build --wheel
-      - if: steps.current.outputs.publish == 'true'
+      - if: steps.current.outputs.current == 'true'
         name: Smoke-test the wheel as the playground uses it (clean venv, no extras)
         run: |
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip install dist/factlang-*-py3-none-any.whl
           cd /tmp && /tmp/smoke/bin/python -I "$GITHUB_WORKSPACE/site-playground/glue.py"
-      - if: steps.current.outputs.publish == 'true'
+      - if: steps.current.outputs.current == 'true'
         name: Generate the verb reference
         run: python scripts/gen_reference.py
-      - if: steps.current.outputs.publish == 'true'
+      - if: steps.current.outputs.current == 'true'
         name: Build the site
         run: mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
-      - if: steps.current.outputs.publish == 'true'
+      # again right before publishing: main may have moved while this job built the site
+      - if: steps.current.outputs.current == 'true'
+        name: Is this commit still the head of main (before publishing)?
+        id: still
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ -z "$head" ]; then
+            echo "cannot read main from origin"; exit 1
+          fi
+          if [ "$head" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "main is now at $head, not $SHA: skipping"
+          fi
+      - if: steps.current.outputs.current == 'true' && steps.still.outputs.current == 'true'
         name: Publish to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:

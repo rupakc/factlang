@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import re
 from decimal import Decimal
 from types import ModuleType
 from typing import Any
@@ -172,3 +173,38 @@ def test_decode_rejects_an_unknown_tag(glue: ModuleType) -> None:
 def test_other_values_pass_through_as_text(glue: ModuleType) -> None:
     assert glue.decode_value({"t": "other", "v": "[1, 2]"}) == "[1, 2]"
     assert glue.decode_value({"t": "time", "v": "13:45:01.000250"}) == dt.time(13, 45, 1, 250)
+
+
+def test_infinite_dates_decode_as_python_duckdb_returns_them(glue: ModuleType) -> None:
+    con = duckdb.connect()
+    native = con.execute(
+        "SELECT 'infinity'::DATE, '-infinity'::DATE, 'infinity'::TIMESTAMP, '-infinity'::TIMESTAMP"
+    ).fetchone()
+    decoded = (
+        glue.decode_value({"t": "date", "v": "infinity"}),
+        glue.decode_value({"t": "date", "v": "-infinity"}),
+        glue.decode_value({"t": "timestamp", "v": "infinity"}),
+        glue.decode_value({"t": "timestamp", "v": "-infinity"}),
+    )
+    assert decoded == native
+    assert decoded == (dt.date.max, dt.date.min, dt.datetime.max, dt.datetime.min)
+
+
+def test_untyped_null_columns_decode_as_null(glue: ModuleType) -> None:
+    assert glue.value_kind('"NULL"') == "null"
+    assert glue.value_kind("NULL") == "null"
+    assert glue.decode_value({"t": "null", "v": None}) is None
+
+
+def test_engine_js_reads_the_value_kind_table_from_glue(
+    glue: ModuleType, bridge: ModuleType
+) -> None:
+    """One kind table for both sides: engine.js compiles glue's VALUE_KINDS_JSON."""
+    table = json.loads(glue.VALUE_KINDS_JSON)
+    assert [tuple(k) for k in table] == list(glue._KINDS)
+    for pattern, _ in table:
+        # only syntax Python and JavaScript read the same way
+        assert not re.search(r"\(\?[P<=!#]|\\[AZzGh]|\(\?[aiLmsux]", pattern), pattern
+    engine = (bridge.ROOT / "site-playground" / "engine.js").read_text(encoding="utf-8")
+    assert 'globals.get("VALUE_KINDS_JSON")' in engine
+    assert "TINYINT" not in engine and "HUGEINT|" not in engine, "no second kind table in JS"

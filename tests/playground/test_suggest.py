@@ -77,12 +77,9 @@ def test_id_rule_and_fixed_threshold(glue: ModuleType) -> None:
         ["id", "BIGINT"],
     ]
     info = glue.fl_table_info("t", 10, json.dumps(columns), "csv")
-    profile = [
-        {
-            "columns": [["n0", "BIGINT"], ["v0", "VARCHAR"]],
-            "rows": [[{"t": "integer", "v": "11"}, {"t": "null", "v": None}]],
-        }
-    ]
+    # "note" has eleven distinct values: more than ten, so no VALUES suggestion
+    eleven = [[{"t": "string", "v": f"n{i:02d}"}] for i in range(11)]
+    profile = [{"columns": [["v", "VARCHAR"]], "rows": eleven}]
     claims = json.loads(glue.fl_suggest(info, json.dumps(profile)))
     assert claims == [
         "ROWS t VALUE >0",
@@ -103,6 +100,16 @@ def test_values_skip_unrepresentable_text(glue: ModuleType, bridge: ModuleType) 
     claims = _suggest(glue, bridge, con, _info(glue, con, "notes", "csv"))
     assert "VALUES notes.tag IN ['it''s', 'x']" in claims
     assert not any(c.startswith("VALUES notes.body") for c in claims)
+
+
+def test_profiles_use_core_sql_only(glue: ModuleType, bridge: ModuleType) -> None:
+    """No DuckDB extension (json, icu) is needed to profile: autoloading is off in the browser."""
+    con = bridge.shop(glue)
+    sqls = json.loads(glue.fl_profile_sql(_info(glue, con, "orders")))
+    assert sqls == [
+        'SELECT DISTINCT "status" AS v FROM "orders" WHERE "status" IS NOT NULL ORDER BY v LIMIT 11'
+    ]
+    assert not any(word in s.lower() for s in sqls for word in ("json", "timezone", "list("))
 
 
 def test_unaddressable_columns_are_never_suggested(glue: ModuleType) -> None:

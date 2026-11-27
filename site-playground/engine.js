@@ -10,24 +10,44 @@
  * The wire format is documented in glue.py: exact values (integers, DECIMAL, dates,
  * timestamps) cross as strings, so a DECIMAL sum never arrives as a scaled integer and a
  * BIGINT never becomes a float. Parameters arrive tagged and are bound into explicit
- * `CAST(? AS <type>)` placeholders that glue.py wrote.
+ * `CAST(? AS <type>)` placeholders that glue.py wrote. The DuckDB type -> value kind table is
+ * glue.py's (VALUE_KINDS_JSON), read from Pyodide, so the two sides cannot drift.
  *
  * DuckDB-WASM @duckdb/duckdb-wasm@1.32.0 (DuckDB engine v1.4.3, source id d1dc88f950), from
  * jsDelivr at that exact version. Only the `mvp` / `eh` bundles are used (GitHub Pages cannot
  * send COOP/COEP, so never `coi`/pthreads); the worker starts from a Blob URL that
  * importScripts() the bundle's worker (a cross-origin `new Worker(url)` fails).
  *
- * Every database operation goes through one queue, so queries run one at a time (the checker
- * also runs with concurrency 1). A check query that runs past the timeout (30 s) is rejected
- * with a JS Error named "TimeoutError" (FL702 in Python), the worker is terminated and a new
- * one is booted: the sample is rebuilt and the CSV files still held as `File` objects are
- * registered and loaded again. The CheckResult then carries `restarted: true` so the page can
- * mark other results stale.
+ * Hosts this module contacts (the e2e suite asserts nothing else is requested):
+ *   cdn.jsdelivr.net       the duckdb-wasm module, apache-arrow, the worker and the .wasm
+ *   extensions.duckdb.org  DuckDB's ICU extension, pinned by the engine version
+ *                          (https://extensions.duckdb.org/v1.4.3/wasm_<bundle>/icu.duckdb_extension.wasm)
+ * ICU is loaded explicitly at boot (`LOAD icu`, then `SET TimeZone = 'UTC'`; the browser's
+ * own zone is DuckDB-WASM's default otherwise), so behaviour does not depend on autoload
+ * timing; extension autoloading is then switched off. (Measured: DuckDB-WASM still fetches
+ * ICU by itself for `timezone(...)` with autoloading off, from the same URL; that is the only
+ * extension it fetches. To test the "ICU unavailable" path, block extensions.duckdb.org.) FactLang's
+ * DuckDB SQL needs ICU only for `timezone('UTC', current_timestamp)` (FRESH and other
+ * "now"-relative claims) and, in this build, `current_date` (the sample's `shipped_at`). If
+ * ICU cannot be loaded, those claims come back as ERROR with a message saying so, never as a
+ * verdict, and the sample is built with today's UTC date written as a literal instead.
  *
- * Test-only URL parameters (read once, from the page's query string; used by the e2e suite):
+ * Every database operation goes through one queue, so queries run one at a time (the checker
+ * also runs with concurrency 1), and every call into the worker has a watchdog: a check query
+ * gets the query timeout (30 s), whose clock starts when the query leaves the queue; loading
+ * a CSV file gets 120 s; anything else 60 s. A check query past its timeout is rejected with
+ * a JS Error named "TimeoutError" (FL702 in Python). A worker that stops answering (watchdog)
+ * or fails (its `error` event, e.g. out of memory) rejects all work in flight. In both cases
+ * the worker is restarted before the queue moves on: a new worker, the sample rebuilt, and the CSV
+ * files still held as `File` objects registered and loaded again. A CheckResult carries
+ * `restarted: true` when that happened during the check, so the page can mark other results
+ * stale. If a restart fails, the engine says so and every later call rejects at once.
+ *
+ * Test-only URL parameters (honoured only on localhost / 127.0.0.1; used by the e2e suite):
  *   ?fl-timeout=<seconds>  lower the check timeout (0.05 to 30; it can never be raised)
- *   ?fl-slow=<n>           the first <n> check queries are preceded, in the worker, by a
- *                          deliberately endless statement, so they hit the timeout path
+ *   ?fl-slow=<n>           the first <n> (at most 5) check queries are preceded, in the
+ *                          worker, by a deliberately endless statement: the timeout path
+ * and, on localhost only, `engine.simulateWorkerError()` fires the worker's `error` event.
  *
  * Interface (consumed by playground.js):
  *   startEngine({ pyodide, onStatus }) -> Promise<Engine>   (idempotent: one engine, one worker)
@@ -37,30 +57,45 @@
 const DUCKDB_WASM_VERSION = "1.32.0";
 const DUCKDB_ESM = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@" + DUCKDB_WASM_VERSION + "/+esm";
 const DUCKDB_ENGINE_VERSION = "v1.4.3";
+const ALLOWED_HOSTS = Object.freeze(["cdn.jsdelivr.net", "extensions.duckdb.org"]);
 
 const MB = 1024 * 1024;
 const LIMITS = Object.freeze({ fileBytes: 100 * MB, totalBytes: 200 * MB, files: 10 });
 const DEFAULT_TIMEOUT_S = 30;
-const SLOW_SQL = "SELECT SUM((i * i) % 7) FROM range(100000000000000) AS t(i)";
+const MAX_SLOW = 5;
+const SLOW_SQL = "SELECT SUM(i % 7) FROM range(100000000000000) AS t(i)"; // never overflows
+// watchdogs (ms)
+const BOOT_MS = 300000; // instantiate downloads ~35 MB of wasm
+const CSV_MS = 120000;
+const OP_MS = 60000;
+const PING_MS = 5000;
+// Python's own limit is timeout + this margin: only a backstop, the timer here is the clock
+const PY_MARGIN_S = 2 * BOOT_MS / 1000;
 
 // Arrow type ids (apache-arrow 17 `Type`), as the duckdb-wasm `+esm` build uses them.
-const ARROW = { Int: 2, Float: 3, Utf8: 5, Bool: 6, Decimal: 7, Date: 8, Time: 9, Timestamp: 10, LargeUtf8: 20 };
+const ARROW = { Null: 1, Int: 2, Float: 3, Utf8: 5, Bool: 6, Decimal: 7, Date: 8, Time: 9, Timestamp: 10, LargeUtf8: 20 };
 const DATE_UNIT_DAY = 0;
 const TIME_UNIT_TO_MICROS = [1000000n, 1000n, 1n, null]; // SECOND, MILLISECOND, MICROSECOND, NANOSECOND
 const MICROS_PER_DAY = 86400000000n;
+// how DuckDB exports its infinite DATE / TIMESTAMP values through Arrow
+const DATE_INFINITY = 2147483647;
+const TIMESTAMP_INFINITY = 9223372036854775807n;
 
-let current = null; // { pyodide, promise, engine, setStatus }
+let current = null; // { pyodide, promise, engine, onStatus }
 
 function noop() {}
 
 function testParams() {
-  var out = { timeoutS: DEFAULT_TIMEOUT_S, slow: 0 };
+  var out = { timeoutS: DEFAULT_TIMEOUT_S, slow: 0, local: false };
   try {
+    var host = window.location.hostname;
+    if (host !== "localhost" && host !== "127.0.0.1") return out;
+    out.local = true;
     var query = new URLSearchParams(window.location.search);
     var t = parseFloat(query.get("fl-timeout"));
     if (isFinite(t) && t > 0) out.timeoutS = Math.min(DEFAULT_TIMEOUT_S, Math.max(0.05, t));
     var s = parseInt(query.get("fl-slow"), 10);
-    if (isFinite(s) && s > 0) out.slow = s;
+    if (isFinite(s) && s > 0) out.slow = Math.min(MAX_SLOW, s);
   } catch (e) { /* no window or URL: defaults */ }
   return out;
 }
@@ -77,17 +112,10 @@ function literal(text) {
 
 // -- Arrow cell -> tagged JSON (the rules glue.encode_cell states) ---------------------------
 
-function valueKind(duckType) {
-  var t = String(duckType).trim().toUpperCase();
-  if (/^U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)$/.test(t)) return "integer";
-  if (/^(DECIMAL|NUMERIC)(\s*\(.*\))?$/.test(t)) return "decimal";
-  if (/^(DOUBLE|FLOAT|REAL)$/.test(t)) return "float";
-  if (/^VARCHAR(\s*\(.*\))?$/.test(t)) return "string";
-  if (t === "BOOLEAN") return "boolean";
-  if (t === "DATE") return "date";
-  if (/^TIMESTAMP(_S|_MS|_NS| WITH TIME ZONE|TZ)?$/.test(t)) return "timestamp";
-  if (t === "TIME") return "time";
-  return "other";
+function kindTable(json) {
+  return JSON.parse(json).map(function (entry) {
+    return [new RegExp("^(?:" + entry[0] + ")$"), entry[1]];
+  });
 }
 
 function pad(n, width) {
@@ -151,9 +179,9 @@ function plainText(value) {
 }
 
 function encodeCell(vector, data, i, globalIndex, kind) {
-  if (!data.getValid(i)) return { t: "null", v: null };
   var type = data.type;
   var id = type.typeId;
+  if (id === ARROW.Null || kind === "null" || !data.getValid(i)) return { t: "null", v: null };
   if (kind === "integer") {
     if (id === ARROW.Int) return { t: kind, v: data.values[i].toString() };
     if (id === ARROW.Decimal) return { t: kind, v: wordsToDecimal(data.values.subarray(data.stride * i, data.stride * (i + 1)), 0) };
@@ -172,11 +200,18 @@ function encodeCell(vector, data, i, globalIndex, kind) {
     if (id === ARROW.Bool) return { t: kind, v: !!vector.get(globalIndex) };
   } else if (kind === "date") {
     if (id === ARROW.Date) {
-      var days = type.unit === DATE_UNIT_DAY ? data.values[i] : floorDiv(BigInt(data.values[i]), 86400000n);
+      var days = type.unit === DATE_UNIT_DAY ? data.values[i] : Number(floorDiv(BigInt(data.values[i]), 86400000n));
+      if (days === DATE_INFINITY) return { t: kind, v: "infinity" };
+      if (days === -DATE_INFINITY) return { t: kind, v: "-infinity" };
       return { t: kind, v: isoDate(days) };
     }
   } else if (kind === "timestamp") {
-    if (id === ARROW.Timestamp) return { t: kind, v: isoTimestamp(toMicros(data.values[i], type.unit), !!type.timezone) };
+    if (id === ARROW.Timestamp) {
+      var raw = BigInt(data.values[i]);
+      if (raw === TIMESTAMP_INFINITY) return { t: kind, v: "infinity" };
+      if (raw === -TIMESTAMP_INFINITY) return { t: kind, v: "-infinity" };
+      return { t: kind, v: isoTimestamp(toMicros(raw, type.unit), !!type.timezone) };
+    }
   } else if (kind === "time") {
     if (id === ARROW.Time) return { t: kind, v: isoTimeOfDay(toMicros(data.values[i], type.unit)) };
   }
@@ -185,13 +220,13 @@ function encodeCell(vector, data, i, globalIndex, kind) {
   return { t: "other", v: plainText(vector.get(globalIndex)) };
 }
 
-function encodeTable(table, columns) {
+function encodeTable(table, columns, kindOf) {
   var width = table.numCols;
   var rows = [];
   for (var r = 0; r < table.numRows; r++) rows.push(new Array(width));
   for (var c = 0; c < width; c++) {
     var vector = table.getChildAt(c);
-    var kind = valueKind(columns[c] ? columns[c][1] : "");
+    var kind = kindOf(columns[c] ? columns[c][1] : "");
     var offset = 0;
     vector.data.forEach(function (data) {
       for (var i = 0; i < data.length; i++) rows[offset + i][c] = encodeCell(vector, data, i, offset + i, kind);
@@ -214,13 +249,26 @@ function timeoutError(seconds) {
   return err;
 }
 
+function workerError(message) {
+  var err = new Error(message);
+  err.workerDown = true;
+  return err;
+}
+
+function messageOf(err) {
+  return String((err && err.message) || err).replace(/^Error:\s*/, "");
+}
+
 function friendly(err, fileName) {
-  var message = String((err && err.message) || err);
+  var message = messageOf(err);
   if (/out of memory|memory limit|failed to allocate|allocation|Aborted\(|RangeError/i.test(message)) {
     return "There is not enough memory in this browser tab to load " + fileName +
       ". Try a smaller file, or reset the loaded files first.";
   }
-  return message.replace(/^Error:\s*/, "");
+  if (err && err.workerDown) {
+    return "The database stopped while loading " + fileName + " (" + message + "); it was restarted without this file.";
+  }
+  return message;
 }
 
 // -- the engine -----------------------------------------------------------------------------
@@ -229,17 +277,26 @@ function createEngine(pyodide, duckdb, setStatus) {
   var params = testParams();
   var timeoutS = params.timeoutS;
   var slowLeft = params.slow;
+  var kinds = kindTable(pyodide.globals.get("VALUE_KINDS_JSON"));
+  var sampleSql = JSON.parse(pyodide.globals.get("SAMPLE_SQL_JSON"));
   var db = null;
   var conn = null;
+  var life = null; // the running worker's { failed, fail(err), promise }: one per boot
   var bundleName = null;
   var version = null;
+  var icu = { loaded: false, url: null, error: null };
   var chain = Promise.resolve();
   var sampleTables = [];
   var csv = []; // { name, file, internal, info }
   var seq = 0;
   var restarts = 0;
-  var dead = false;
-  var sampleSql = JSON.parse(pyodide.globals.get("SAMPLE_SQL_JSON"));
+  var dead = null; // the reason, once a restart has failed
+
+  function kindOf(duckType) {
+    var name = String(duckType).trim().toUpperCase();
+    for (var i = 0; i < kinds.length; i++) if (kinds[i][0].test(name)) return kinds[i][1];
+    return "other";
+  }
 
   function serial(task) {
     var result = chain.then(function () { return task(); });
@@ -270,123 +327,250 @@ function createEngine(pyodide, duckdb, setStatus) {
     }
   }
 
+  function newLife() {
+    var state = { failed: null, fail: null, promise: null };
+    state.promise = new Promise(function (_, reject) {
+      state.fail = function (err) {
+        if (state.failed) return;
+        state.failed = err;
+        reject(err);
+      };
+    });
+    state.promise.catch(noop);
+    return state;
+  }
+
+  // `promise`, or a rejection when the worker fails or `ms` pass without an answer (the
+  // watchdog: duckdb-wasm drops pending requests on a worker error without settling them).
+  function guard(promise, ms, what, state) {
+    var lifeNow = state || life;
+    if (!lifeNow) return Promise.reject(workerError("the database is not running"));
+    if (lifeNow.failed) return Promise.reject(lifeNow.failed);
+    var timer = null;
+    var watchdog = new Promise(function (_, reject) {
+      timer = setTimeout(function () {
+        var err = workerError("the database did not answer within " + Math.round(ms / 1000) + "s (" + what + ")");
+        lifeNow.fail(err);
+        reject(err);
+      }, ms);
+    });
+    Promise.resolve(promise).catch(noop);
+    return Promise.race([promise, lifeNow.promise, watchdog]).finally(function () { clearTimeout(timer); });
+  }
+
+  async function loadIcu(c, state) {
+    icu.loaded = false;
+    icu.error = null;
+    try {
+      await guard(c.query("LOAD icu"), OP_MS, "loading the ICU extension", state);
+      await guard(c.query("SET TimeZone = 'UTC'"), OP_MS, "setting the time zone", state);
+      icu.loaded = true;
+    } catch (err) {
+      if (err && err.workerDown) throw err;
+      icu.error = messageOf(err).split("\n")[0];
+    }
+    // nothing loads behind our back from here on: no autoload timing, no other host
+    await guard(c.query("SET autoinstall_known_extensions = false"), OP_MS, "settings", state);
+    await guard(c.query("SET autoload_known_extensions = false"), OP_MS, "settings", state);
+  }
+
   async function boot() {
     var all = duckdb.getJsDelivrBundles();
     var bundle = await duckdb.selectBundle({ mvp: all.mvp, eh: all.eh }); // never coi
-    bundleName = bundle.mainModule === all.eh.mainModule ? "eh" : "mvp";
+    var name = bundle.mainModule === all.eh.mainModule ? "eh" : "mvp";
     var workerUrl = URL.createObjectURL(
       new Blob(["importScripts(" + JSON.stringify(bundle.mainWorker) + ");"], { type: "text/javascript" })
     );
+    var state = newLife();
+    var worker = new Worker(workerUrl);
+    state.worker = worker;
+    worker.addEventListener("error", function (ev) {
+      state.fail(workerError("the database worker failed: " + ((ev && ev.message) || "unknown error")));
+    });
+    var fresh = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), worker);
     try {
-      var fresh = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), new Worker(workerUrl));
-      await fresh.instantiate(bundle.mainModule, bundle.pthreadWorker);
-      await fresh.open({
+      await guard(fresh.instantiate(bundle.mainModule, bundle.pthreadWorker), BOOT_MS, "starting DuckDB", state);
+      await guard(fresh.open({
         query: { castBigIntToDouble: false, castDecimalToDouble: false },
         arrowLosslessConversion: false
-      });
+      }), OP_MS, "opening the database", state);
+      var c = await guard(fresh.connect(), OP_MS, "connecting", state);
+      var v = await guard(fresh.getVersion(), OP_MS, "reading the version", state);
+      icu.url = "https://extensions.duckdb.org/" + v + "/wasm_" + name + "/icu.duckdb_extension.wasm";
+      await loadIcu(c, state);
       db = fresh;
-      conn = await db.connect();
-      version = await db.getVersion();
+      conn = c;
+      life = state;
+      version = v;
+      bundleName = name;
+    } catch (err) {
+      state.fail(err);
+      try { fresh.terminate().catch(noop); } catch (e) { /* gone */ }
+      try { worker.terminate(); } catch (e) { /* gone */ }
+      throw err;
     } finally {
       URL.revokeObjectURL(workerUrl);
     }
   }
 
-  async function query(sql, values) {
-    if (!values || !values.length) return conn.query(sql);
-    var stmt = await conn.prepare(sql);
+  function q(sql, ms, what) {
+    return guard(conn.query(sql), ms || OP_MS, what || "a query");
+  }
+
+  async function prepared(sql, values, ms, what) {
+    if (!values || !values.length) return q(sql, ms, what);
+    var stmt = await guard(conn.prepare(sql), ms, what);
     try {
-      return await stmt.query.apply(stmt, values);
+      return await guard(stmt.query.apply(stmt, values), ms, what);
     } finally {
       stmt.close().catch(noop);
     }
   }
 
   async function describeTable(name, source) {
-    var described = await conn.query("DESCRIBE " + ident(name));
+    var described = await q("DESCRIBE " + ident(name), OP_MS, "describing " + name);
     var names = columnValues(described, "column_name");
     var types = columnValues(described, "column_type");
-    var counted = await conn.query("SELECT COUNT(*) AS n FROM " + ident(name));
+    var counted = await q("SELECT COUNT(*) AS n FROM " + ident(name), CSV_MS, "counting " + name);
     var rows = Number(columnValues(counted, "n")[0]);
     var columns = names.map(function (n, i) { return [String(n), String(types[i])]; });
     return JSON.parse(py("fl_table_info", name, rows, JSON.stringify(columns), source));
   }
 
+  // The sample SQL verbatim. In DuckDB-WASM 1.4.3 `current_date` itself lives in ICU, so
+  // without ICU it is replaced by today's UTC date as a literal: the same value, because
+  // with ICU the session time zone is UTC.
+  function sampleStatements() {
+    if (icu.loaded) return sampleSql;
+    var today = new Date().toISOString().slice(0, 10);
+    return sampleSql.map(function (sql) { return sql.replace(/\bcurrent_date\b/g, "DATE '" + today + "'"); });
+  }
+
   async function buildSample() {
     var names = [];
-    for (var i = 0; i < sampleSql.length; i++) {
-      await conn.query(sampleSql[i]);
-      var m = /^CREATE TABLE\s+(\w+)/i.exec(sampleSql[i]);
+    var statements = sampleStatements();
+    for (var i = 0; i < statements.length; i++) {
+      await q(statements[i], OP_MS, "building the sample shop");
+      var m = /^CREATE TABLE\s+(\w+)/i.exec(statements[i]);
       if (m) names.push(m[1]);
     }
     return names;
   }
 
   async function loadCsvTable(entry) {
-    await db.registerFileHandle(entry.internal, entry.file, duckdb.DuckDBDataProtocol.BROWSER_FILEREADER, true);
-    await conn.query("CREATE TABLE " + ident(entry.name) + " AS SELECT * FROM read_csv_auto(" + literal(entry.internal) + ")");
+    await guard(db.registerFileHandle(entry.internal, entry.file, duckdb.DuckDBDataProtocol.BROWSER_FILEREADER, true), OP_MS, "registering " + entry.file.name);
+    await q("CREATE TABLE " + ident(entry.name) + " AS SELECT * FROM read_csv_auto(" + literal(entry.internal) + ")", CSV_MS, "loading " + entry.file.name);
   }
 
   async function restart() {
-    setStatus("A query ran too long; restarting the database…");
+    setStatus("The database stopped or ran too long; restarting it…");
     var old = db;
     db = null;
     conn = null;
-    if (old) { try { await old.terminate(); } catch (e) { /* already gone */ } }
+    if (life) life.fail(workerError("the database was restarted"));
+    life = null;
+    if (old) { try { await Promise.race([old.terminate(), new Promise(function (r) { setTimeout(r, PING_MS); })]); } catch (e) { /* gone */ } }
     try {
       await boot();
       if (sampleTables.length) await buildSample();
       var kept = [];
       for (var i = 0; i < csv.length; i++) {
-        try { await loadCsvTable(csv[i]); kept.push(csv[i]); } catch (e) { /* the file is gone */ }
+        try { await loadCsvTable(csv[i]); kept.push(csv[i]); } catch (e) {
+          if (e && e.workerDown) throw e;
+        }
       }
       csv = kept;
       restarts += 1;
       setStatus("");
     } catch (err) {
-      dead = true;
-      setStatus("The database could not be restarted: " + (err.message || err) + ". Reload the page.");
+      dead = "the database could not be restarted (" + messageOf(err) + "); reload the page";
+      setStatus("The database could not be restarted: " + messageOf(err) + ". Reload the page to try again.");
       throw err;
     }
   }
 
+  // Restart from inside a queued task, so nothing queued behind it reaches the old worker. A
+  // failed restart sets `dead` and is reported by every later call; it never replaces the
+  // error that caused it (a timeout stays FL702).
+  async function restartQuietly() {
+    try { await restart(); } catch (e) { /* `dead` says why */ }
+  }
+
   async function alive() {
-    try { await conn.query("SELECT 1"); return true; } catch (e) { return false; }
+    if (!conn || !life || life.failed) return false;
+    try { await guard(conn.query("SELECT 1"), PING_MS, "ping"); return true; } catch (e) { return false; }
   }
 
   function ready() {
-    if (dead || !conn) throw new Error("the database is not running; reload the page");
+    if (dead) throw new Error(dead);
+    if (!conn) throw new Error("the database is not running; reload the page");
   }
 
-  // run(sql, params_json) -> Promise<JSON string>: the bridge glue.PlaygroundConnector awaits.
-  function run(sql, paramsJson) {
+  function icuUnavailable() {
+    return new Error(
+      "this claim needs DuckDB's ICU extension (time zones), which could not be loaded from " +
+      "extensions.duckdb.org (" + (icu.error || "unknown error") + "), so it was not measured"
+    );
+  }
+
+  function icuMessage(err) {
+    if (icu.loaded || !/time ?zone|\bicu\b/i.test(messageOf(err))) return err;
+    return icuUnavailable();
+  }
+
+  // The bridge glue.PlaygroundConnector awaits: run(sql, params_json) -> Promise<JSON string>.
+  // `slowHook` (check queries only) spends the test-only fl-slow budget.
+  function runQuery(sql, paramsJson, slowHook) {
     return serial(async function () {
       ready();
+      // Without ICU, DuckDB-WASM would try to fetch it again for timezone(), and a failed
+      // fetch leaves the instance unreliable: refuse such a query before it reaches the worker.
+      if (!icu.loaded && /\btimezone\s*\(/i.test(sql)) throw icuUnavailable();
       var values = JSON.parse(paramsJson || "[]").map(function (p) { return p.v; });
-      var slow = slowLeft > 0;
+      var slow = slowHook && slowLeft > 0;
       if (slow) slowLeft -= 1;
+      var ms = timeoutS * 1000;
       var work = (async function () {
-        if (slow) await conn.query(SLOW_SQL);
-        var described = await query("DESCRIBE " + sql, values);
+        if (slow) await q(SLOW_SQL, ms + OP_MS, "the test-only slow query");
+        var described = await prepared("DESCRIBE " + sql, values, ms + OP_MS, "describing a probe");
         var names = columnValues(described, "column_name");
         var types = columnValues(described, "column_type");
         var columns = names.map(function (n, i) { return [String(n), String(types[i])]; });
-        var table = await query(sql, values);
-        return JSON.stringify({ columns: columns, rows: encodeTable(table, columns) });
+        var table = await prepared(sql, values, ms + OP_MS, "running a probe");
+        return JSON.stringify({ columns: columns, rows: encodeTable(table, columns, kindOf) });
       })();
       work.catch(noop); // after a timeout nobody waits for it
       var timer = null;
       var limit = new Promise(function (_, reject) {
-        timer = setTimeout(function () { reject(timeoutError(timeoutS)); }, timeoutS * 1000);
+        timer = setTimeout(function () { reject(timeoutError(timeoutS)); }, ms);
       });
       try {
         return await Promise.race([work, limit]);
       } catch (err) {
-        if (err && err.name === "TimeoutError") await restart();
-        else if (!(await alive())) await restart();
-        throw err;
+        // the next query's clock starts after the restart (Python's own limit is a backstop)
+        // a wasm RuntimeError (trap) leaves the instance unreliable even if it still answers
+        var trapped = /RuntimeError/.test(messageOf(err));
+        if ((err && err.name === "TimeoutError") || (err && err.workerDown) || trapped || !(await alive())) await restartQuietly();
+        throw icuMessage(err);
       } finally {
         clearTimeout(timer);
+      }
+    });
+  }
+
+  function runForCheck(sql, paramsJson) {
+    return runQuery(sql, paramsJson, true);
+  }
+
+  // run a queued task; a worker failure inside it queues a restart and says so
+  function task(fn) {
+    return serial(async function () {
+      ready();
+      try {
+        return await fn();
+      } catch (err) {
+        if (err && err.workerDown) await restartQuietly();
+        throw err;
       }
     });
   }
@@ -400,16 +584,18 @@ function createEngine(pyodide, duckdb, setStatus) {
   }
 
   var engine = {
-    version: version,
+    version: null,
     duckdbWasm: DUCKDB_WASM_VERSION,
+    allowedHosts: ALLOWED_HOSTS,
     limits: LIMITS,
     timeoutS: timeoutS,
     get bundle() { return bundleName; },
     get restarts() { return restarts; },
+    // { loaded, url, error }: whether ICU (time zones) is available, and from where
+    get icu() { return { loaded: icu.loaded, url: icu.url, error: icu.error }; },
 
     loadSample: function () {
-      return serial(async function () {
-        ready();
+      return task(async function () {
         if (!sampleTables.length) {
           var names = await buildSample();
           var infos = [];
@@ -429,6 +615,7 @@ function createEngine(pyodide, duckdb, setStatus) {
         var total = csv.reduce(function (n, e) { return n + e.file.size; }, 0);
         for (var i = 0; i < list.length; i++) {
           var file = list[i];
+          if (dead) { errors.push({ file: file.name, message: dead }); continue; }
           if (csv.length >= LIMITS.files) {
             errors.push({ file: file.name, message: "At most " + LIMITS.files + " CSV files can be loaded; reset to load others." });
             continue;
@@ -452,10 +639,10 @@ function createEngine(pyodide, duckdb, setStatus) {
           } catch (err) {
             errors.push({ file: file.name, message: friendly(err, file.name) });
             if (await alive()) {
-              try { await conn.query("DROP TABLE IF EXISTS " + ident(entry.name)); } catch (e) { /* not created */ }
-              try { await db.dropFile(entry.internal); } catch (e) { /* not registered */ }
+              try { await q("DROP TABLE IF EXISTS " + ident(entry.name)); } catch (e) { /* not created */ }
+              try { await guard(db.dropFile(entry.internal), OP_MS, "dropping a file"); } catch (e) { /* not registered */ }
             } else {
-              await restart(); // e.g. the allocation failed and took the worker down
+              await restartQuietly();
             }
           }
         }
@@ -464,11 +651,10 @@ function createEngine(pyodide, duckdb, setStatus) {
     },
 
     reset: function () {
-      return serial(async function () {
-        ready();
+      return task(async function () {
         for (var i = 0; i < csv.length; i++) {
-          try { await conn.query("DROP TABLE IF EXISTS " + ident(csv[i].name)); } catch (e) { /* gone */ }
-          try { await db.dropFile(csv[i].internal); } catch (e) { /* gone */ }
+          try { await q("DROP TABLE IF EXISTS " + ident(csv[i].name)); } catch (e) { if (e && e.workerDown) throw e; }
+          try { await guard(db.dropFile(csv[i].internal), OP_MS, "dropping a file"); } catch (e) { if (e && e.workerDown) throw e; }
         }
         csv = [];
         return allTables();
@@ -483,7 +669,7 @@ function createEngine(pyodide, duckdb, setStatus) {
     check: async function (text) {
       ready();
       var before = restarts;
-      var out = JSON.parse(await pyAsync("fl_check", String(text), run, catalogJson(), timeoutS));
+      var out = JSON.parse(await pyAsync("fl_check", String(text), runForCheck, catalogJson(), timeoutS, PY_MARGIN_S));
       out.restarted = restarts > before;
       out.engine = "duckdb";
       out.timeoutS = timeoutS;
@@ -502,19 +688,28 @@ function createEngine(pyodide, duckdb, setStatus) {
       var tableJson = JSON.stringify(info);
       var sqls = JSON.parse(py("fl_profile_sql", tableJson));
       var profiles = [];
-      for (var i = 0; i < sqls.length; i++) profiles.push(JSON.parse(await run(sqls[i], "[]")));
+      for (var i = 0; i < sqls.length; i++) profiles.push(JSON.parse(await runQuery(sqls[i], "[]", false)));
       return JSON.parse(py("fl_suggest", tableJson, JSON.stringify(profiles)));
     },
 
     terminate: function () {
-      dead = true;
+      dead = "the database was shut down";
       if (current && current.engine === engine) current = null;
       var old = db;
       db = null;
       conn = null;
+      if (life) life.fail(workerError("the database was shut down"));
       if (old) old.terminate().catch(noop);
     }
   };
+
+  if (params.local) {
+    // test-only (localhost): fire the worker's `error` event as a crash would. duckdb-wasm
+    // then drops its pending requests without settling them; the engine must not wedge.
+    engine.simulateWorkerError = function () {
+      if (life && life.worker) life.worker.dispatchEvent(new ErrorEvent("error", { message: "simulated worker failure" }));
+    };
+  }
 
   return boot().then(function () {
     engine.version = version;
@@ -550,7 +745,7 @@ export async function startEngine(options) {
     try {
       duckdb = await import(DUCKDB_ESM);
     } catch (err) {
-      throw new Error("could not download DuckDB from the CDN (" + (err.message || err) + ")");
+      throw new Error("could not download DuckDB from the CDN (" + messageOf(err) + ")");
     }
     var engine = await createEngine(pyodide, duckdb, setStatus);
     state.engine = engine;
@@ -566,4 +761,4 @@ export async function startEngine(options) {
   return state.promise;
 }
 
-export { DUCKDB_ENGINE_VERSION, DUCKDB_WASM_VERSION, LIMITS };
+export { ALLOWED_HOSTS, DUCKDB_ENGINE_VERSION, DUCKDB_WASM_VERSION, LIMITS };

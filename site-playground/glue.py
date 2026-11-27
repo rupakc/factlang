@@ -21,7 +21,9 @@ nothing is rounded on the way: integers (INT64 and HUGEINT included) as decimal 
 DECIMAL as plain digits with exactly its scale (``"209000.00"``), DATE / TIMESTAMP / TIME as
 ISO-8601 (``"2024-01-02T03:04:05.000006"``; a TIMESTAMP WITH TIME ZONE carries ``+00:00``).
 A finite float is a JSON number (shortest round-trip form); NaN and infinities are the
-strings ``"nan"``, ``"inf"``, ``"-inf"``. Booleans are JSON booleans. ``encode_cell`` is the
+strings ``"nan"``, ``"inf"``, ``"-inf"``; DuckDB's infinite DATE / TIMESTAMP are
+``"infinity"`` / ``"-infinity"`` (decoded as ``date.max`` / ``date.min`` etc., as Python
+``duckdb`` returns them). Booleans are JSON booleans. ``encode_cell`` is the
 reference statement of these rules (engine.js applies them to Arrow cells; the tests apply
 ``encode_cell`` to Python ``duckdb`` values) and ``decode_value`` rebuilds the Python value.
 """
@@ -35,7 +37,7 @@ import sys
 from decimal import Decimal
 
 import factlang as fl
-from factlang.connectors.base import QueryResult, normalise_rows
+from factlang.connectors.base import ExecutionError, QueryResult, normalise_rows
 from factlang.engine import Checker, display_sql, string_quoter
 from factlang.judge import Outcome, json_safe
 from factlang.semantics.catalog import StaticCatalog
@@ -193,7 +195,11 @@ def fl_explain(text, dialect):
 # -- value marshalling -----------------------------------------------------------------------
 
 TAGS = ("null", "integer", "decimal", "float", "string", "boolean", "date", "timestamp", "time")
+# (pattern, kind): the first pattern matching the whole upper-cased type name wins. engine.js
+# reads this table from VALUE_KINDS_JSON (so the two sides cannot drift); keep every pattern in
+# the subset of regex syntax Python and JavaScript read alike.
 _KINDS = (
+    (r'"?NULL"?', "null"),
     (r"U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)", "integer"),
     (r"(DECIMAL|NUMERIC)(\s*\(.*\))?", "decimal"),
     (r"DOUBLE|FLOAT|REAL", "float"),
@@ -203,6 +209,7 @@ _KINDS = (
     (r"TIMESTAMP(_S|_MS|_NS| WITH TIME ZONE|TZ)?", "timestamp"),
     (r"TIME", "time"),
 )
+VALUE_KINDS_JSON = json.dumps([list(k) for k in _KINDS])
 _INT64 = (-(2**63), 2**63)
 _INT128 = (-(2**127), 2**127)
 
@@ -254,6 +261,11 @@ def encode_cell(value, kind):
     return {"t": "other", "v": str(value)}
 
 
+# DuckDB's infinite DATE / TIMESTAMP, as Python duckdb returns them (engine.js sends the text)
+_INFINITE_DATES = {"infinity": dt.date.max, "-infinity": dt.date.min}
+_INFINITE_TIMESTAMPS = {"infinity": dt.datetime.max, "-infinity": dt.datetime.min}
+
+
 def decode_value(tagged):
     """The Python value of a tagged cell (the types Python ``duckdb`` itself returns)."""
     tag, value = tagged["t"], tagged.get("v")
@@ -270,9 +282,9 @@ def decode_value(tagged):
     if tag == "boolean":
         return bool(value)
     if tag == "date":
-        return dt.date.fromisoformat(value)
+        return _INFINITE_DATES.get(value) or dt.date.fromisoformat(value)
     if tag == "timestamp":
-        return dt.datetime.fromisoformat(value)
+        return _INFINITE_TIMESTAMPS.get(value) or dt.datetime.fromisoformat(value)
     if tag == "time":
         return dt.time.fromisoformat(value)
     if tag == "other":
@@ -397,33 +409,45 @@ def _reports_timeout(exc):
     return getattr(exc, "name", None) == "TimeoutError" or str(exc).startswith("TimeoutError")
 
 
+def _timed_out(seconds, cause):
+    limit = "" if seconds is None else f" after {seconds:g}s"
+    error = ExecutionError(f"query timed out{limit}", code="FL702")
+    error.__cause__ = cause
+    return error
+
+
 class PlaygroundConnector:
     """An ``AsyncConnector`` over an injected ``run(sql, params_json)`` coroutine.
 
-    ``timeout_s`` is enforced here: past it, the query raises ``TimeoutError`` (FL702). The
-    parameters of each executed probe are kept by display SQL (``bound``) for the result cards.
+    In the browser the query timeout is engine.js's: its clock starts when the query reaches
+    the DuckDB worker (not while it waits behind a restart) and it rejects with a JS
+    ``TimeoutError``, reported here as ``FL702 query timed out after <timeout_s>s``. The
+    ``timeout_s`` the Checker passes to ``aexecute`` (``timeout_s + margin_s``) is only a
+    backstop for a bridge that never answers; with ``margin_s = 0`` (CPython tests) it is the
+    timeout itself. Each executed probe's parameters are kept by display SQL (``bound``).
     """
 
     dialect = "duckdb"
     paramstyle = "qmark"
 
-    def __init__(self, run):
+    def __init__(self, run, timeout_s=None):
         self.run = run
+        self.timeout_s = timeout_s
         self.bound = {}
 
     async def aexecute(self, probe, *, timeout_s):
         sql, params = prepare(probe)
         shown = display_sql(probe, string_quoter(probe.dialect))
         self.bound[shown] = [[p.name, json_safe(p.value), p.family] for p in probe.params]
-        limit = "" if timeout_s is None else f" after {timeout_s:g}s"
         try:
             pending = _awaited(self.run(sql, json.dumps(params)))
             raw = await (pending if timeout_s is None else asyncio.wait_for(pending, timeout_s))
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"query timed out{limit}") from None
+        except asyncio.TimeoutError as exc:
+            raise _timed_out(timeout_s, exc) from None
         except Exception as exc:
             if _reports_timeout(exc):
-                raise TimeoutError(f"query timed out{limit}") from exc
+                limit = self.timeout_s if self.timeout_s is not None else timeout_s
+                raise _timed_out(limit, exc) from None
             raise
         return QueryResult(normalise_rows(probe, decode_result(raw)))
 
@@ -507,22 +531,23 @@ def _static_catalog(catalog_json):
 # -- checking --------------------------------------------------------------------------------
 
 
-async def _acheck(text, run, catalog_json, timeout_s):
-    conn = PlaygroundConnector(run)
+async def _acheck(text, run, catalog_json, timeout_s, margin_s):
+    conn = PlaygroundConnector(run, timeout_s)
+    backstop = None if timeout_s is None else timeout_s + margin_s
     checker = Checker(
         conn,
         dialect="duckdb",
         catalog=_static_catalog(catalog_json),
-        timeout_s=timeout_s,
+        timeout_s=backstop,
         concurrency=1,
     )
     return await checker.acheck(text), conn
 
 
-async def acheck_report(text, run, catalog_json, timeout_s=30):
+async def acheck_report(text, run, catalog_json, timeout_s=30, margin_s=0.0):
     """The ``Report`` of checking ``text`` through ``run`` (``Checker.acheck``, never
     ``Checker.check``, which needs threads the browser does not have)."""
-    report, _ = await _acheck(text, run, catalog_json, timeout_s)
+    report, _ = await _acheck(text, run, catalog_json, timeout_s, margin_s)
     return report
 
 
@@ -541,13 +566,14 @@ def _card(outcome, bound):
     return out
 
 
-async def fl_check(text, run, catalog_json, timeout_s=30):
+async def fl_check(text, run, catalog_json, timeout_s=30, margin_s=0.0):
     """Check ``text`` on the loaded tables: ``{"ok", "verified", "counts": {verdict: n},
     "outcomes": [Outcome.to_dict() + {"sql", "params": [[name, value, family]],
     "elapsed_ms"}], "diagnostics": [...]}``, or ``{"error": message}`` if checking itself
-    failed (a bug, not a claim outcome)."""
+    failed (a bug, not a claim outcome). ``margin_s`` widens only the Python-side backstop
+    (see ``PlaygroundConnector``); engine.js passes its restart budget."""
     try:
-        report, conn = await _acheck(text, run, catalog_json, timeout_s)
+        report, conn = await _acheck(text, run, catalog_json, timeout_s, margin_s)
         payload = {
             "ok": report.ok,
             "verified": report.verified,
@@ -565,7 +591,7 @@ async def fl_check(text, run, catalog_json, timeout_s=30):
 NULL_RATE_LIMIT = "5%"  # a fixed convention, never derived from the data
 MAX_NULLS_SUGGESTIONS = 3
 MAX_VALUES = 10
-MAX_PROFILED_COLUMNS = 20
+MAX_PROFILED_COLUMNS = 10
 _ID_COLUMN = re.compile(r"(?i)(^|_)id$")
 
 
@@ -587,22 +613,18 @@ def _load(value):
 
 
 def fl_profile_sql(table_json):
-    """The profiling queries ``fl_suggest`` needs for one table (JSON list of SQL): one query
-    counting the distinct values of each text column, with the values themselves (as JSON)
-    when there are at most ten."""
+    """The profiling queries ``fl_suggest`` needs for one table (JSON list of SQL): for each
+    text column (the first ten), its distinct non-NULL values in order, at most eleven, so
+    "more than ten" shows without counting them all. Core SQL only: no DuckDB extension."""
     table = _load(table_json)
-    cols = _profiled(table)
-    if not cols:
-        return json.dumps([])
-    parts = []
-    for i, col in enumerate(cols):
+    out = []
+    for col in _profiled(table):
         q = _sql_ident(col["name"])
-        parts.append(f"COUNT(DISTINCT {q}) AS n{i}")
-        parts.append(
-            f"CASE WHEN COUNT(DISTINCT {q}) <= {MAX_VALUES} THEN CAST(to_json(list(DISTINCT {q} "
-            f"ORDER BY {q}) FILTER (WHERE {q} IS NOT NULL)) AS VARCHAR) END AS v{i}"
+        out.append(
+            f"SELECT DISTINCT {q} AS v FROM {_sql_ident(table['name'])} WHERE {q} IS NOT NULL "
+            f"ORDER BY v LIMIT {MAX_VALUES + 1}"
         )
-    return json.dumps([f"SELECT {', '.join(parts)} FROM {_sql_ident(table['name'])}"])
+    return json.dumps(out)
 
 
 def _string_literal(text):
@@ -614,18 +636,11 @@ def _representable(text):
 
 
 def _values_claim(table, profiles):
-    if not profiles:
-        return None
-    rows = decode_result(profiles[0])
-    if not rows:
-        return None
-    row = rows[0]
-    for i, col in enumerate(_profiled(table)):
-        count, values = row.get(f"n{i}"), row.get(f"v{i}")
-        if not count or count > MAX_VALUES or values is None:
+    for col, result in zip(_profiled(table), profiles or [], strict=False):
+        items = [row.get("v") for row in decode_result(result)]
+        if not items or len(items) > MAX_VALUES:
             continue
-        items = json.loads(values)
-        if not items or not all(_representable(v) for v in items):
+        if not all(_representable(v) for v in items):
             continue
         listed = ", ".join(_string_literal(v) for v in items)
         return f"VALUES {table['spelling']}.{col['spelling']} IN [{listed}]"
@@ -637,7 +652,7 @@ def fl_suggest(table_json, profile_json):
 
     ``ROWS <t> VALUE >0``; ``UNIQUE`` for the first column named ``id`` or ``…_id``;
     ``NULLS … RATE <=5%`` for the first three columns; ``VALUES … IN [...]`` for the first text
-    column with one to ten distinct values (from ``fl_profile_sql``'s results,
+    column with one to ten distinct values (from ``fl_profile_sql``'s results, in its order,
     ``profile_json``). Deterministic; unaddressable columns are skipped.
     """
     table = _load(table_json)
@@ -678,7 +693,7 @@ def smoke():
     assert json.loads(catalog) == {"orders": {"id": "integer", "note": "string"}}
     assert json.loads(fl_lint_with("UNIQUE orders.nope\n", catalog))["diagnostics"]
     assert json.loads(fl_suggest(info, "[]"))[:2] == ["ROWS orders VALUE >0", "UNIQUE orders.id"]
-    assert json.loads(fl_profile_sql(info))[0].startswith('SELECT COUNT(DISTINCT "note")')
+    assert json.loads(fl_profile_sql(info))[0].startswith('SELECT DISTINCT "note" AS v')
 
     async def run(sql, params_json):
         assert sql.startswith("SELECT COUNT(*) AS row_count"), sql

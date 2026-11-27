@@ -355,3 +355,70 @@ def test_every_standard_verb_matches_the_library_on_the_integration_shop(
         )
         checked += 1
     assert checked >= 40
+
+
+def test_the_timeout_names_its_limit(glue: ModuleType) -> None:
+    async def slow(sql: str, params_json: str) -> str:
+        await asyncio.sleep(5)
+        return json.dumps({"columns": [], "rows": []})
+
+    catalog = json.dumps({"orders": {"id": "integer"}})
+    out = asyncio.run(glue.fl_check("UNIQUE orders.id", slow, catalog, timeout_s=0.2))
+    (outcome,) = json.loads(out)["outcomes"]
+    assert outcome["explanation"] == "FL702 query timed out after 0.2s"
+
+
+def test_a_query_waiting_behind_a_restart_is_not_timed_out(glue: ModuleType) -> None:
+    """In the browser engine.js owns the timeout (its clock starts when the query reaches the
+    worker); Python's own limit is a backstop ``timeout_s + margin_s``."""
+
+    async def queued(sql: str, params_json: str) -> str:
+        await asyncio.sleep(0.4)  # waiting in engine.js's queue while the worker restarts
+        cell = glue.encode_cell(1, "integer")
+        return json.dumps({"columns": [["row_count", "BIGINT"]], "rows": [[cell]]})
+
+    catalog = json.dumps({"orders": {"id": "integer"}})
+    claim = "ROWS orders VALUE ==1"
+    late = asyncio.run(glue.fl_check(claim, queued, catalog, timeout_s=0.2))
+    assert [d["code"] for d in json.loads(late)["outcomes"][0]["diagnostics"]] == ["FL702"]
+    ok = asyncio.run(glue.fl_check(claim, queued, catalog, timeout_s=0.2, margin_s=2))
+    assert [o["verdict"] for o in json.loads(ok)["outcomes"]] == ["pass"]
+
+
+def test_a_browser_timeout_reports_the_browser_limit_not_the_backstop(glue: ModuleType) -> None:
+    async def js_timeout(sql: str, params_json: str) -> str:
+        raise _BrowserError("TimeoutError: query timed out after 30s")
+
+    catalog = json.dumps({"orders": {"id": "integer"}})
+    out = asyncio.run(
+        glue.fl_check("UNIQUE orders.id", js_timeout, catalog, timeout_s=30, margin_s=120)
+    )
+    (outcome,) = json.loads(out)["outcomes"]
+    assert outcome["explanation"] == "FL702 query timed out after 30s"
+
+
+def test_infinite_dates_match_the_library(glue: ModuleType, bridge: ModuleType) -> None:
+    con = duckdb.connect()
+    con.execute("SET GLOBAL TimeZone = 'UTC'")
+    con.execute(
+        "CREATE TABLE inf AS SELECT * FROM (VALUES (DATE '2024-01-01', TIMESTAMP '2024-01-01'),"
+        " ('infinity'::DATE, 'infinity'::TIMESTAMP), ('-infinity'::DATE, '-infinity'::TIMESTAMP))"
+        " AS t(d, ts)"
+    )
+    text = "\n".join(
+        [
+            "MAX inf.d VALUE >= DATE '2024-01-01'",
+            "MIN inf.d VALUE <= DATE '2024-01-01'",
+            "MAX inf.ts VALUE >= TIMESTAMP '2024-01-01T00:00:00Z'",
+            "RANGE inf.d BETWEEN [DATE '2000-01-01', DATE '2030-01-01']",
+        ]
+    )
+    report = _theirs(con, text)
+    ours = _ours(glue, bridge, con, text)
+    for mine, ref in zip(ours["outcomes"], report.outcomes, strict=True):
+        theirs = ref.to_dict()
+        assert (mine["verdict"], mine["explanation"], mine["facts"]) == (
+            theirs["verdict"],
+            theirs["explanation"],
+            theirs["facts"],
+        ), mine["claim_text"]
